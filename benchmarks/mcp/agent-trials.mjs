@@ -17,9 +17,24 @@ const root = path.resolve(here, "../..");
 const runRoot = path.join(root, ".cache", `mcp-agent-${randomUUID()}`);
 const encoder = getEncoding("cl100k_base");
 const timeoutMs = 180_000;
-const toolNames = ["wiki_bootstrap", "wiki_search", "wiki_read"];
+const toolNames = ["wiki_bootstrap", "wiki_search", "wiki_search_sections", "wiki_read"];
 const model = "claude-sonnet-5-5";
 const claudeCommand = process.platform === "win32" ? "claude.exe" : "claude";
+const candidateQuestionVersion = "candidate-v1-capacity-observations";
+const candidateQuestions = Object.freeze({
+  r02: "В действующей процедуре обработки офферов найдите буквальную отметку подтверждения",
+  r06: "В разделе «Capacity observations» статьи о профиле нагрузки найдите буквальную уникальную отметку ответа.",
+});
+const candidatePolicies = Object.freeze({
+  "outline-bounded": "Use wiki_search to find the matching article, read its outline, then read only the selected target section with wiki_read max_chars=4000 and the revision returned by the outline. Follow returned next_read exactly only while evidence is insufficient; stop when the requested fact is supported or has_more is false.",
+  "sections-bounded": "Use wiki_search_sections to find the target section, then pass its returned read_args unchanged to wiki_read. Follow returned next_read exactly only while evidence is insufficient; stop when the requested fact is supported or has_more is false.",
+});
+const historicalBaseline = Object.freeze({
+  resultsDate: "2026-10-21",
+  runnerSha256: "49ded6dce54f5a8e32a88365783a36d86cf7f531b3d6cede9cb993be76c3dcbd",
+  corpusSha256: "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+  caveat: "Historical source hash is the published runner hash; the executed pilot runner hash was not recorded.",
+});
 
 function json(value) {
   return JSON.stringify(value);
@@ -141,29 +156,19 @@ async function seedCorpus(baseUrl, corpus) {
   return { ids, spaces };
 }
 
-async function readSourceMetadata() {
-  try {
-    const readGit = (args) => {
-      const result = spawnSync("git", args, {cwd: root, encoding: "utf8", windowsHide: true});
-      if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr);
-      return result.stdout.trim();
-    };
-    return {head: readGit(["rev-parse", "HEAD"]), dirty: readGit(["status", "--porcelain", "--untracked-files=all"]).length > 0,
-      dirtyBasis: "git status --porcelain including staged, unstaged and nonignored untracked changes"};
-  } catch (error) { return {head: null, dirty: null, error: error.message}; }
-}
-
 function parseRunOptions(argv) {
   let limit;
+  let candidate = false;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--smoke") limit = 1;
+    if (argv[i] === "--candidate") candidate = true;
+    else if (argv[i] === "--smoke") limit = 1;
     else if (argv[i] === "--limit") {
       const value = Number(argv[++i]);
       if (!Number.isInteger(value) || value < 1 || value > 8) throw new Error("--limit must be an integer from 1 to 8");
       limit = value;
     } else throw new Error(`Unknown option: ${argv[i]}`);
   }
-  return limit ?? 8;
+  return { limit: limit ?? 8, candidate };
 }
 
 function listen(server) {
@@ -369,6 +374,9 @@ function citationFields(text) {
 }
 
 function gradeTrial({ task, strategy, id, text, trace, cli }) {
+  if (strategy === "outline-bounded" || strategy === "sections-bounded") {
+    return gradeCandidateTrial({ task, strategy, id, text, trace, cli });
+  }
   const citation = citationFields(text);
   const calls = trace.filter((entry) => entry.method === "tools/call");
   const readCalls = calls.filter((entry) => entry.params?.name === "wiki_read");
@@ -426,6 +434,137 @@ function gradeTrial({ task, strategy, id, text, trace, cli }) {
   };
 }
 
+function gradeCandidateTrial({ task, strategy, id, text, trace, cli }) {
+  const citation = citationFields(text);
+  const calls = trace.filter((entry) => entry.method === "tools/call");
+  const readCalls = calls.filter((entry) => entry.params?.name === "wiki_read");
+  const dataFor = (entry) => {
+    try { return JSON.parse(entry.result?.content?.filter((part) => part.type === "text").map((part) => part.text).join("")); }
+    catch { return null; }
+  };
+  const successful = (entry) => entry.result && !entry.result.isError && !entry.rpcError && !entry.proxyError
+    && (entry.http?.status ?? 200) < 400;
+  const toolsErrors = trace.filter((entry) => !entry.expectedProbe && (entry.rpcError || entry.isError || entry.proxyError || isHttpFailure(entry)));
+  const expectedAnchor = slugForHeading(task.headingTitle, task.headingOccurrence);
+  const indexedCalls = trace.map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.method === "tools/call");
+  const targetSearches = indexedCalls.filter(({ entry }) => entry.params?.name === "wiki_search" && successful(entry)
+    && dataFor(entry)?.results?.some((hit) => hit.id === id));
+  const sectionSearchHits = indexedCalls.flatMap(({ entry, index }) => {
+    if (entry.params?.name !== "wiki_search_sections" || !successful(entry)) return [];
+    return (dataFor(entry)?.results ?? []).filter((hit) => hit.id === id && hit.anchor === expectedAnchor)
+      .map((hit) => ({ hit, index }));
+  });
+  const outlineRecords = readCalls.map((entry) => ({ entry, index: trace.indexOf(entry) }))
+    .filter(({ entry }) => entry.params?.arguments?.id === id && entry.params?.arguments?.outline === true && successful(entry))
+    .filter(({ entry }) => {
+      const data = dataFor(entry);
+      const headings = data?.headings ?? data?.outline;
+      if (!Array.isArray(headings)) return false;
+      const occurrences = new Map();
+      return headings.some((heading) => {
+        const title = typeof heading === "string" ? heading : heading?.title;
+        if (typeof title !== "string") return heading?.anchor === expectedAnchor;
+        const occurrence = (occurrences.get(title) ?? 0) + 1;
+        occurrences.set(title, occurrence);
+        return (heading?.anchor ?? slugForHeading(title, occurrence)) === expectedAnchor;
+      });
+    });
+  const successfulReads = readCalls.filter(successful);
+  const targetBoundedReads = successfulReads.filter((entry) => {
+    const args = entry.params?.arguments ?? {};
+    const data = dataFor(entry);
+    return args.id === id && args.anchor === expectedAnchor && args.max_chars === 4000
+      && Number.isInteger(args.revision) && args.revision > 0
+      && data?.id === id && data?.anchor === expectedAnchor && data?.revision === args.revision
+      && data?.partial === true && typeof data.text === "string" && Number.isInteger(data.offset)
+      && Number.isInteger(data.chars) && data.chars === Array.from(data.text).length
+      && Number.isInteger(data.total_chars) && typeof data.has_more === "boolean";
+  });
+  const sameAddress = (left, right) => left && right
+    && left.id === right.id && left.revision === right.revision && left.anchor === right.anchor
+    && left.offset === right.offset && left.max_chars === right.max_chars;
+  const boundedEntries = targetBoundedReads.map((entry) => ({ entry, index: trace.indexOf(entry), args: entry.params.arguments, data: dataFor(entry) }));
+  const firstBounded = boundedEntries[0];
+  let boundedChainValid = boundedEntries.length > 0;
+  for (let index = 1; index < boundedEntries.length; index++) {
+    const prior = boundedEntries[index - 1];
+    const current = boundedEntries[index];
+    boundedChainValid = boundedChainValid && prior.data.has_more === true
+      && sameAddress(prior.data.next_read, current.args)
+      && current.args.offset === prior.data.offset + prior.data.chars
+      && current.data.total_chars === prior.data.total_chars
+      && current.data.revision === prior.data.revision && current.data.anchor === prior.data.anchor
+      && current.index > prior.index;
+  }
+  const chunkedText = boundedChainValid ? boundedEntries.map(({ data }) => data.text).join("") : "";
+  const boundedAnswer = chunkedText.includes(task.answer);
+  const answerFoundInCalls = calls.some((entry) => {
+    if (!successful(entry)) return false;
+    const data = dataFor(entry);
+    return (data?.id === id && String(data.body ?? data.section ?? data.text ?? "").includes(task.answer))
+      || data?.results?.some((hit) => hit.id === id && String(hit.snippet ?? "").includes(task.answer));
+  });
+  const retrievalSuccess = cli.code === 0 && !cli.timedOut && toolsErrors.length === 0 && answerFoundInCalls
+    && text.includes(task.answer) && !citation.cannotFind && citation.articleId === id;
+
+  let routeWorkflow = false;
+  let selectedSearchIndex = -1;
+  let selectedOutline = null;
+  if (strategy === "outline-bounded") {
+    const targetSearch = targetSearches.find(({ index }) => firstBounded && index < firstBounded.index);
+    selectedOutline = outlineRecords.find(({ index, entry }) => targetSearch && firstBounded
+      && index > targetSearch.index && index < firstBounded.index
+      && dataFor(entry).revision === firstBounded.args.revision);
+    selectedSearchIndex = targetSearch?.index ?? -1;
+    routeWorkflow = Boolean(targetSearch && selectedOutline && firstBounded
+      && (firstBounded.args.offset === 0 || firstBounded.args.offset === undefined));
+  } else {
+    const matching = sectionSearchHits.find(({ hit, index }) => {
+      const args = hit.read_args;
+      return firstBounded && index < firstBounded.index && args
+        && args.id === id && args.revision === hit.revision && args.anchor === expectedAnchor && args.max_chars === 4000;
+    });
+    const returnedArgs = matching?.hit.read_args;
+    selectedSearchIndex = matching?.index ?? -1;
+    routeWorkflow = Boolean(returnedArgs && firstBounded && sameAddress(returnedArgs, firstBounded.args));
+  }
+
+  const readRouteValid = readCalls.length > 0 && readCalls.every((entry) => {
+    const args = entry.params?.arguments ?? {};
+    if (strategy === "outline-bounded" && args.id === id && args.outline === true && successful(entry)
+      && outlineRecords.some((record) => record.entry === entry)) return true;
+    if (!targetBoundedReads.includes(entry)) return false;
+    return true;
+  });
+  const firstArgsMatchRoute = strategy === "outline-bounded"
+    ? Boolean(firstBounded && selectedOutline && firstBounded.args.revision === dataFor(selectedOutline.entry).revision)
+    : Boolean(firstBounded && sectionSearchHits.some(({ hit, index }) => index === selectedSearchIndex && sameAddress(hit.read_args, firstBounded.args)));
+  const routeCompliance = routeWorkflow && firstArgsMatchRoute && boundedChainValid && readRouteValid && boundedAnswer
+    && citation.articleId === id && citation.anchor === expectedAnchor;
+  const success = retrievalSuccess && routeCompliance;
+  return {
+    success,
+    hasAnswer: text.includes(task.answer),
+    retrievalSuccess,
+    supportsAnswer: answerFoundInCalls,
+    boundedAnswer,
+    routeCompliance,
+    policyAdherent: routeCompliance,
+    correctSectionRead: boundedAnswer,
+    reportsCannotFind: citation.cannotFind,
+    citedArticle: citation.articleId === id,
+    anchorEvidence: citation.anchor === expectedAnchor && boundedAnswer,
+    hasEvidence: targetBoundedReads.length > 0,
+    toolErrorCount: toolsErrors.length,
+    readCallCount: readCalls.length,
+    targetReadCallCount: readCalls.filter((entry) => entry.params?.arguments?.id === id).length,
+    validTargetReadCount: targetBoundedReads.length,
+    citation: { articleId: citation.articleId || null, anchor: citation.anchor || null },
+    cli: { exitCode: cli.code, signal: cli.signal, timedOut: cli.timedOut },
+  };
+}
+
 function slugForHeading(title, occurrence) {
   const base = title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "section";
   return occurrence > 1 ? `${base}-${occurrence}` : base;
@@ -447,7 +586,7 @@ function providerTokenCounts(usage) {
   return { inputTokens, cachedInputTokens, cacheCreationInputTokens, totalInputTokens, outputTokens, totalTokens };
 }
 
-async function runTrial({ trial, corpus, task, strategy, repeat, binaryPath, corpusHash }) {
+async function runTrial({ trial, corpus, task, strategy, repeat, binaryPath, corpusHash, candidateManifestSha256 }) {
   const trialDir = path.join(runRoot, trial.key);
   await mkdir(trialDir, { recursive: true });
   const dataDir = path.join(trialDir, "db");
@@ -470,7 +609,8 @@ async function runTrial({ trial, corpus, task, strategy, repeat, binaryPath, cor
     const isolatedCwd = await mkdtemp(path.join(tmpdir(), "aiwiki-agent-session-"));
     const configPath = path.join(trialDir, "mcp-config.json");
     await writeFile(configPath, `${json({ mcpServers: { benchwiki: { type: "http", url: proxy.url } } })}\n`, "utf8");
-    const policy = strategy === "full"
+    const candidate = strategy === "outline-bounded" || strategy === "sections-bounded";
+    const policy = candidate ? candidatePolicies[strategy] : strategy === "full"
       ? "Use wiki_search, then read the matching article with wiki_read and no outline or anchor so you see its full body."
       : "Use wiki_search, read the matching article with wiki_read outline=true, then read only the relevant section using its returned anchor.";
     const prompt = [
@@ -505,6 +645,8 @@ async function runTrial({ trial, corpus, task, strategy, repeat, binaryPath, cor
       key: trial.key,
       task: task.key,
       strategy,
+      questionVersion: candidate ? candidateQuestionVersion : null,
+      candidateManifestSha256: candidate ? candidateManifestSha256 : null,
       status: cliCompleted ? "completed" : "infrastructure_failure",
       infrastructureFailure: cliCompleted ? null : {
         type: cli.timedOut ? "claude_timeout" : cli.code !== 0 ? "claude_nonzero_exit" : "invalid_claude_result",
@@ -598,16 +740,28 @@ async function buildServer(binaryPath) {
 
 async function main() {
   const runnerSha256 = sha256(await readFile(fileURLToPath(import.meta.url)));
-  const limit = parseRunOptions(process.argv.slice(2));
-  const cliVersion = getClaudeVersion();
+  const { limit, candidate } = parseRunOptions(process.argv.slice(2));
   const corpus = makeCorpus();
   const corpusHash = sha256(json(corpus));
-  const tasks = corpus.readTasks.filter((task) => ["r02", "r06"].includes(task.key));
+  const tasks = corpus.readTasks.filter((task) => ["r02", "r06"].includes(task.key))
+    .map((task) => candidate ? { ...task, query: candidateQuestions[task.key] } : task);
   if (tasks.length !== 2) throw new Error("Expected frozen read fixtures r02 and r06");
+  const candidateManifest = candidate ? {
+    format: "agent-candidate-manifest-v1",
+    questionVersion: candidateQuestionVersion,
+    questions: candidateQuestions,
+    policies: candidatePolicies,
+    design: { tasks: ["r02", "r06"], repeatsPerTaskPolicy: 2, plannedTrials: 8, model, effort: "low", counterbalanced: true },
+    fixture: { version: corpus.version, sha256: corpusHash },
+    historicalBaseline,
+    runnerSha256,
+  } : null;
+  const candidateManifestSha256 = candidateManifest ? sha256(json(candidateManifest)) : null;
   await mkdir(runRoot, { recursive: true });
+  if (candidateManifest) await writeFile(path.join(runRoot, "candidate-manifest.json"), `${JSON.stringify({ ...candidateManifest, manifestSha256: candidateManifestSha256 }, null, 2)}\n`, "utf8");
+  const cliVersion = getClaudeVersion();
   const binaryPath = path.join(runRoot, process.platform === "win32" ? "aiwiki.exe" : "aiwiki");
   await buildServer(binaryPath);
-  const sourceMetadata = await readSourceMetadata();
   const binarySha256 = sha256(await readFile(binaryPath));
 
   const trials = [];
@@ -615,7 +769,9 @@ async function main() {
   for (let repeat = 1; repeat <= 2; repeat++) {
     for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
       const task = tasks[taskIndex];
-      const strategies = (repeat + taskIndex) % 2 === 0 ? ["outline", "full"] : ["full", "outline"];
+      const strategies = candidate
+        ? ((repeat + taskIndex) % 2 === 0 ? ["outline-bounded", "sections-bounded"] : ["sections-bounded", "outline-bounded"])
+        : ((repeat + taskIndex) % 2 === 0 ? ["outline", "full"] : ["full", "outline"]);
       for (const strategy of strategies) {
         order++;
         trials.push({ key: `trial-${String(order).padStart(2, "0")}`, order, task, strategy, repeat });
@@ -628,7 +784,7 @@ async function main() {
   for (const trial of selectedTrials) {
     process.stdout.write(`Running ${trial.key}: ${trial.task.key}/${trial.strategy}, repeat ${trial.repeat}\n`);
     try {
-      results.push(await runTrial({ trial, task: trial.task, strategy: trial.strategy, repeat: trial.repeat, corpus, binaryPath, corpusHash }));
+      results.push(await runTrial({ trial, task: trial.task, strategy: trial.strategy, repeat: trial.repeat, corpus, binaryPath, corpusHash, candidateManifestSha256 }));
     } catch (error) {
       results.push({
         key: trial.key,
@@ -646,16 +802,17 @@ async function main() {
   const qualitySuccesses = completed.filter((trial) => trial.result?.success).length;
   const infrastructureFailures = results.length - completed.length;
   const summary = {
-    format: "agent-trials-v1",
+    format: candidate ? "agent-trials-candidate-v1" : "agent-trials-v1",
     createdAt: new Date().toISOString(),
     model,
     cliVersion,
     effort: "low",
     environment: { node: process.version, platform: process.platform, arch: process.arch },
-    source: sourceMetadata,
+    source: { runnerSha256, corpusSha256: corpusHash, historicalBaseline: candidate ? historicalBaseline : null },
     runnerSha256,
     serverBinarySha256: binarySha256,
     fixture: { version: corpus.version, documentCount: corpus.documents.length, sha256: corpusHash, tasks: tasks.map(({ key }) => key) },
+    candidate: candidate ? { questionVersion: candidateQuestionVersion, manifestSha256: candidateManifestSha256, manifestFile: "candidate-manifest.json" } : null,
     design: {
       strategyCount: 2,
       repeatsPerTaskStrategy: 2,
@@ -669,6 +826,7 @@ async function main() {
       qualityDenominator: completed.length,
       qualitySuccesses,
       retrievalSuccesses: completed.filter(trial => trial.result?.retrievalSuccess).length,
+      routeComplianceSuccesses: completed.filter(trial => trial.result?.routeCompliance ?? trial.result?.policyAdherent).length,
       qualityFailures: completed.length - qualitySuccesses,
       qualitySuccessRate: completed.length ? qualitySuccesses / completed.length : null,
       parallelism: 1,

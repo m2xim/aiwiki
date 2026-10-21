@@ -1,4 +1,4 @@
-// MCP baseline benchmark runner. The method contract is METHODOLOGY.md; read it first.
+// MCP baseline and scripted candidate benchmark runner. See both methodology files.
 //
 // Builds the real server from this repository, starts it as a child process on a
 // loopback ephemeral port with a fresh data directory under .cache/mcp-bench-*,
@@ -30,6 +30,9 @@ const TOKENIZER_VERSION = "1.0.21";
 const ENCODING = "cl100k_base";
 const MIN_REPETITIONS = 5;
 const SEARCH_LIMIT = 10; // top-10 page; top-5 is its prefix
+const SECTION_SEARCH_LIMIT = 5;
+const BOUNDED_READ_CHARS = 4000;
+const MAX_BOUNDED_PAGES = 128;
 const BUILD_TIMEOUT_MS = 5 * 60 * 1000;
 const HEALTH_TIMEOUT_MS = 30 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 1000;
@@ -49,12 +52,12 @@ const DEFINITIONS = {
   tokenizerScope: "fixed tokenizer proxy: not Claude tokens, not billed usage, not full chat serialization; SDK prefixes and JSON-RPC envelope are not tokenized",
   durationMs: "monotonic (performance.now) local HTTP request-to-body-read time, summed over the calls of a task; script time between calls excluded",
   percentiles: "nearest rank on sorted samples: value at index ceil(p*n/100)-1; used for both median (p50) and p95; p95IsMax flags when p95 is the sample maximum (n <= 19)",
-  tasks: "scripted tasks; B and C use fixture ground truth to choose the heading (oracle), so they are payload costs, not autonomous success",
+  tasks: "scripted tasks; B/C choose the heading with fixture ground truth, D chooses section-search rank 1 without oracle filtering, and E uses a known target anchor as an oracle lower bound",
 };
 
 const LIMITATIONS = [
-  "No LLM run: scripted calls only; no reasoning, autonomous navigation, answer grading or provider usage/billing is measured.",
-  "Search is article-level only; there is no section-level search candidate, so section selection in B/C is a fixture oracle (C is a known-anchor lower bound).",
+  "No LLM run: scripted calls only; no model reasoning, autonomous navigation or provider usage/billing is measured. Candidate answers and sources are graded against fixture literals.",
+  "Baseline A/B/C retains article-level search; B/C select sections with fixture ground truth. Candidate D uses section-search top-1 without oracle filtering, while E is a known-target-anchor lower bound.",
   "Tokens are a cl100k_base proxy (js-tiktoken), not Claude tokens; SDK-specific prefixes and JSON-RPC envelopes are not tokenized.",
   "Local loopback HTTP on one machine: clocks, OS scheduling, GC and SQLite caching add noise; durations are not model latency or production latency.",
   "No ACL/authentication (the app is unauthenticated), no concurrency load, no production-scale data: sample counts are small and are not capacity measurements.",
@@ -538,9 +541,14 @@ async function resolveReadContexts(corpus) {
     const state = ctx.docs.get(task.articleKey);
     const { parsed } = await callTool("wiki_read", { id: state.id, outline: true }, newMeta("setup", `anchor:${task.key}`));
     const h = pickHeading(parsed.headings, task.headingTitle, task.headingOccurrence);
+    const section = await callTool("wiki_read", { id: state.id, anchor: h.anchor }, newMeta("setup", `section-offset:${task.key}`));
+    const sectionText = String(section.parsed.section ?? "");
+    const answerIndex = sectionText.indexOf(task.answer);
+    if (answerIndex < 0) throw new Error(`setup: answer ${task.key} is not inside its expected section`);
+    const answerOffset = Array.from(sectionText.slice(0, answerIndex)).length;
     info.set(task.key, {
       id: state.id, anchor: h.anchor, level: h.level, sectionChars: h.chars, bodyChars: parsed.chars, bodyBytes: utf8Bytes(state.body),
-      headings: parsed.headings.length, answerOccurrencesInBody: countOccurrences(state.body, task.answer),
+      headings: parsed.headings.length, answerOccurrencesInBody: countOccurrences(state.body, task.answer), answerOffsetWithinSection: answerOffset,
     });
   }
   return info;
@@ -564,7 +572,7 @@ async function measureSetupOverhead(firstSpaceId) {
   const note = await mcpRequest("notifications/initialized", undefined, meta, { notification: true });
   const list = await mcpRequest("tools/list", {}, meta, { tokensFor: (r) => ({ args: null, content: ctx.countTokens(JSON.stringify(r.tools)) }) });
   const names = list.result.tools.map((t) => t.name);
-  for (const need of ["wiki_bootstrap", "wiki_search", "wiki_read", "wiki_edit", "wiki_write"]) {
+  for (const need of ["wiki_bootstrap", "wiki_search", "wiki_search_sections", "wiki_read", "wiki_edit", "wiki_write"]) {
     if (!names.includes(need)) throw new Error(`tools/list lacks ${need}`);
   }
   const scope = [];
@@ -695,6 +703,148 @@ async function runReadTask(strategy, task, info, phase, repetition) {
   }
   if (!verified) fail(scenario, strategy, repetition, "answer literal not found in returned content", task.answer);
   return { task: task.key, strategy, rep: repetition, ...sumScope(scope), payloadSha256: sha256(scope.map((call) => call.payloadSha256).join("|")), answerInSearchSnippet: search.parsed.results.some((hit) => String(hit.snippet ?? "").includes(task.answer)), targetInSearchPage: rankIndex >= 0, targetRank: rankIndex >= 0 ? rankIndex + 1 : null, searchMode: search.parsed.mode ?? "", verified };
+}
+
+// D/E use bounded reads with explicit revision-pinned continuation arguments.
+// Tool-level and address errors are classified as protocol failures by the caller.
+async function boundedPages(firstArgs, task, meta, stopWhenFound) {
+  let args = firstArgs;
+  let collected = "";
+  let pages = 0;
+  let hasMore = false;
+  let error = null;
+  let firstResult = null;
+  let addressValid = true;
+  const addressChecks = [];
+  while (pages < MAX_BOUNDED_PAGES) {
+    const call = await callTool("wiki_read", args, meta, "either");
+    pages++;
+    if (call.isError) { error = call.text; break; }
+    const parsed = call.parsed;
+    if (!parsed || typeof parsed.text !== "string") { error = "bounded wiki_read response did not contain text"; break; }
+    if (firstResult === null) firstResult = parsed;
+    const check = {
+      id: parsed.id === args.id,
+      revision: parsed.revision === args.revision,
+      anchor: String(parsed.anchor ?? "") === String(args.anchor ?? ""),
+    };
+    addressChecks.push(check);
+    if (!check.id || !check.revision || !check.anchor) addressValid = false;
+    collected += parsed.text;
+    hasMore = parsed.has_more === true;
+    if (stopWhenFound && collected.includes(task.answer)) break;
+    if (!hasMore) break;
+    if (!parsed.next_read || typeof parsed.next_read !== "object") { error = "has_more response omitted next_read"; break; }
+    if (parsed.next_read.id !== firstArgs.id || parsed.next_read.revision !== firstArgs.revision || String(parsed.next_read.anchor ?? "") !== String(firstArgs.anchor ?? "")) {
+      addressValid = false;
+    }
+    args = parsed.next_read;
+  }
+  const capReached = pages >= MAX_BOUNDED_PAGES && hasMore && !collected.includes(task.answer);
+  return { collected, pages, hasMore, error, firstResult, capReached, addressValid, addressChecks };
+}
+
+async function runCandidateTask(strategy, task, info, phase, repetition) {
+  const scope = [];
+  const scenario = `read:${task.key}`;
+  const meta = newMeta(phase, scenario, strategy, repetition, scope);
+  const state = ctx.docs.get(task.articleKey);
+  let sectionHits = [];
+  let read = { collected: "", pages: 0, error: null, firstResult: null, capReached: false, addressValid: false, addressChecks: [] };
+  let snippetAnswer = false;
+  let selected = null;
+  let searchError = null;
+  if (strategy === "D") {
+    const searched = await callTool("wiki_search_sections", { q: task.query, limit: SECTION_SEARCH_LIMIT }, meta, "either");
+    if (!searched.isError) sectionHits = searched.parsed.results ?? [];
+    else searchError = searched.text;
+    snippetAnswer = sectionHits.some((hit) => String(hit.snippet ?? "").includes(task.answer));
+    selected = sectionHits[0] ?? null; // rank only; never inspect fixture labels before selection
+    if (selected) {
+      const readArgs = { ...selected.read_args, max_chars: BOUNDED_READ_CHARS };
+      read = await boundedPages(readArgs, task, meta, true);
+    } else if (searched.isError) {
+      read.addressValid = true;
+    } else {
+      read.addressValid = true; // no top-1 means no read address was expected
+    }
+  } else {
+    const firstArgs = { id: state.id, anchor: info.anchor, revision: state.revision, max_chars: BOUNDED_READ_CHARS };
+    read = await boundedPages(firstArgs, task, meta, true);
+  }
+  const selectedArticleKey = selected ? [...ctx.docs].find(([, v]) => v.id === selected.id)?.[0] ?? null : strategy === "E" ? task.articleKey : null;
+  const selectedAnchor = selected ? String(selected.anchor ?? "") : strategy === "E" ? info.anchor : null;
+  const rightArticle = selectedArticleKey === task.articleKey;
+  const rightAnchor = selectedAnchor === info.anchor;
+  const answerFound = read.collected.includes(task.answer);
+  const searchProtocolFailure = Boolean(searchError);
+  const readProtocolFailure = Boolean(read.error || ((strategy === "E" || selected) && !read.addressValid));
+  const protocolFailure = searchProtocolFailure || readProtocolFailure;
+  const verified = rightArticle && rightAnchor && answerFound && !protocolFailure && !read.capReached;
+  const failureKind = verified ? null : searchProtocolFailure ? "protocol_failure" : readProtocolFailure ? "protocol_failure" : read.capReached ? "page_cap" : !selected && strategy === "D" ? "no_section_hit" : !rightArticle || !rightAnchor ? "wrong_source" : !answerFound && rightArticle && rightAnchor && info.answerOffsetWithinSection < (selected ? Number(selected.read_args?.offset ?? 0) : 0) ? "answer_before_read_start" : "answer_not_found";
+  if (searchProtocolFailure) fail(scenario, strategy, repetition, "candidate section-search protocol", searchError);
+  if (readProtocolFailure) fail(scenario, strategy, repetition, "candidate bounded-read protocol", read.error ?? JSON.stringify(read.addressChecks));
+  const selectedReadOffset = Number(selected ? selected.read_args?.offset ?? 0 : 0);
+  const expectedAnswerOffset = info.answerOffsetWithinSection;
+  return {
+    task: task.key, strategy, rep: repetition, ...sumScope(scope),
+    payloadSha256: sha256(scope.map((call) => call.payloadSha256).join("|")),
+    selectedArticle: selectedArticleKey, selectedAnchor, rightArticle, rightAnchor,
+    answerFound, verified, failureKind, protocolFailure, protocolFailureSource: searchProtocolFailure ? "section_search" : readProtocolFailure ? "bounded_read" : null,
+    readAddressesValid: read.addressValid, readPages: read.pages, continuationUsed: read.pages > 1,
+    selectedReadOffset, expectedAnswerOffset,
+    stopConditionOracleAssisted: true,
+    pageCapReached: read.capReached, toolError: read.error,
+    answerInSearchSnippet: snippetAnswer, forcedReadAfterSnippetAnswer: strategy === "D" && snippetAnswer && read.pages > 0,
+    top5ArticleAnchorHit: strategy === "D" ? sectionHits.some((hit) => hit.id === state.id && String(hit.anchor ?? "") === info.anchor) : null,
+    top5HitCount: strategy === "D" ? sectionHits.length : null,
+    searchError,
+  };
+}
+
+function summarizeCandidates(records, taskKeys, repetitions) {
+  const byTask = ["D", "E"].flatMap((strategy) => taskKeys.map((task) => {
+    const mine = records.filter((r) => r.strategy === strategy && r.task === task);
+    const first = mine[0];
+    const stable = mine.every((r) => r.payloadSha256 === first?.payloadSha256);
+    return {
+      strategy, task, runs: mine.length, verified: mine.filter((r) => r.verified).length,
+      rightArticle: mine.filter((r) => r.rightArticle).length,
+      rightAnchor: mine.filter((r) => r.rightAnchor).length,
+      answerFound: mine.filter((r) => r.answerFound).length,
+      metrics: Object.fromEntries(METRICS.map((m) => [m, stats(mine.map((r) => r[m]))])),
+      readPages: stats(mine.map((r) => r.readPages)),
+      answerInSearchSnippet: mine.filter((r) => r.answerInSearchSnippet).length,
+      forcedReadAfterSnippetAnswer: mine.filter((r) => r.forcedReadAfterSnippetAnswer).length,
+      payloadStableAcrossRepetitions: stable,
+      protocolFailures: mine.filter((r) => r.protocolFailure).length,
+      failures: mine.filter((r) => !r.verified).map((r) => ({ rep: r.rep, kind: r.failureKind, rightArticle: r.rightArticle, rightAnchor: r.rightAnchor, answerFound: r.answerFound, selectedReadOffset: r.selectedReadOffset, expectedAnswerOffset: r.expectedAnswerOffset, protocolFailureSource: r.protocolFailureSource, toolError: r.toolError, searchError: r.searchError, pageCapReached: r.pageCapReached })),
+    };
+  }));
+  return {
+    repetitions, scope: "per-task only; no pooled ratios or cross-task cost aggregates",
+    labels: {
+      D: "wiki_search_sections(original task.query, limit 5), rank-1 section, bounded read + continuation; no oracle filtering for selection; fixture answer literal controls stop condition",
+      E: "known target article and anchor, bounded read + continuation; oracle lower bound",
+    },
+    stopCondition: "D and E stop when the fixture's literal answer is present in collected read text or the section ends; this is oracle-assisted stopping, not autonomous agent behavior",
+    stopConditionOracleAssisted: true,
+    byStrategy: Object.fromEntries(["D", "E"].map((strategy) => {
+      const mine = records.filter((r) => r.strategy === strategy);
+      return [strategy, {
+        runs: mine.length, verified: mine.filter((r) => r.verified).length,
+        answerInSearchSnippet: mine.filter((r) => r.answerInSearchSnippet).length,
+        forcedReadAfterSnippetAnswer: mine.filter((r) => r.forcedReadAfterSnippetAnswer).length,
+        top5ArticleAnchorHits: strategy === "D" ? mine.filter((r) => r.top5ArticleAnchorHit).length : null,
+        top5Coverage: strategy === "D" ? { denominator: mine.length, hits: mine.filter((r) => r.top5ArticleAnchorHit).length, rate: mine.length ? mine.filter((r) => r.top5ArticleAnchorHit).length / mine.length : null } : null,
+        failures: mine.filter((r) => !r.verified).length,
+        protocolFailures: mine.filter((r) => r.protocolFailure).length,
+      }];
+    })),
+    byTask,
+    payloadStability: byTask.map(({ strategy, task, payloadStableAcrossRepetitions }) => ({ strategy, task, stable: payloadStableAcrossRepetitions })),
+    perRun: records,
+  };
 }
 
 // ---------------------------------------------------------------- write comparison
@@ -828,6 +978,69 @@ async function checkHistoricalAnchorAfterRename(results, task, rep) {
     ensure(current.isError ? /heading not found/.test(current.text) : current.parsed.section !== original, "old anchor on the current revision unexpectedly returned the original section");
     const after = await callTool("wiki_read", { id: clone.id, outline: true }, meta);
     ensure(after.parsed.revision === edit.parsed.revision && after.parsed.headings.some((x) => x.title === newTitle), "renamed heading is missing from the current outline");
+  });
+}
+
+async function checkLongSectionReconstruction(results, task, info, rep) {
+  await guarded(results, "boundedLongSectionExactReconstruction", task, rep, async (details) => {
+    const state = ctx.docs.get(task.articleKey);
+    const meta = newMeta("correctness", `correctness:reconstruct:${task.key}`, "bounded-read", rep);
+    const full = await callTool("wiki_read", { id: state.id, anchor: info.anchor }, meta);
+    ensure(typeof full.parsed.section === "string", "full section read omitted section text");
+    let args = { id: state.id, anchor: info.anchor, revision: full.parsed.revision, max_chars: BOUNDED_READ_CHARS };
+    let actual = "";
+    let pages = 0;
+    for (; pages < MAX_BOUNDED_PAGES; pages++) {
+      const page = await callTool("wiki_read", args, meta);
+      ensure(page.parsed.revision === full.parsed.revision, "bounded page changed revision during reconstruction");
+      actual += page.parsed.text;
+      if (!page.parsed.has_more) { pages++; break; }
+      ensure(page.parsed.next_read, "bounded page omitted next_read");
+      args = page.parsed.next_read;
+    }
+    ensure(pages < MAX_BOUNDED_PAGES, "page cap reached before section reconstruction completed");
+    ensure(actual === full.parsed.section, "concatenated bounded pages differ from full section");
+    details.revision = full.parsed.revision;
+    details.pages = pages;
+    details.sectionChars = full.parsed.section.length;
+    details.exact = true;
+  });
+}
+
+async function checkHistoricalBoundedContinuation(results, task, rep) {
+  await guarded(results, "boundedContinuationUsesPinnedRevisionAfterEdit", task, rep, async (details) => {
+    const scenario = `correctness:bounded-history:${task.key}`;
+    const clone = await makeClone(task.articleKey, newMeta("setup", scenario, null, rep));
+    const meta = newMeta("correctness", scenario, null, rep);
+    const before = await callTool("wiki_read", { id: clone.id }, meta);
+    const outline = await callTool("wiki_read", { id: clone.id, outline: true }, meta);
+    const h = pickHeading(outline.parsed.headings, task.headingTitle, task.headingOccurrence);
+    const section = await callTool("wiki_read", { id: clone.id, anchor: h.anchor }, meta);
+    ensure(section.parsed.section.length > BOUNDED_READ_CHARS, "fixture section is too short to exercise continuation");
+    const first = await callTool("wiki_read", { id: clone.id, anchor: h.anchor, revision: before.parsed.revision, max_chars: BOUNDED_READ_CHARS }, meta);
+    ensure(first.parsed.has_more && first.parsed.next_read, "first bounded read did not offer a continuation");
+    const expectedRevision = before.parsed.revision;
+    const expectedSection = section.parsed.section;
+    const edit = await callTool("wiki_write", { id: clone.id, article: { body: `${before.parsed.body}\n\nREVISION-CONTINUATION-CHECK`, base_revision: expectedRevision, author: AUTHOR, message: "bounded continuation correctness check" } }, meta);
+    ensure(edit.parsed.revision === expectedRevision + 1, "edit did not advance revision exactly once");
+    let args = first.parsed.next_read;
+    let actual = first.parsed.text;
+    let pages = 1;
+    while (pages < MAX_BOUNDED_PAGES) {
+      const next = await callTool("wiki_read", args, meta);
+      ensure(next.parsed.revision === expectedRevision, "continuation silently switched to the edited revision");
+      actual += next.parsed.text;
+      pages++;
+      if (!next.parsed.has_more) break;
+      ensure(next.parsed.next_read, "continuation omitted next_read");
+      args = next.parsed.next_read;
+    }
+    ensure(pages < MAX_BOUNDED_PAGES, "page cap reached during historical continuation");
+    ensure(actual === expectedSection, "historical continuation did not reconstruct the original section");
+    details.originalRevision = expectedRevision;
+    details.editedRevision = edit.parsed.revision;
+    details.pages = pages;
+    details.exactOriginalSnapshot = true;
   });
 }
 
@@ -968,6 +1181,7 @@ async function main() {
       files: {
         runnerSha256: sha256(fs.readFileSync(fileURLToPath(import.meta.url))),
         methodologySha256: sha256(fs.readFileSync(path.join(BENCH_DIR, "METHODOLOGY.md"))),
+        candidateMethodologySha256: sha256(fs.readFileSync(path.join(BENCH_DIR, "CANDIDATE-METHODOLOGY.md"))),
       },
       platform: { os: process.platform, arch: process.arch, release: os.release(), cpu: os.cpus()[0]?.model ?? null, cpus: os.cpus().length, memoryBytes: os.totalmem() },
       node: process.version,
@@ -1023,6 +1237,18 @@ async function main() {
       searchHits: Object.fromEntries(readStrategies.map((s) => [s, observedHits(readRecords, s)])),
     };
 
+    // ---- scripted candidates are separate from frozen baseline A/B/C/write
+    log("candidate reads D/E");
+    const candidateStrategies = ["D", "E"];
+    for (const task of corpus.readTasks) for (const s of orderFor(1, candidateStrategies)) await runCandidateTask(s, task, taskInfo.get(task.key), "warmup", 0);
+    const candidateRecords = [];
+    for (const rep of reps) {
+      for (const task of corpus.readTasks) {
+        for (const s of orderFor(rep, candidateStrategies)) candidateRecords.push(await runCandidateTask(s, task, taskInfo.get(task.key), "measure", rep));
+      }
+    }
+    summary.candidates = summarizeCandidates(candidateRecords, corpus.readTasks.map((t) => t.key), opts.repetitions);
+
     // ---- write: runs after reads/search because each run adds clone articles to the wiki
     log("write");
     const eligible = corpus.readTasks.filter((t) => taskInfo.get(t.key).answerOccurrencesInBody === 1);
@@ -1057,6 +1283,10 @@ async function main() {
       }
       for (const task of renameTasks) await checkHistoricalAnchorAfterRename(correctness, task, rep);
     }
+    const longSectionTask = corpus.readTasks.find((t) => t.key === "r06");
+    if (longSectionTask) await checkLongSectionReconstruction(correctness, longSectionTask, taskInfo.get(longSectionTask.key), 1);
+    const historicalTask = corpus.readTasks.find((t) => t.key === "r04");
+    if (historicalTask) await checkHistoricalBoundedContinuation(correctness, historicalTask, 1);
     const byCheck = {};
     for (const c of correctness) {
       byCheck[c.check] ??= { runs: 0, passed: 0, failed: 0 };
@@ -1089,6 +1319,7 @@ async function main() {
     setupOverhead: summary.setup && summary.setup.setupOverhead.overhead,
     search: summary.search && { recallAt5: summary.search.overall.withGroundTruth.recallAt5, recallAt10: summary.search.overall.withGroundTruth.recallAt10, mrrAt10: summary.search.overall.withGroundTruth.mrrAt10, noHitAccuracy: summary.search.overall.noHit.accuracy, modes: summary.search.overall.modeCounts, medianMs: summary.search.overall.durationMs.median, p95Ms: summary.search.overall.durationMs.p95 },
     read: summary.read && Object.fromEntries(Object.entries(summary.read.byStrategy).map(([k, v]) => [k, { ...pick(v), failedVerification: v.failedVerification }])),
+    candidates: summary.candidates && summary.candidates.byStrategy,
     write: summary.write && Object.fromEntries(Object.entries(summary.write.byStrategy).map(([k, v]) => [k, { ...pick(v), failedVerification: v.failedVerification }])),
     correctness: summary.correctness && summary.correctness.byCheck,
     failures: ctx.failures.length,

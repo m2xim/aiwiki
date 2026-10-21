@@ -1,0 +1,516 @@
+{
+  "format": "aiwiki-section-navigation-results-v1",
+  "measuredAt": "2026-10-21T19:38:40.665Z",
+  "status": "ok",
+  "repetitions": 20,
+  "source": {
+    "commit": "27c517e7ca257ca8ec7f3f3f6449ce891818487a",
+    "dirty": true,
+    "binarySha256": "3bd1eb48a9db99bbb9f56694635bf155e18458e4b9839e37d343fd79198b709b",
+    "runnerSha256": "d07f95c7a2a1b29b97bd4a8daabb96d7ecaa79f42e9e401ea2ece83e6e30ffb4",
+    "methodologySha256": "b2d6cabca520082cd5d1ec9756b03c7d2bab9eef779d7ae77408b6dde2b3277c",
+    "candidateMethodologySha256": "cc026af888d470b200e24bc19ff3dadbaac84c4e5ea67eb3254f768a4bf335d9"
+  },
+  "corpus": {
+    "version": "mcp-baseline-v1",
+    "fileSha256": "93199de804bdb1b3d8216d6d087f0e84165de93a0f29d85d783cbf542339c923",
+    "contentSha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16"
+  },
+  "environment": {
+    "node": "v24.14.1",
+    "go": "go version go1.25.6 windows/amd64",
+    "os": "win32",
+    "tokenizer": {
+      "package": "js-tiktoken",
+      "version": "1.0.21",
+      "encoding": "cl100k_base",
+      "api": "getEncoding",
+      "specialTokens": "counted as ordinary text"
+    }
+  },
+  "rawEvidence": {
+    "summarySha256": "03867f93e18829ee4c1f3955fb0ab4cdb2fadddec464952092e52034f4e8639f",
+    "tracesSha256": "e0a15fb523fe51f1a4d6b11369de92a627dd3ff61fdbdb60c64c9e2bfea42501"
+  },
+  "setupProxy": {
+    "calls": 1,
+    "requests": 4,
+    "requestBytes": 420,
+    "responseBytes": 20026,
+    "totalBytes": 20446,
+    "outputTokens": 29,
+    "inputTokens": 4557,
+    "totalTokens": 4586,
+    "durationMs": 2.113
+  },
+  "search": null,
+  "rows": [
+    {
+      "task": "r01",
+      "bodyChars": 1450,
+      "sectionChars": 297,
+      "A": 2722,
+      "B": 2483,
+      "C": 2233,
+      "D": {
+        "tokens": 1332,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      },
+      "E": {
+        "tokens": 250,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      }
+    },
+    {
+      "task": "r02",
+      "bodyChars": 12000,
+      "sectionChars": 261,
+      "A": 6016,
+      "B": 2551,
+      "C": 2315,
+      "D": {
+        "tokens": 1435,
+        "verified": 0,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      },
+      "E": {
+        "tokens": 227,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      }
+    },
+    {
+      "task": "r03",
+      "bodyChars": 12500,
+      "sectionChars": 208,
+      "A": 5754,
+      "B": 2118,
+      "C": 1894,
+      "D": {
+        "tokens": 1116,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      },
+      "E": {
+        "tokens": 184,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      }
+    },
+    {
+      "task": "r04",
+      "bodyChars": 70000,
+      "sectionChars": 70000,
+      "A": 22457,
+      "B": 22509,
+      "C": 22344,
+      "D": {
+        "tokens": 2312,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      },
+      "E": {
+        "tokens": 1369,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      }
+    },
+    {
+      "task": "r05",
+      "bodyChars": 2400,
+      "sectionChars": 189,
+      "A": 1568,
+      "B": 981,
+      "C": 778,
+      "D": {
+        "tokens": 716,
+        "verified": 0,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      },
+      "E": {
+        "tokens": 149,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      }
+    },
+    {
+      "task": "r06",
+      "bodyChars": 90000,
+      "sectionChars": 2672,
+      "A": 29672,
+      "B": 3165,
+      "C": 2947,
+      "D": {
+        "tokens": 1338,
+        "verified": 0,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      },
+      "E": {
+        "tokens": 891,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      }
+    },
+    {
+      "task": "r07",
+      "bodyChars": 520,
+      "sectionChars": 232,
+      "A": 2534,
+      "B": 2534,
+      "C": 2335,
+      "D": {
+        "tokens": 1500,
+        "verified": 0,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      },
+      "E": {
+        "tokens": 215,
+        "verified": 20,
+        "runs": 20,
+        "pages": 1,
+        "stable": true
+      }
+    }
+  ],
+  "candidateQuality": {
+    "D": {
+      "runs": 140,
+      "verified": 60,
+      "answerInSearchSnippet": 80,
+      "forcedReadAfterSnippetAnswer": 80,
+      "top5ArticleAnchorHits": 100,
+      "top5Coverage": {
+        "denominator": 140,
+        "hits": 100,
+        "rate": 0.7142857142857143
+      },
+      "failures": 80,
+      "protocolFailures": 0
+    },
+    "E": {
+      "runs": 140,
+      "verified": 140,
+      "answerInSearchSnippet": 0,
+      "forcedReadAfterSnippetAnswer": 0,
+      "top5ArticleAnchorHits": null,
+      "top5Coverage": null,
+      "failures": 0,
+      "protocolFailures": 0
+    }
+  },
+  "correctness": {
+    "staleRevisionRejected": {
+      "runs": 40,
+      "passed": 40,
+      "failed": 0
+    },
+    "concurrentEditExactlyOneWinner": {
+      "runs": 40,
+      "passed": 40,
+      "failed": 0
+    },
+    "historicalSectionAfterHeadingRename": {
+      "runs": 40,
+      "passed": 40,
+      "failed": 0
+    },
+    "boundedLongSectionExactReconstruction": {
+      "runs": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    "boundedContinuationUsesPinnedRevisionAfterEdit": {
+      "runs": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "failures": [],
+  "pilot": {
+    "format": "agent-trials-candidate-v1",
+    "design": {
+      "strategyCount": 2,
+      "repeatsPerTaskStrategy": 2,
+      "plannedTrials": 8,
+      "attemptedTrials": 8,
+      "complete": true,
+      "limitedRun": false,
+      "isolatedSessions": 8,
+      "completedTrials": 8,
+      "infrastructureFailures": 0,
+      "qualityDenominator": 8,
+      "qualitySuccesses": 6,
+      "retrievalSuccesses": 8,
+      "routeComplianceSuccesses": 6,
+      "qualityFailures": 2,
+      "qualitySuccessRate": 0.75,
+      "parallelism": 1,
+      "timeoutSeconds": 180
+    },
+    "source": {
+      "runnerSha256": "d78cc1dcb4ad2170e828efbb890ce1fdac89b4d4b5c5486e1eb9860caa0f6d0a",
+      "corpusSha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+      "historicalBaseline": {
+        "resultsDate": "2026-10-21",
+        "runnerSha256": "49ded6dce54f5a8e32a88365783a36d86cf7f531b3d6cede9cb993be76c3dcbd",
+        "corpusSha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+        "caveat": "Historical source hash is the published runner hash; the executed pilot runner hash was not recorded."
+      }
+    },
+    "candidate": {
+      "questionVersion": "candidate-v1-capacity-observations",
+      "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c",
+      "manifestFile": "candidate-manifest.json"
+    },
+    "model": "claude-sonnet-5-5",
+    "cliVersion": "2.1.301 (Claude Code)",
+    "serverBinarySha256": "3bd1eb48a9db99bbb9f56694635bf155e18458e4b9839e37d343fd79198b709b",
+    "rawSha256": "f3d67e00ba1658f127b7860e8da9830402d1cfb305f519cacccd70e1dac7d9eb",
+    "trials": [
+      {
+        "key": "trial-01",
+        "task": "r02",
+        "strategy": "sections-bounded",
+        "repeat": 1,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "success": true,
+        "providerTokenCounts": {
+          "inputTokens": 8,
+          "cachedInputTokens": 27063,
+          "cacheCreationInputTokens": 11336,
+          "totalInputTokens": 38407,
+          "outputTokens": 450,
+          "totalTokens": 38857
+        },
+        "model": "claude-sonnet-5-5",
+        "numTurns": 4,
+        "cliDurations": {
+          "durationMs": 8590,
+          "apiDurationMs": 8505,
+          "wallMs": 9109.818
+        },
+        "questionVersion": "candidate-v1-capacity-observations",
+        "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c"
+      },
+      {
+        "key": "trial-02",
+        "task": "r02",
+        "strategy": "outline-bounded",
+        "repeat": 1,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": false,
+        "success": false,
+        "providerTokenCounts": {
+          "inputTokens": 8,
+          "cachedInputTokens": 30619,
+          "cacheCreationInputTokens": 6298,
+          "totalInputTokens": 36925,
+          "outputTokens": 415,
+          "totalTokens": 37340
+        },
+        "model": "claude-sonnet-5-5",
+        "numTurns": 4,
+        "cliDurations": {
+          "durationMs": 8282,
+          "apiDurationMs": 8218,
+          "wallMs": 8941.238
+        },
+        "questionVersion": "candidate-v1-capacity-observations",
+        "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c"
+      },
+      {
+        "key": "trial-03",
+        "task": "r06",
+        "strategy": "outline-bounded",
+        "repeat": 1,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "success": true,
+        "providerTokenCounts": {
+          "inputTokens": 10,
+          "cachedInputTokens": 42694,
+          "cacheCreationInputTokens": 8252,
+          "totalInputTokens": 50956,
+          "outputTokens": 474,
+          "totalTokens": 51430
+        },
+        "model": "claude-sonnet-5-5",
+        "numTurns": 5,
+        "cliDurations": {
+          "durationMs": 10121,
+          "apiDurationMs": 10038,
+          "wallMs": 10781.124
+        },
+        "questionVersion": "candidate-v1-capacity-observations",
+        "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c"
+      },
+      {
+        "key": "trial-04",
+        "task": "r06",
+        "strategy": "sections-bounded",
+        "repeat": 1,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "success": true,
+        "providerTokenCounts": {
+          "inputTokens": 8,
+          "cachedInputTokens": 30527,
+          "cacheCreationInputTokens": 7059,
+          "totalInputTokens": 37594,
+          "outputTokens": 352,
+          "totalTokens": 37946
+        },
+        "model": "claude-sonnet-5-5",
+        "numTurns": 4,
+        "cliDurations": {
+          "durationMs": 5954,
+          "apiDurationMs": 5869,
+          "wallMs": 6442.785
+        },
+        "questionVersion": "candidate-v1-capacity-observations",
+        "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c"
+      },
+      {
+        "key": "trial-05",
+        "task": "r02",
+        "strategy": "outline-bounded",
+        "repeat": 2,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": false,
+        "success": false,
+        "providerTokenCounts": {
+          "inputTokens": 8,
+          "cachedInputTokens": 32053,
+          "cacheCreationInputTokens": 4761,
+          "totalInputTokens": 36822,
+          "outputTokens": 406,
+          "totalTokens": 37228
+        },
+        "model": "claude-sonnet-5-5",
+        "numTurns": 4,
+        "cliDurations": {
+          "durationMs": 24157,
+          "apiDurationMs": 24085,
+          "wallMs": 24783.041
+        },
+        "questionVersion": "candidate-v1-capacity-observations",
+        "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c"
+      },
+      {
+        "key": "trial-06",
+        "task": "r02",
+        "strategy": "sections-bounded",
+        "repeat": 2,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "success": true,
+        "providerTokenCounts": {
+          "inputTokens": 8,
+          "cachedInputTokens": 32988,
+          "cacheCreationInputTokens": 5754,
+          "totalInputTokens": 38750,
+          "outputTokens": 370,
+          "totalTokens": 39120
+        },
+        "model": "claude-sonnet-5-5",
+        "numTurns": 4,
+        "cliDurations": {
+          "durationMs": 7883,
+          "apiDurationMs": 7797,
+          "wallMs": 8515.851
+        },
+        "questionVersion": "candidate-v1-capacity-observations",
+        "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c"
+      },
+      {
+        "key": "trial-07",
+        "task": "r06",
+        "strategy": "sections-bounded",
+        "repeat": 2,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "success": true,
+        "providerTokenCounts": {
+          "inputTokens": 8,
+          "cachedInputTokens": 32034,
+          "cacheCreationInputTokens": 5603,
+          "totalInputTokens": 37645,
+          "outputTokens": 401,
+          "totalTokens": 38046
+        },
+        "model": "claude-sonnet-5-5",
+        "numTurns": 4,
+        "cliDurations": {
+          "durationMs": 6909,
+          "apiDurationMs": 6820,
+          "wallMs": 7573.008
+        },
+        "questionVersion": "candidate-v1-capacity-observations",
+        "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c"
+      },
+      {
+        "key": "trial-08",
+        "task": "r06",
+        "strategy": "outline-bounded",
+        "repeat": 2,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "success": true,
+        "providerTokenCounts": {
+          "inputTokens": 8,
+          "cachedInputTokens": 41334,
+          "cacheCreationInputTokens": 10181,
+          "totalInputTokens": 51523,
+          "outputTokens": 452,
+          "totalTokens": 51975
+        },
+        "model": "claude-sonnet-5-5",
+        "numTurns": 5,
+        "cliDurations": {
+          "durationMs": 19153,
+          "apiDurationMs": 19080,
+          "wallMs": 19679.361
+        },
+        "questionVersion": "candidate-v1-capacity-observations",
+        "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c"
+      }
+    ]
+  }
+}

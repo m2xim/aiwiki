@@ -13,7 +13,7 @@ import (
 )
 
 const mcpInstructions = "AI Wiki workflow: (1) call wiki_bootstrap with the space_id of your project to get its pinned rules in full; " +
-	"(2) wiki_search to find articles (ranked, supports Russian and English); (3) for large articles call wiki_read with outline=true, then read only the sections you need with anchor; " +
+	"(2) wiki_search to find articles, or wiki_search_sections to find sections and get revision-pinned read_args (ranked, supports Russian and English); (3) for large articles use wiki_read with max_chars=4000 and follow next_read as needed; alternatively use outline=true then anchor; " +
 	"(4) wiki_links shows the parent, children and linked neighbours of an article; (5) use wiki_edit for small changes (replace_section, append, replace_text) instead of resending the whole article; " +
 	"(6) wiki_write creates articles or updates them (unsent fields are kept) and always needs base_revision for updates. " +
 	"Link articles in Markdown as [text](/?article=ID#anchor)."
@@ -90,11 +90,23 @@ func mcpToolList() []map[string]any {
 			"limit":    prop("integer", "Page size, default 20, maximum 100."),
 			"offset":   prop("integer", "Number of results to skip (use next_offset from the previous response)."),
 		})},
-		{"name": "wiki_read", "description": "Read an article. For large articles prefer outline=true (headings with anchors and sizes, no body) and then read only needed sections with anchor. With anchor only that section is returned (heading to the next heading of same or higher level). With revision an older snapshot is returned (historical=true). Without optional parameters the full article including body and revision is returned. Use wiki_comments for its discussion.", "inputSchema": objectSchema(map[string]any{
-			"id":       prop("string", idDesc),
-			"outline":  prop("boolean", "true: return metadata, total chars and the list of headings {level,title,anchor,chars} without body."),
-			"anchor":   prop("string", "Heading anchor (from outline): lowercase slug of the heading text, repeated headings get -2, -3. Returns only that section as 'section'."),
-			"revision": map[string]any{"type": "integer", "minimum": 1, "description": "Read this historical revision instead of the current one (see wiki_history)."},
+		{"name": "wiki_search_sections", "description": "Search heading paths and each section's own text across the wiki, or within filters. Returns compact ranked section hits with revision-pinned bounded read_args; use those directly in wiki_read. All query terms first, partial matches only when no section matches all (mode any). Preamble has empty anchor. Global queries exclude archived spaces; explicit space_id can include its archived space. Pages reflect current data, not a snapshot.", "inputSchema": objectSchema(map[string]any{
+			"q":        prop("string", "Required nonempty search words; Russian and English morphology."),
+			"space_id": prop("string", "Only this space; omit for global search."),
+			"kind":     prop("string", "Only this article kind."),
+			"pinned":   prop("boolean", "true: only pinned articles."),
+			"tag":      strArrProp("Require all exact tags."),
+			"property": strArrProp("Require all exact key:value properties."),
+			"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Page size, default 5, maximum 20."},
+			"offset":   map[string]any{"type": "integer", "minimum": 0, "description": "Skip this many results; use next_offset when present."},
+		}, "q")},
+		{"name": "wiki_read", "description": "Read an article or anchor section (heading to next peer). For bounded text use max_chars=4000; returns text, offset, total_chars, has_more and next_read. Follow next_read verbatim to preserve revision after edits. Without max_chars/offset legacy full body or section is returned. outline=true returns headings without body and cannot combine with bounded mode. revision selects a saved snapshot. Use wiki_comments for discussion.", "inputSchema": objectSchema(map[string]any{
+			"id":        prop("string", idDesc),
+			"outline":   prop("boolean", "true: return metadata, total chars and the list of headings {level,title,anchor,chars} without body."),
+			"anchor":    prop("string", "Heading anchor (from outline): lowercase slug of the heading text, repeated headings get -2, -3. Returns only that section as 'section'."),
+			"revision":  map[string]any{"type": "integer", "minimum": 1, "description": "Read this historical revision instead of the current one (see wiki_history)."},
+			"max_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 16000, "description": "Opt into bounded reading, at most this many Unicode code points (not tokens), default 4000 when offset is supplied."},
+			"offset":    map[string]any{"type": "integer", "minimum": 0, "description": "Code point offset within selected section or full body. Nonzero requires revision. Prefer returned next_read to continue."},
 		}, "id")},
 		{"name": "wiki_edit", "description": "Small targeted edit without resending the whole article. op=replace_section: replace the section at anchor (text must start with the new heading line); op=append: add text at the end of the article, or at the end of the section at anchor; op=replace_text: replace the single occurrence of old with text (text may be empty to delete). Needs the revision you last read as base_revision. Returns {id,revision,updated_at,chars}.", "inputSchema": objectSchema(map[string]any{
 			"id":            prop("string", idDesc),
@@ -129,6 +141,8 @@ func (s *Server) callTool(params map[string]json.RawMessage) any {
 		return s.toolBootstrap(args)
 	case "wiki_search":
 		return s.toolSearch(args)
+	case "wiki_search_sections":
+		return s.toolSearchSections(args)
 	case "wiki_read":
 		return s.toolRead(args)
 	case "wiki_edit":
@@ -395,6 +409,11 @@ func (s *Server) snapshotRevision(id string, rev int) (Article, bool) {
 }
 
 func (s *Server) toolRead(args map[string]json.RawMessage) any {
+	_, boundedSize := args["max_chars"]
+	_, boundedOffset := args["offset"]
+	if boundedSize || boundedOffset {
+		return s.toolReadChunk(args)
+	}
 	id, bad := toolID(args)
 	if bad != nil {
 		return bad

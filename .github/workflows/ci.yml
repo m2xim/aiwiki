@@ -48,4 +48,4 @@ jobs:
         run: npm ci --prefix benchmarks/mcp
 
       - name: Benchmark grader regression checks (no model calls)
-        run: node --test benchmarks/mcp/grading.test.mjs
+        run: node --test benchmarks/mcp/grading.test.mjs benchmarks/mcp/candidate-grading.test.mjs
