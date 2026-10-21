@@ -49,11 +49,12 @@ metadata/audit, CSRF, live owner ACL revocation, exact-project search/history/
 section isolation, content and metadata RLS, read-only RPC, forbidden direct
 owner-role execution, missing-protection startup refusal and scope cleanup.
 
-The temporary UI page and loaded project list were inspected in the browser.
-The UI mint click was blocked by the automatic approval reviewer pending an
-action-time credential confirmation, even on the isolated fixture. That click
-was not bypassed; key minting/revocation were verified by automated Go/HTTP tests
-before the browser check. No browser end-to-end mint success is claimed.
+After explicit owner confirmation, the browser flow passed on the isolated
+PostgreSQL/signed mock OIDC fixture: select one project, issue a key, verify the
+secret field without logging its value, clear it, refresh, confirm that only
+key metadata returns, and revoke. The active list was empty after revocation.
+The earlier automatic-review block was resolved by that explicit confirmation,
+not bypassed. Automated Go/HTTP lifecycle checks had already passed separately.
 
 The production container built successfully; its base image contains trusted CA
 certificates. An optional real-service S3 test was added, but actual S3 service
