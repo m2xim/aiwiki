@@ -32,3 +32,35 @@ Review fixes include removing stale JWT role fallback, preventing manager-to-own
 - The generated dependency inventory reports upstream packages for which no local standalone license file was found; see `THIRD_PARTY_NOTICES.md`. It does not claim a complete inventory of absent optional platform packages.
 
 Setup and runtime configuration: [CORPORATE.md](CORPORATE.md).
+
+## Temporary MCP access follow-up — 2026-10-22
+
+The next slice adds [temporary exact-project read-only keys](MCP-TEMPORARY-ACCESS.md).
+Sonnet implemented the session/key lifecycle; gpt-6-luna implemented the scope
+migration, UI and optional S3 smoke harness. The lead integrated and inspected
+the changes and ran the full Go suite with PostgreSQL, vet, frontend build and
+the existing 15 HTTP/MCP regressions. Opus reviewed the architecture and final
+code; the final code pass found no P0/P1 issues. Its remaining startup-grant and
+Unicode-audit recommendations were incorporated.
+
+New checks cover key expiry/revocation/logout/admission loss/identity-provider
+outage, per-user/global caps, rate limiting before introspection, no secret in
+metadata/audit, CSRF, live owner ACL revocation, exact-project search/history/
+section isolation, content and metadata RLS, read-only RPC, forbidden direct
+owner-role execution, missing-protection startup refusal and scope cleanup.
+
+The temporary UI page and loaded project list were inspected in the browser.
+The UI mint click was blocked by the automatic approval reviewer pending an
+action-time credential confirmation, even on the isolated fixture. That click
+was not bypassed; key minting/revocation were verified by automated Go/HTTP tests
+before the browser check. No browser end-to-end mint success is claimed.
+
+The production container built successfully; its base image contains trusted CA
+certificates. An optional real-service S3 test was added, but actual S3 service
+coverage remains pending: the official MinIO Quay pull returned unauthorized and
+the official Windows download listing returned HTTP 410. No substitute mirror
+was used, and a skipped smoke test is not counted as a storage-service pass.
+
+Long-lived PATs, service-account sponsorship/lifecycle, OAuth discovery and
+production Keycloak/AD/S3 acceptance remain open. The existing home installation
+is untouched.

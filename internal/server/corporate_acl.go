@@ -31,7 +31,10 @@ func (s *Server) migrateCorporate() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	return s.DB.runMigrations(ctx, "corporate_acl", []pgMigration{{Version: corporateSchemaVersion, Name: "corporate ACL and forced RLS", Statements: splitCorporateSQL(string(schema))}})
+	if err := s.DB.runMigrations(ctx, "corporate_acl", []pgMigration{{Version: corporateSchemaVersion, Name: "corporate ACL and forced RLS", Statements: splitCorporateSQL(string(schema))}}); err != nil {
+		return err
+	}
+	return s.migrateMCPScope(ctx)
 }
 
 // splitCorporateSQL separates commands while preserving function bodies,
@@ -126,6 +129,8 @@ func splitCorporateSQL(src string) []string {
 // corporateRoutes registers security and administration APIs. Callers must
 // place these routes behind the request-scoped authenticated Server.
 func (s *Server) corporateRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/mcp/delegations", s.mcpDelegations)
+	mux.HandleFunc("/api/mcp/delegations/{id}", s.mcpDelegation)
 	mux.HandleFunc("GET /api/admin/users", s.corporateUsers)
 	mux.HandleFunc("GET /api/users", s.corporateUserDirectory)
 	mux.HandleFunc("PATCH /api/admin/users/{id}", s.corporateUserDisable)

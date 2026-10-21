@@ -25,4 +25,8 @@ type Principal struct {
 	Subject string `json:"-"`
 	Name    string `json:"name"`
 	Admin   bool   `json:"admin"`
+	// nil means normal OIDC access; a non-nil set is exact-project/read-only.
+	MCPProjects     []string  `json:"-"`
+	MCPDelegationID string    `json:"-"`
+	MCPExpiresAt    time.Time `json:"-"`
 }

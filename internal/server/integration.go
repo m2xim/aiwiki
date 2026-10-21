@@ -173,14 +173,38 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(202)
 		return
 	}
+	if s.principal != nil && s.principal.MCPDelegationID != "" {
+		method, tool := q.Method, ""
+		_ = json.Unmarshal(q.Params["name"], &tool)
+		method, tool = mcpAuditName(method), mcpAuditName(tool)
+		_, err := s.DB.Exec(`SELECT corporate_mcp_request_audit(?,?,?)`, s.principal.MCPDelegationID, method, tool)
+		if err != nil {
+			apiErr(w, 503, "audit unavailable")
+			return
+		}
+	}
 	var result any
 	switch q.Method {
 	case "initialize":
-		result = map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]string{"name": "aiwiki", "version": "1.0"}, "instructions": mcpInstructions}
+		instructions := mcpInstructions
+		if s.principal != nil && s.principal.MCPProjects != nil {
+			instructions = "Temporary read-only access to exact projects " + jsonText(s.principal.MCPProjects) + ". Space-level and global rules are outside this credential's scope; if bootstrap is empty, use wiki_search to discover permitted articles. Use revision-pinned bounded reads (max_chars=4000). Access expires at " + s.principal.MCPExpiresAt.UTC().Format("2006-01-02T15:04:05Z") + "."
+		}
+		result = map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]string{"name": "aiwiki", "version": "1.0"}, "instructions": instructions}
 	case "ping":
 		result = map[string]any{}
 	case "tools/list":
-		result = map[string]any{"tools": mcpToolList()}
+		tools := mcpToolList()
+		if s.principal != nil && s.principal.MCPProjects != nil {
+			visible := make([]map[string]any, 0, len(tools))
+			for _, tool := range tools {
+				if name, _ := tool["name"].(string); mcpReadTool(name) {
+					visible = append(visible, tool)
+				}
+			}
+			tools = visible
+		}
+		result = map[string]any{"tools": tools}
 	case "tools/call":
 		result = s.callTool(q.Params)
 	default:
