@@ -59,6 +59,26 @@ IDs: letters, digits, `_`, `-`. Compact article = `{id,title,space_id,kind,statu
 - wiki_restore, wiki_comment: REST proxies as before.
 - wiki_comments `{id}` -> complete Comment[] including resolved comments, oldest creation timestamp first, with original Markdown body, heading anchor, author and full creation timestamp. No comments returns `[]`; missing/invalid ID or an unknown article returns `isError:true`.
 
+### Bounded reads and section search
+
+`wiki_read` additionally accepts `max_chars` (1–16000) and `offset` (default 0).
+Presence of either selects bounded mode (default size 4000); `outline:true` is
+incompatible. Nonzero offsets require an explicit positive `revision`. Response:
+`{id,title,revision,anchor?,partial:true,offset,chars,total_chars,has_more,text,next_read?}`,
+plus historical/deletion markers when applicable. Sizes count Unicode code points;
+`next_read` contains complete revision-pinned arguments. An edit does not change a
+continuation's snapshot. Unknown snapshots, invalid types/ranges and offsets past
+the end are errors. Offset exactly at the end is an empty final slice.
+
+`wiki_search_sections {q,space_id?,kind?,pinned?,tag[]?,property[]?,limit?,offset?}`
+searches heading paths and each heading's own text, without descendant duplication.
+Default page 5, maximum 20. Returns `{total,offset,mode,results,next_offset?}`; hits
+include article ID/title/space/revision, anchor, heading path, score, snippet and
+executable bounded `read_args` near the match. Empty anchor denotes preamble or
+headless text. Metadata filters match article search; article metadata alone does
+not produce section hits. Pages reflect current data. Full specification and
+limitations: [MCP-SECTION-CONTRACT.md](MCP-SECTION-CONTRACT.md).
+
 ## Seed
 Only seed empty DB. Spaces: Общее, Родословная, Инженерия. Helpful instruction articles: start here; neutral agent rules (follow owner instructions, verify results, report actual checks, obtain authorization for external publishing); how to write knowledge including evidence vs hypotheses and unsuccessful searches. Example research/engineering templates are explicitly marked as templates, with no fabricated findings. Article demo content links to instructions. Attachments and comments UI starts empty.
 
