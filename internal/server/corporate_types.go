@@ -4,6 +4,7 @@ import "time"
 
 // CorporateConfig enables the isolated PostgreSQL/OIDC edition.
 type CorporateConfig struct {
+	Admission            KeycloakAdmissionConfig
 	S3                   S3Config
 	DatabaseURL          string
 	MigrationDatabaseURL string
@@ -25,8 +26,10 @@ type Principal struct {
 	Subject string `json:"-"`
 	Name    string `json:"name"`
 	Admin   bool   `json:"admin"`
-	// nil means normal OIDC access; a non-nil set is exact-project/read-only.
+	// nil means normal OIDC access; a non-nil set is an exact project scope.
 	MCPProjects     []string  `json:"-"`
 	MCPDelegationID string    `json:"-"`
 	MCPExpiresAt    time.Time `json:"-"`
+	MCPMode         string    `json:"-"`
+	MCPActorID      string    `json:"-"` // distinct service-account authorship; ID remains sponsor for ACLs
 }

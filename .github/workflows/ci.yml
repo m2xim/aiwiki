@@ -85,4 +85,4 @@ jobs:
           ALTER DATABASE aiwiki_ci OWNER TO aiwiki_owner;
           GRANT ALL ON SCHEMA public TO aiwiki_owner;"
       - name: Corporate PostgreSQL, signed OIDC and object storage checks
-        run: go test ./internal/server -run 'TestCorporate|TestAuth|TestStorage|TestS3|TestMCPDelegation|TestMCPScope' -count=1 -v
+        run: go test ./internal/server -run 'TestCorporate|TestAuth|TestStorage|TestS3|TestMCPDelegation|TestMCPScope|TestMCPPersistent|TestKeycloakAdmission' -count=1 -v

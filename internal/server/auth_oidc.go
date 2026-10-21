@@ -68,6 +68,7 @@ var errAuthTokenInactive = errors.New("token inactive")
 // AuthService implements OIDC login, local sessions and per-request
 // authorization for the corporate edition.
 type AuthService struct {
+	persistent    *mcpPersistentAccess
 	cfg           CorporateConfig
 	users         authUsers
 	verifier      *oidc.IDTokenVerifier
@@ -210,6 +211,15 @@ func newAuthServiceWithUsers(ctx context.Context, users authUsers, cfg Corporate
 	if secure {
 		a.sessionCookie = "__Host-aiwiki_session"
 		a.loginCookie = "__Host-aiwiki_login"
+	}
+	admission, err := newKeycloakAdmissionProvider(cfg, endpoint.TokenURL, client)
+	if err != nil {
+		return nil, err
+	}
+	if admission != nil {
+		if sqlUsers, ok := users.(authSQLUsers); ok {
+			a.persistent = &mcpPersistentAccess{db: sqlUsers.db, admission: admission, now: time.Now}
+		}
 	}
 	return a, nil
 }
@@ -374,6 +384,9 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	}
 	if strings.HasPrefix(raw, mcpDelegationPrefix) {
 		return a.authenticateDelegation(w, r, raw)
+	}
+	if strings.HasPrefix(raw, mcpPersistentPrefix) {
+		return a.authenticatePersistent(w, r, raw)
 	}
 	tok, err := a.verifier.Verify(r.Context(), raw)
 	if err != nil {

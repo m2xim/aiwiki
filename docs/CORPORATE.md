@@ -33,6 +33,10 @@ Every authenticated request introspects the access token; outages deny access. L
 
 ## Content rights
 
+Optional persistent MCP credentials use a separate current-admission checker and
+can survive browser logout/restarts. Configuration, exact project scopes, service
+accounts and revocation boundaries: [MCP-PERSISTENT-ACCESS.md](MCP-PERSISTENT-ACCESS.md).
+
 | Role | Permission |
 | --- | --- |
 | Reader | Read accessible content/history; own favorites |

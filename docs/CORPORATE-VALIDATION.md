@@ -62,6 +62,44 @@ coverage remains pending: the official MinIO Quay pull returned unauthorized and
 the official Windows download listing returned HTTP 410. No substitute mirror
 was used, and a skipped smoke test is not counted as a storage-service pass.
 
-Long-lived PATs, service-account sponsorship/lifecycle, OAuth discovery and
-production Keycloak/AD/S3 acceptance remain open. The existing home installation
-is untouched.
+At that checkpoint, long-lived PATs, service-account sponsorship/lifecycle, OAuth
+discovery and production Keycloak/AD/S3 acceptance remained open. The next section
+records the subsequent persistent-access implementation. The existing home
+installation is untouched.
+
+## Persistent credentials and service accounts — 2026-10-22
+
+Implemented [persistent exact-project access](MCP-PERSISTENT-ACCESS.md): PostgreSQL
+hash-only credentials, read/write ceilings, immutable sponsored service accounts,
+current Keycloak admission checks via a separate machine client, per-key limits,
+server authorship and actor/sponsor request audit. Missing admission configuration
+disables issuance/authentication of persistent keys while preserving OIDC and
+temporary keys. Local revocation remains possible without the admission checker.
+
+Verified locally: `go test ./... -count=1` both without PostgreSQL and with the
+disposable PostgreSQL 16 owner/runtime fixture; `go vet ./...`; frontend production
+build; all 15 existing `scripts/qa.mjs` checks. Additional startup tamper tests pass
+for weakened owner policies, extra permissive policies, disabled immutability
+triggers, space writes and unused attachment writes. The build retains the existing
+Vite large-chunk advisory.
+
+Provider mocks cover current role removal, disabled/deleted/mismatched identities,
+unavailability, malformed/oversized responses, redirects and cancellation. PostgreSQL
+tests cover exact scopes, ACL demotion, secret absence in lists/audit, concurrent
+caps/rate limits, revoke/disable/expiry, restart persistence, owner isolation,
+immutable authority, and clearing/restoring connection mode. Full HTTP/MCP E2E
+checks write-key discovery, forced service-account authorship, sibling denial,
+cookie/bearer separation, audit attribution, provider denial and account disable.
+
+Sonnet implemented the provider and persistent backend; a cheaper sidecar handled
+the UI. Fable reviewed architecture and the completed implementation per the
+maintainer's current agent rules. Its owner-isolation, immutability and least-DML
+findings were fixed; the final pass found no blockers. The lead ran the checks
+and inspected the form in the browser. That caught and fixed a missing-project-role
+API mismatch before release. The browser check selected write mode and a project
+without issuing a credential; automated issuance/lifecycle tests ran separately.
+
+Real Keycloak/AD synchronization, actual S3 service acceptance, OAuth discovery and
+the chosen client compatibility matrix remain pilot work. PostgreSQL startup guards
+compare canonical policy expressions; validate them on each PostgreSQL major before
+upgrading. No home deployment or migration was performed.
