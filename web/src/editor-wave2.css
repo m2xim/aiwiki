@@ -1,0 +1,54 @@
+/* Editor, wave 2: conflict panel, draft banners, parent picker, side-by-side preview, properties warning. */
+:root{--w2-warn-bg:#fff6e5;--w2-warn-line:#f0d9a4;--w2-warn-ink:#7a5410;--w2-info-bg:#eef3ff;--w2-info-line:#cdd9f7;--w2-info-ink:#3a4d85}
+html[data-theme="dark"]{--w2-warn-bg:#3a3020;--w2-warn-line:#5e4d2a;--w2-warn-ink:#ecd19a;--w2-info-bg:#252a3d;--w2-info-line:#3a4366;--w2-info-ink:#b8c6f0}
+
+/* conflict + banners */
+.editor-conflict,.draft-banner,.props-warning{margin:0 0 14px;padding:12px 14px;border-radius:8px;border:1px solid var(--w2-warn-line);background:var(--w2-warn-bg);color:var(--w2-warn-ink);font-size:12px;min-width:0}
+.draft-banner.info{border-color:var(--w2-info-line);background:var(--w2-info-bg);color:var(--w2-info-ink)}
+.editor-conflict-head{display:flex;gap:10px;align-items:flex-start}
+.editor-conflict-head svg{flex:none;margin-top:2px}
+.editor-conflict-head p,.draft-banner p{margin:3px 0 0;line-height:1.5}
+.editor-conflict-head>div{min-width:0;overflow-wrap:anywhere}
+.editor-conflict-actions,.draft-banner-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.editor-conflict-actions .button,.draft-banner-actions .button,.props-warning .button{min-width:0;font-size:12px}
+.draft-banner{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.draft-banner>div:first-child{min-width:0;flex:1 1 260px;overflow-wrap:anywhere}
+.draft-banner-actions{margin-top:0}
+.editor-conflict-diff{margin-top:12px;color:var(--ink)}
+.editor-conflict-diff .history-diff-table{max-height:340px}
+.editor-conflict-diff-head{display:flex;justify-content:space-between;gap:10px;margin-bottom:6px;font-size:12px}
+.editor-conflict-meta{display:grid;gap:4px;margin-bottom:10px;font-size:12px}
+.editor-conflict-meta>div{display:grid;grid-template-columns:110px minmax(0,1fr) 16px minmax(0,1fr);gap:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:600px){.editor-conflict-meta>div{grid-template-columns:1fr}.editor-conflict-actions .button{flex:1 1 100%;justify-content:center}}
+
+/* properties warning */
+.props-warning{margin:6px 0 0;padding:9px 11px}
+.props-warning ul{margin:5px 0 7px;padding-left:18px}
+.props-warning li{overflow-wrap:anywhere;font-family:Consolas,monospace}
+.props-warning .props-warning-actions{display:flex;gap:8px;flex-wrap:wrap}
+.properties-area.invalid{border-color:var(--w2-warn-line)!important;outline:2px solid var(--w2-warn-line)}
+
+/* parent picker */
+.parent-picker{position:relative}
+.parent-picker-box{position:relative}
+.parent-picker-box input{width:100%;padding-right:28px}
+.parent-picker-box svg{position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--muted)}
+.parent-picker-list{position:absolute;z-index:40;left:0;right:0;top:calc(100% + 4px);max-height:260px;overflow:auto;margin:0;padding:4px;list-style:none;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 8px 24px #28263a22}
+.parent-picker-option{padding:6px 10px;border-radius:5px;cursor:pointer;font-size:12px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.parent-picker-option.root{color:var(--muted);font-style:italic}
+.parent-picker-option[data-active="true"]{background:var(--purple-light)}
+.parent-picker-option.selected{font-weight:700}
+.parent-picker-empty{padding:8px 10px;color:var(--muted);font-size:12px}
+
+/* editor / preview layouts */
+.editor-split-pane{min-width:0}
+.button.split-toggle{display:none}
+@media(min-width:1300px){
+  .button.split-toggle{display:inline-flex}
+  .editor-split.is-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:stretch}
+  .editor-split-preview{position:relative;min-width:0;min-height:360px}
+  .editor-split-preview .preview-box{position:absolute;inset:0;min-height:0;overflow:auto;overflow-wrap:anywhere}
+  /* Give the two columns the room of the right-hand sidebar. */
+  .workspace:has(.editor-page.is-split) .right-sidebar{display:none}
+  .workspace:has(.editor-page.is-split) .reading-area{grid-column:2 / -1}
+}

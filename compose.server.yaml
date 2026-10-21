@@ -1,0 +1,17 @@
+# Server variant. Defaults are loopback-only and mutually coherent.
+# To publish on a LAN address, set BOTH AIWIKI_BIND_ADDR and AIWIKI_ALLOWED_ORIGIN,
+# e.g. in a local .env file (not committed):
+#   AIWIKI_BIND_ADDR=192.0.2.10
+#   AIWIKI_ALLOWED_ORIGIN=http://192.0.2.10:8090
+# AI Wiki has no built-in authentication: expose it only on a trusted network
+# or behind an authenticating reverse proxy / VPN. See SECURITY.md.
+services:
+  wiki:
+    build: .
+    image: aiwiki:local
+    ports:
+      - "${AIWIKI_BIND_ADDR:-127.0.0.1}:${AIWIKI_PORT:-8090}:8090"
+    volumes:
+      - ${AIWIKI_DATA_DIR:-./data}:/app/data
+    command: ["-addr", "0.0.0.0:8090", "-data", "/app/data", "-web", "/app/web/dist", "-allowed-origin", "${AIWIKI_ALLOWED_ORIGIN:-http://127.0.0.1:8090}"]
+    restart: unless-stopped

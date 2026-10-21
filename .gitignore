@@ -1,0 +1,31 @@
+data/
+.cache/
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+*.exe
+*.log
+qa-artifacts/
+
+# local secrets and configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+.claude/settings.local.json
+CLAUDE.local.md
+
+# backups, databases and local artifacts
+backups/
+*.tar.gz
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

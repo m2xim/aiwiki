@@ -1,0 +1,63 @@
+.markdown-editor {
+  min-height: 360px;
+  max-height: 600px;
+  overflow: hidden;
+  border: 1px solid var(--line, #d9dfeb);
+  border-radius: 10px;
+  background: var(--panel, #fff);
+}
+
+.markdown-editor .cm-editor {
+  min-height: 360px;
+  max-height: 600px;
+  font: 14px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  outline: none;
+}
+
+.markdown-editor .cm-scroller {
+  overflow: auto;
+  font-family: inherit;
+}
+
+.markdown-editor .cm-content {
+  min-height: 358px;
+  padding: 14px 16px 20px 8px;
+  caret-color: currentColor;
+}
+
+.markdown-editor .cm-gutters {
+  padding: 14px 0 20px;
+  user-select: none;
+}
+
+.markdown-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 2.3em;
+  padding: 0 10px 0 8px;
+  text-align: right;
+}
+
+.markdown-editor:focus-within {
+  border-color: var(--purple, #7797eb);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple, #7797eb) 18%, transparent);
+}
+
+.markdown-editor--dark {
+  background: var(--panel, #171b24);
+  border-color: var(--line, #343b49);
+}
+
+.markdown-editor--compact,
+.markdown-editor--compact .cm-editor {
+  min-height: 140px;
+  max-height: 300px;
+}
+
+.markdown-editor--compact .cm-content {
+  min-height: 138px;
+  padding: 10px 12px 14px 6px;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.markdown-editor--compact .cm-gutters {
+  padding-top: 10px;
+}
