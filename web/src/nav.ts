@@ -40,7 +40,7 @@ const storeWidth = (value: number | null) => {
 };
 
 /** Resizable left panel: pointer drag, keyboard, double-click reset, persisted in localStorage. */
-export function useSidebarWidth() {
+export function useSidebarWidth(active = true) {
   const [width, setWidth] = useState<number | null>(readWidth);
   const [box, setBox] = useState<{ right: number; width: number } | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -51,14 +51,14 @@ export function useSidebarWidth() {
 
   // The handle is position:fixed and follows the real right edge of the sidebar, whatever the breakpoint default is.
   useEffect(() => {
-    const element = sidebarRef.current; if (!element) return;
+    const element = sidebarRef.current; if (!active || !element) return;
     const measure = () => { const rect = element.getBoundingClientRect(); setBox(prev => rect.width <= 0 ? null : prev && prev.right === rect.right && prev.width === rect.width ? prev : { right: rect.right, width: rect.width }); };
     measure();
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
     observer?.observe(element);
     window.addEventListener('resize', measure);
     return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
-  }, []);
+  }, [active]);
 
   const commit = useCallback((value: number | null) => { setWidth(value); storeWidth(value); }, []);
   const current = () => widthRef.current ?? Math.round(boxRef.current?.width || SIDEBAR_DEFAULT);

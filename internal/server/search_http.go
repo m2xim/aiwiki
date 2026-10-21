@@ -24,7 +24,7 @@ func (s *Server) searchHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	p := SearchParams{Q: q.Get("q"), SpaceID: q.Get("space_id"), Kind: q.Get("kind"), Pinned: q.Get("pinned") == "true", Tags: q["tag"], Properties: q["property"], Limit: 30, AllowAny: true}
+	p := SearchParams{ProjectID: q.Get("project_id"), Q: q.Get("q"), SpaceID: q.Get("space_id"), Kind: q.Get("kind"), Pinned: q.Get("pinned") == "true", Tags: q["tag"], Properties: q["property"], Limit: 30, AllowAny: true}
 	if n, e := strconv.Atoi(q.Get("limit")); e == nil && n > 0 {
 		p.Limit = n
 	}

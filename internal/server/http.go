@@ -33,7 +33,7 @@ func (s *Server) tags(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusBadRequest, "space_id is required")
 		return
 	}
-	rows, err := s.DB.Query(`SELECT DISTINCT j.value FROM articles a, json_each(a.tags) j WHERE a.space_id=? AND a.deleted_at IS NULL AND j.type='text' ORDER BY j.value COLLATE NOCASE, j.value`, space)
+	rows, err := s.DB.Query(s.DB.distinctTagsSQL(), space)
 	if err != nil {
 		apiErr(w, http.StatusInternalServerError, "database error")
 		return
@@ -65,7 +65,7 @@ func (s *Server) articles(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) listArticles(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	p := SearchParams{Q: q.Get("q"), SpaceID: q.Get("space_id"), Kind: q.Get("kind"), Pinned: q.Get("pinned") == "true", Tags: q["tag"], Properties: q["property"], Limit: 200}
+	p := SearchParams{ProjectID: q.Get("project_id"), Q: q.Get("q"), SpaceID: q.Get("space_id"), Kind: q.Get("kind"), Pinned: q.Get("pinned") == "true", Tags: q["tag"], Properties: q["property"], Limit: 200}
 	if n, e := strconv.Atoi(q.Get("limit")); e == nil && n > 0 && n < 200 {
 		p.Limit = n
 	}
@@ -85,6 +85,7 @@ func (s *Server) listArticles(w http.ResponseWriter, r *http.Request) {
 }
 
 type payload struct {
+	ProjectID    string            `json:"project_id"`
 	SpaceID      string            `json:"space_id"`
 	ParentID     string            `json:"parent_id"`
 	Title        string            `json:"title"`
@@ -102,7 +103,7 @@ type payload struct {
 
 // articleFields are the editable keys a client may send; on update only the
 // keys present in the request replace current values.
-var articleFields = []string{"space_id", "parent_id", "title", "summary", "body", "kind", "status", "pinned", "tags", "properties"}
+var articleFields = []string{"project_id", "space_id", "parent_id", "title", "summary", "body", "kind", "status", "pinned", "tags", "properties"}
 
 func parseInput(r *http.Request) (Article, payload, map[string]json.RawMessage, error) {
 	var p payload
@@ -126,7 +127,7 @@ func parseInput(r *http.Request) (Article, payload, map[string]json.RawMessage, 
 }
 
 func articleFromPayload(p payload) (Article, payload) {
-	a := Article{SpaceID: p.SpaceID, ParentID: p.ParentID, Title: strings.TrimSpace(p.Title), Summary: p.Summary, Body: p.Body, Kind: p.Kind, Status: p.Status, Pinned: p.Pinned, Tags: p.Tags, Properties: p.Properties}
+	a := Article{ProjectID: p.ProjectID, SpaceID: p.SpaceID, ParentID: p.ParentID, Title: strings.TrimSpace(p.Title), Summary: p.Summary, Body: p.Body, Kind: p.Kind, Status: p.Status, Pinned: p.Pinned, Tags: p.Tags, Properties: p.Properties}
 	if a.Kind == "" {
 		a.Kind = "article"
 	}
@@ -153,6 +154,8 @@ func mergePresent(old, in Article, present map[string]json.RawMessage) Article {
 			continue
 		}
 		switch k {
+		case "project_id":
+			out.ProjectID = in.ProjectID
 		case "space_id":
 			out.SpaceID = in.SpaceID
 		case "parent_id":
@@ -188,7 +191,7 @@ func (s *Server) parentOK(q interface{ QueryRow(string, ...any) *sql.Row }, a Ar
 	if p.DeletedAt != "" {
 		return fmt.Errorf("parent article is deleted")
 	}
-	if p.SpaceID != a.SpaceID {
+	if p.SpaceID != a.SpaceID || p.ProjectID != a.ProjectID {
 		return fmt.Errorf("parent must be in same space")
 	}
 	for p.ID != "" {
@@ -234,7 +237,7 @@ func (s *Server) createArticle(w http.ResponseWriter, r *http.Request) {
 	}
 	a.ID = newID()
 	a.Revision = 1
-	a.Author = p.Author
+	a.Author = s.changeAuthor(p.Author)
 	a.CreatedAt = stamp()
 	a.UpdatedAt = a.CreatedAt
 	if e = insertArticle(tx, a, p.Message); e != nil {
@@ -396,6 +399,9 @@ func (s *Server) commitUpdate(aid string, base int, author, message string, muta
 	if e != nil {
 		return Article{}, 400, e
 	}
+	if s.principal != nil && (a.SpaceID != old.SpaceID || a.ProjectID != old.ProjectID || a.ParentID != old.ParentID) {
+		return Article{}, 400, errors.New("corporate moves require a permission preview and are not yet enabled")
+	}
 	if e = requiredArticle(a); e != nil {
 		return Article{}, 400, e
 	}
@@ -410,9 +416,9 @@ func (s *Server) commitUpdate(aid string, base int, author, message string, muta
 	a.Revision = old.Revision + 1
 	a.CreatedAt = old.CreatedAt
 	a.UpdatedAt = stamp()
-	a.Author = author
+	a.Author = s.changeAuthor(author)
 	a.DeletedAt = ""
-	_, e = tx.Exec("UPDATE articles SET space_id=?,parent_id=?,title=?,summary=?,body=?,kind=?,status=?,pinned=?,tags=?,properties=?,revision=?,updated_at=?,author=? WHERE id=? AND revision=?", a.SpaceID, a.ParentID, a.Title, a.Summary, a.Body, a.Kind, a.Status, boolInt(a.Pinned), encode(a.Tags), encode(a.Properties), a.Revision, a.UpdatedAt, a.Author, aid, base)
+	_, e = tx.Exec("UPDATE articles SET space_id=?,parent_id=?,project_id=?,title=?,summary=?,body=?,kind=?,status=?,pinned=?,tags=?,properties=?,revision=?,updated_at=?,author=? WHERE id=? AND revision=?", a.SpaceID, a.ParentID, a.ProjectID, a.Title, a.Summary, a.Body, a.Kind, a.Status, boolInt(a.Pinned), encode(a.Tags), encode(a.Properties), a.Revision, a.UpdatedAt, a.Author, aid, base)
 	if e != nil {
 		return Article{}, 400, errors.New("could not update article")
 	}
@@ -476,7 +482,7 @@ func (s *Server) deleteArticle(w http.ResponseWriter, r *http.Request, aid strin
 	a.Revision++
 	a.UpdatedAt = stamp()
 	a.DeletedAt = a.UpdatedAt
-	a.Author = v.Author
+	a.Author = s.changeAuthor(v.Author)
 	if _, e = tx.Exec("UPDATE articles SET deleted_at=?,revision=?,updated_at=?,author=? WHERE id=? AND revision=? AND deleted_at IS NULL", a.DeletedAt, a.Revision, a.UpdatedAt, a.Author, aid, v.BaseRevision); e != nil {
 		apiErr(w, 500, "database error")
 		return
@@ -534,7 +540,7 @@ func (s *Server) undeleteArticle(w http.ResponseWriter, r *http.Request, aid str
 	a.Revision++
 	a.UpdatedAt = stamp()
 	a.DeletedAt = ""
-	a.Author = v.Author
+	a.Author = s.changeAuthor(v.Author)
 	if _, e = tx.Exec("UPDATE articles SET deleted_at=NULL,revision=?,updated_at=?,author=? WHERE id=? AND revision=? AND deleted_at IS NOT NULL", a.Revision, a.UpdatedAt, a.Author, aid, v.BaseRevision); e != nil {
 		apiErr(w, 500, "database error")
 		return

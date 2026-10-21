@@ -94,7 +94,11 @@ func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusConflict, "article is deleted")
 		return
 	}
-	if _, err := s.DB.ExecContext(r.Context(), "INSERT OR IGNORE INTO favorites(article_id,created_at) VALUES(?,?)", id, stamp()); err != nil {
+	insert := "INSERT OR IGNORE INTO favorites(article_id,created_at) VALUES(?,?)"
+	if s.DB.pg {
+		insert = "INSERT INTO favorites(article_id,created_at) VALUES(?,?) ON CONFLICT DO NOTHING"
+	}
+	if _, err := s.DB.ExecContext(r.Context(), insert, id, stamp()); err != nil {
 		apiErr(w, http.StatusInternalServerError, "database error")
 		return
 	}
@@ -102,7 +106,7 @@ func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
 }
 
 // exportFavorites returns all favorites rows for /api/export (never nil).
-func exportFavorites(tx *sql.Tx) []map[string]string {
+func exportFavorites(tx *transaction) []map[string]string {
 	out := []map[string]string{}
 	rows, err := tx.Query("SELECT article_id,created_at FROM favorites ORDER BY created_at,article_id")
 	if err != nil {

@@ -5,7 +5,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.25-alpine AS backend
+FROM golang:1.26-alpine AS backend
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
@@ -20,5 +20,5 @@ COPY --from=frontend /build/web/dist /app/web/dist
 COPY LICENSE THIRD_PARTY_NOTICES.md /app/
 EXPOSE 8090
 ENTRYPOINT ["/app/aiwiki"]
-# Publish safely on the host: -p 127.0.0.1:8090:8090 (no built-in authentication).
+# Publish safely on the host: -p 127.0.0.1:8090:8090 (trusted mode has no authentication; configure OIDC for corporate mode).
 CMD ["-addr", "0.0.0.0:8090", "-data", "/app/data", "-web", "/app/web/dist"]

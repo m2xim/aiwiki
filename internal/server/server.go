@@ -16,9 +16,13 @@ import (
 
 // Server serves the local wiki API and its built frontend.
 type Server struct {
-	DB              *sql.DB
+	authDB          *database
+	objects         objectStore
+	DB              *database
 	DataDir, WebDir string
 	allowedOrigin   string
+	auth            *AuthService
+	principal       *Principal
 }
 
 // SetAllowedOrigin enables one explicitly trusted, canonicalized browser origin.
@@ -80,7 +84,7 @@ func Open(dataDir, webDir string) (*Server, error) {
 		db.Close()
 		return nil, err
 	}
-	s := &Server{DB: db, DataDir: dataDir, WebDir: webDir}
+	s := &Server{DB: &database{pool: db}, DataDir: dataDir, WebDir: webDir}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -91,10 +95,18 @@ func Open(dataDir, webDir string) (*Server, error) {
 	}
 	return s, nil
 }
-func (s *Server) Close() error { return s.DB.Close() }
+func (s *Server) Close() error {
+	if s.authDB != nil {
+		_ = s.authDB.Close()
+	}
+	return s.DB.Close()
+}
 
 // Handler returns the routes behind the Host and Origin checks of corsLocal.
 func (s *Server) Handler() http.Handler {
+	if s.auth != nil {
+		return corsLocal(s.corporateHandler(), s.allowedOrigin)
+	}
 	return corsLocal(s.routes(), s.allowedOrigin)
 }
 
@@ -102,6 +114,11 @@ func (s *Server) Handler() http.Handler {
 // Host check on the outer request may use it directly.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	if s.DB.pg {
+		s.corporateRoutes(mux)
+	} else {
+		mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"mode": "trusted"}) })
+	}
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
 	mux.HandleFunc("/api/spaces", s.spaces)
 	mux.HandleFunc("/api/spaces/{id}", s.space)

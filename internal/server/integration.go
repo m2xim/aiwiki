@@ -24,6 +24,9 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 	cond := "deleted_at IS NULL AND pinned=1 AND status<>'archived' AND space_id IN (SELECT id FROM spaces WHERE archived_at IS NULL)"
+	if s.DB.pg {
+		cond = "deleted_at IS NULL AND pinned=1 AND status<>'archived' AND corporate_container_writable(space_id,project_id)"
+	}
 	args := []any{}
 	if space != "" {
 		cond += " AND (space_id='general' OR space_id=?)"
@@ -31,6 +34,9 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	instructions := s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+cond+" ORDER BY title", args...)
 	recentQuery := "SELECT " + articleColumns + " FROM articles WHERE deleted_at IS NULL AND status<>'archived' AND space_id IN (SELECT id FROM spaces WHERE archived_at IS NULL)"
+	if s.DB.pg {
+		recentQuery = "SELECT " + articleColumns + " FROM articles WHERE deleted_at IS NULL AND status<>'archived' AND corporate_container_writable(space_id,project_id)"
+	}
 	recentArgs := []any{}
 	if space != "" {
 		recentQuery += " AND (space_id='general' OR space_id=?)"
@@ -62,6 +68,10 @@ func selectArticlesFrom(db interface {
 	return out
 }
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
+	if s.principal != nil {
+		apiErr(w, 403, "bulk export is unavailable in corporate mode")
+		return
+	}
 	tx, e := s.DB.Begin()
 	if e != nil {
 		apiErr(w, 500, "database error")

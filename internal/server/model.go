@@ -11,6 +11,7 @@ import (
 )
 
 type Space struct {
+	Limited     bool   `json:"limited,omitempty"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -19,6 +20,7 @@ type Space struct {
 type Article struct {
 	ID         string            `json:"id"`
 	SpaceID    string            `json:"space_id"`
+	ProjectID  string            `json:"project_id,omitempty"`
 	ParentID   string            `json:"parent_id"`
 	Title      string            `json:"title"`
 	Summary    string            `json:"summary"`
@@ -73,14 +75,14 @@ func randomSuffix() string {
 }
 func encode(v any) string { b, _ := json.Marshal(v); return string(b) }
 
-const articleColumns = `id,space_id,parent_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author,deleted_at`
+const articleColumns = `id,space_id,parent_id,project_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author,deleted_at`
 
 func scanArticle(row interface{ Scan(...any) error }) (Article, error) {
 	var a Article
 	var pinned int
 	var tags, props string
 	var deletedAt sql.NullString
-	err := row.Scan(&a.ID, &a.SpaceID, &a.ParentID, &a.Title, &a.Summary, &a.Body, &a.Kind, &a.Status, &pinned, &tags, &props, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.Author, &deletedAt)
+	err := row.Scan(&a.ID, &a.SpaceID, &a.ParentID, &a.ProjectID, &a.Title, &a.Summary, &a.Body, &a.Kind, &a.Status, &pinned, &tags, &props, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.Author, &deletedAt)
 	if err != nil {
 		return a, err
 	}
@@ -101,7 +103,13 @@ func scanArticle(row interface{ Scan(...any) error }) (Article, error) {
 	return a, nil
 }
 func (s *Server) articleByID(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (Article, error) {
-	return scanArticle(q.QueryRow(`SELECT `+articleColumns+` FROM articles WHERE id=?`, id))
+	query := "SELECT " + articleColumns + " FROM articles WHERE id=?"
+	if s.DB.pg {
+		if _, ok := q.(*transaction); ok {
+			query += " FOR UPDATE"
+		}
+	}
+	return scanArticle(q.QueryRow(query, id))
 }
 func requiredArticle(a Article) error {
 	if a.SpaceID == "" || a.Title == "" {
@@ -127,6 +135,9 @@ func requiredArticle(a Article) error {
 }
 
 func (s *Server) migrate() error {
+	if s.DB.pg {
+		return s.migratePostgres()
+	}
 	_, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS spaces(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',archived_at TEXT);
 CREATE TABLE IF NOT EXISTS articles(id TEXT PRIMARY KEY,space_id TEXT NOT NULL REFERENCES spaces(id),parent_id TEXT NOT NULL DEFAULT '',title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',kind TEXT NOT NULL,status TEXT NOT NULL,pinned INTEGER NOT NULL DEFAULT 0,tags TEXT NOT NULL DEFAULT '[]',properties TEXT NOT NULL DEFAULT '{}',revision INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,author TEXT NOT NULL,deleted_at TEXT);
 CREATE INDEX IF NOT EXISTS articles_space_updated ON articles(space_id,updated_at DESC); CREATE INDEX IF NOT EXISTS articles_parent ON articles(parent_id);
@@ -215,6 +226,35 @@ CREATE VIRTUAL TABLE IF NOT EXISTS article_fts USING fts5(article_id UNINDEXED,t
 	if !hasDeletedAt {
 		_, err = s.DB.Exec(`ALTER TABLE attachments ADD COLUMN deleted_at TEXT`)
 	}
+	if err == nil {
+		err = s.ensureSQLiteProjectColumn()
+	}
+	return err
+}
+func (s *Server) ensureSQLiteProjectColumn() error {
+	rows, err := s.DB.Query("PRAGMA table_info(articles)")
+	if err != nil {
+		return err
+	}
+	has := false
+	for rows.Next() {
+		var cid, nn, pk int
+		var name, typ string
+		var def sql.NullString
+		if err = rows.Scan(&cid, &name, &typ, &nn, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		has = has || name == "project_id"
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !has {
+		_, err = s.DB.Exec("ALTER TABLE articles ADD COLUMN project_id TEXT NOT NULL DEFAULT ''")
+	}
 	return err
 }
 
@@ -257,8 +297,8 @@ func (s *Server) seed() error {
 	return tx.Commit()
 }
 
-func insertArticle(tx *sql.Tx, a Article, message string) error {
-	_, err := tx.Exec(`INSERT INTO articles(`+articleColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ID, a.SpaceID, a.ParentID, a.Title, a.Summary, a.Body, a.Kind, a.Status, boolInt(a.Pinned), encode(a.Tags), encode(a.Properties), a.Revision, a.CreatedAt, a.UpdatedAt, a.Author, nullString(a.DeletedAt))
+func insertArticle(tx *transaction, a Article, message string) error {
+	_, err := tx.Exec(`INSERT INTO articles(`+articleColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ID, a.SpaceID, a.ParentID, a.ProjectID, a.Title, a.Summary, a.Body, a.Kind, a.Status, boolInt(a.Pinned), encode(a.Tags), encode(a.Properties), a.Revision, a.CreatedAt, a.UpdatedAt, a.Author, nullString(a.DeletedAt))
 	if err != nil {
 		return err
 	}
@@ -273,7 +313,11 @@ func nullString(value string) any {
 	}
 	return value
 }
-func indexArticle(tx *sql.Tx, a Article) error {
+func indexArticle(tx *transaction, a Article) error {
+	if tx.pg {
+		_, e := tx.Exec(`INSERT INTO article_fts(article_id,title,summary,body,tags) VALUES(?,?,?,?,?) ON CONFLICT (article_id) DO UPDATE SET title=EXCLUDED.title,summary=EXCLUDED.summary,body=EXCLUDED.body,tags=EXCLUDED.tags`, a.ID, a.Title, a.Summary, a.Body, join(a.Tags, " "))
+		return e
+	}
 	if _, e := tx.Exec(`DELETE FROM article_fts WHERE article_id=?`, a.ID); e != nil {
 		return e
 	}

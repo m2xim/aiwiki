@@ -1,8 +1,8 @@
 # Security Policy
 
-## Current security model
+## Trusted-network mode
 
-AI Wiki is designed for a single trusted user or a trusted private network. **It has no authentication, users, roles or access control.**
+The default SQLite mode is designed for a single trusted user or a trusted private network. **This mode has no authentication, users, roles or access control.**
 
 - Anyone who can reach the HTTP port can read, create, edit, restore and delete articles, comments and attachments, and download the full JSON export (`/api/export`).
 - The MCP endpoint (`/mcp`) and REST API (`/api/*`) are equally unauthenticated.
@@ -17,7 +17,11 @@ Do not expose the server to the internet or an untrusted network. If you must pu
 
 A reverse proxy must accept only the configured public server name and preserve the client's Host (including a non-default port). Rewriting every Host to the loopback backend would disable the remote-host distinction and enable the loopback development-origin exception for proxied requests. Do not rely on forwarded headers for this guard.
 
-PostgreSQL, SSO and ACL support are roadmap items only and are not part of the current code.
+## Corporate mode
+
+PostgreSQL/OIDC mode is separate and must be configured completely; it never silently falls back to SQLite. It requires a private S3 bucket and a runtime DB role that neither bypasses RLS nor owns content tables. Authentication, content permissions and system administration are distinct. System administrators have no automatic private-content access. Current authorization is enforced on REST, MCP, historical reads and file downloads; legacy bulk export is disabled. See [configuration, role matrix and limitations](docs/CORPORATE.md).
+
+The application does not terminate TLS itself, provide production rate limits/quotas or prove your Keycloak/AD federation configuration. Deploy behind TLS, restrict direct backend access, set a short Keycloak access-token lifetime, protect database/object credentials and back up PostgreSQL and S3 together. Local disable/grant revocation is checked per request/statement; directory changes may lag until Keycloak invalidates or expires a token. Native scoped MCP tokens and emergency private-content access remain separate work.
 
 ## Supported versions
 
