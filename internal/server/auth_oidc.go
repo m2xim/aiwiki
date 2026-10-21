@@ -81,9 +81,10 @@ type AuthService struct {
 	maxSessions   int
 	maxLogins     int
 
-	mu       sync.Mutex
-	sessions map[[32]byte]*authSession
-	logins   map[[32]byte]*authLogin
+	mu          sync.Mutex
+	sessions    map[[32]byte]*authSession
+	logins      map[[32]byte]*authLogin
+	delegations map[[32]byte]*mcpDelegation
 }
 
 type authSession struct {
@@ -203,6 +204,7 @@ func newAuthServiceWithUsers(ctx context.Context, users authUsers, cfg Corporate
 		maxSessions:   authMaxSessions,
 		maxLogins:     authMaxLogins,
 		sessions:      map[[32]byte]*authSession{},
+		delegations:   map[[32]byte]*mcpDelegation{},
 		logins:        map[[32]byte]*authLogin{},
 	}
 	if secure {
@@ -369,6 +371,9 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	raw := strings.TrimSpace(h[7:])
 	if raw == "" {
 		return deny(http.StatusUnauthorized, "invalid token")
+	}
+	if strings.HasPrefix(raw, mcpDelegationPrefix) {
+		return a.authenticateDelegation(w, r, raw)
 	}
 	tok, err := a.verifier.Verify(r.Context(), raw)
 	if err != nil {
@@ -644,6 +649,7 @@ func (a *AuthService) purgeLocked(now time.Time) {
 	for k, s := range a.sessions {
 		if !now.Before(s.expires) {
 			delete(a.sessions, k)
+			a.dropDelegationsLocked(k)
 		}
 	}
 	for k, l := range a.logins {
@@ -662,6 +668,7 @@ func (a *AuthService) sessionSnapshot(key [32]byte) *authSession {
 	}
 	if !a.now().Before(s.expires) {
 		delete(a.sessions, key)
+		a.dropDelegationsLocked(key)
 		return nil
 	}
 	cp := *s
@@ -671,6 +678,7 @@ func (a *AuthService) sessionSnapshot(key [32]byte) *authSession {
 func (a *AuthService) dropSession(key [32]byte) {
 	a.mu.Lock()
 	delete(a.sessions, key)
+	a.dropDelegationsLocked(key)
 	a.mu.Unlock()
 }
 
@@ -868,6 +876,7 @@ func (a *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s := a.sessions[key]
 	if s != nil && authEqual(r.Header.Get("X-CSRF-Token"), s.csrf) {
 		delete(a.sessions, key)
+		a.dropDelegationsLocked(key)
 		s = nil
 	}
 	a.mu.Unlock()

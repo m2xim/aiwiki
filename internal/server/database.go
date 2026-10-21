@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -169,14 +170,21 @@ func (t *transaction) PrepareContext(context.Context, string) (*sql.Stmt, error)
 	return nil, errUnsupportedDB
 }
 
-// scoped returns a database pinned to one connection whose session variable
-// app.user_id is userID, plus a cleanup function that must be called exactly
-// when the request ends (extra calls are harmless). Cleanup clears the variable
-// and verifies it; if that fails the connection is discarded rather than
-// returned to the pool. SQLite has no row-level security, so there the result is
-// an unpinned view of the same handle.
+// scoped returns a database pinned to one connection whose session user is
+// userID, plus a cleanup function that must be called when the request ends.
+// SQLite has no row-level security, so there the result is an unpinned view.
 func (d *database) scoped(ctx context.Context, userID string) (*database, func(), error) {
+	return d.scopedProjects(ctx, userID, nil)
+}
+
+// scopedProjects pins both the session user and optional exact project scope
+// to one connection. A nil project list means unrestricted; a non-nil empty
+// list denies access to every project.
+func (d *database) scopedProjects(ctx context.Context, userID string, projects []string) (*database, func(), error) {
 	if !d.pg {
+		if projects != nil {
+			return nil, nil, errors.New("MCP project scopes require PostgreSQL")
+		}
 		return &database{pool: d.pool}, func() {}, nil
 	}
 	if d.conn != nil || d.pool == nil {
@@ -185,14 +193,22 @@ func (d *database) scoped(ctx context.Context, userID string) (*database, func()
 	if userID == "" {
 		return nil, nil, errors.New("scoped database requires a user id")
 	}
+	projectScope := ""
+	if projects != nil {
+		encoded, err := json.Marshal(projects)
+		if err != nil {
+			return nil, nil, err
+		}
+		projectScope = string(encoded)
+	}
 	conn, err := d.pool.Conn(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	var got string
-	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false)`, userID).Scan(&got)
-	if err == nil && got != userID {
-		err = errors.New("session user was not applied")
+	var gotUser, gotProjects string
+	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_projects', $2, false)`, userID, projectScope).Scan(&gotUser, &gotProjects)
+	if err == nil && (gotUser != userID || gotProjects != projectScope) {
+		err = errors.New("session scope was not applied")
 	}
 	if err != nil {
 		discardConn(conn)
@@ -211,9 +227,9 @@ func (d *database) scoped(ctx context.Context, userID string) (*database, func()
 				discardConn(conn)
 				return
 			}
-			var cleared string
-			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false)`).Scan(&cleared)
-			if err != nil || cleared != "" {
+			var clearedUser, clearedProjects string
+			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_projects', '', false)`).Scan(&clearedUser, &clearedProjects)
+			if err != nil || clearedUser != "" || clearedProjects != "" {
 				discardConn(conn)
 				return
 			}
@@ -221,7 +237,13 @@ func (d *database) scoped(ctx context.Context, userID string) (*database, func()
 		})
 	}
 	view.release = cleanup
-	view.resume = func(ctx context.Context) (*database, func(), error) { return d.scoped(ctx, userID) }
+	resumeProjects := append([]string(nil), projects...)
+	if projects != nil && resumeProjects == nil {
+		resumeProjects = []string{}
+	}
+	view.resume = func(ctx context.Context) (*database, func(), error) {
+		return d.scopedProjects(ctx, userID, resumeProjects)
+	}
 	return view, cleanup, nil
 }
 

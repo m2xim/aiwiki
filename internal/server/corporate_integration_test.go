@@ -33,7 +33,7 @@ func corporateFixture(t *testing.T) (*Server, *Server) {
 	if err = s.migrateCorporate(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = owner.Exec(`GRANT USAGE ON SCHEMA public TO aiwiki_app; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO aiwiki_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO aiwiki_app; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO aiwiki_app; REVOKE UPDATE,DELETE ON security_audit FROM aiwiki_app; REVOKE ALL ON schema_migrations FROM aiwiki_app`); err != nil {
+	if _, err = owner.Exec(`GRANT USAGE ON SCHEMA public TO aiwiki_app; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO aiwiki_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO aiwiki_app; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO aiwiki_app; REVOKE UPDATE,DELETE ON security_audit FROM aiwiki_app; REVOKE ALL ON schema_migrations FROM aiwiki_app; REVOKE EXECUTE ON FUNCTION corporate_owner_effective_role(text,text,text) FROM aiwiki_app`); err != nil {
 		t.Fatal(err)
 	}
 	db, err := openPostgres(context.Background(), appURL)

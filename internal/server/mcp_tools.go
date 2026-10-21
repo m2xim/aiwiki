@@ -133,6 +133,9 @@ func mcpToolList() []map[string]any {
 func (s *Server) callTool(params map[string]json.RawMessage) any {
 	var name string
 	_ = json.Unmarshal(params["name"], &name)
+	if s.principal != nil && s.principal.MCPProjects != nil && !mcpReadTool(name) {
+		return toolErr("temporary MCP access is read-only")
+	}
 	var args map[string]json.RawMessage
 	if raw, ok := params["arguments"]; ok && strings.TrimSpace(string(raw)) != "null" {
 		if json.Unmarshal(raw, &args) != nil {

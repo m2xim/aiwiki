@@ -51,7 +51,7 @@ The first core deliberately rejects article container/parent moves and project r
 
 ## MCP
 
-In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. Browser cookies do not authorize MCP. Existing trusted-network mode remains compatible. Native per-project/read-only personal tokens, service-account lifecycle, OAuth authorization-server discovery and the client compatibility matrix belong to the following MCP access stage; they are not supplied by browser SSO alone.
+In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. It also supports [temporary project-scoped read-only keys](MCP-TEMPORARY-ACCESS.md), tied to a live browser session with per-request introspection. Browser cookies do not authorize MCP. Existing trusted-network mode remains compatible. Long-lived personal tokens, service-account lifecycle, OAuth authorization-server discovery and the client compatibility matrix remain subsequent MCP work.
 
 ## Verification
 

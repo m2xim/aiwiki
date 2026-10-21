@@ -1,5 +1,7 @@
 export type Space = { limited?: boolean; id: string; name: string; description: string; archived_at?: string; personal?: boolean; article_count?: number; project_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
 export type Project = { id: string; name: string; description: string; space_id: string; parent_id: string; archived_at?: string; inherit_acl: boolean; article_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
+export type MCPDelegation = { id: string; name: string; project_ids: string[]; created_at: string; expires_at: string };
+export type CreatedMCPDelegation = { token: string };
 export type Team = { id: string; name: string; description: string; archived_at?: string };
 export type TeamMember = { id: string; name: string };
 export type AccessGrant = { subject_type: 'user' | 'team'; subject_id: string; role: 'owner' | 'manager' | 'editor' | 'commenter' | 'reader' };
@@ -100,6 +102,9 @@ export const client = {
   setUserDisabled: (userId: string, disabled: boolean) => api<void>(`/api/admin/users/${encodeURIComponent(userId)}`, json('PATCH', { disabled })),
   createSpaceFor: (data: { name: string; description: string; personal: boolean }) => api<Space>('/api/corporate/spaces', json('POST', data)),
   projects: (spaceId = '') => api<Project[]>(`/api/projects${spaceId ? `?space_id=${encodeURIComponent(spaceId)}` : ''}`),
+  mcpDelegations: () => api<MCPDelegation[]>('/api/mcp/delegations'),
+  createMCPDelegation: (data: { name: string; project_ids: string[]; ttl_seconds: 300 }) => api<CreatedMCPDelegation>('/api/mcp/delegations', json('POST', data)),
+  revokeMCPDelegation: (id: string) => api<void>(`/api/mcp/delegations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   createProject: (data: { name: string; description: string; space_id: string; parent_id?: string; inherit_acl?: boolean }) => api<Project>('/api/projects', json('POST', data)),
   updateProject: (id: string, data: Partial<Pick<Project, 'name' | 'description' | 'archived_at' | 'inherit_acl'>> & { archived?: boolean }) => {
     const { archived_at, ...fields } = data;

@@ -39,7 +39,7 @@ func OpenCorporate(ctx context.Context, cfg CorporateConfig, dataDir, webDir str
 		}
 		if err == nil {
 			role := `"` + cfg.RuntimeRole + `"`
-			_, err = migration.Exec(`GRANT USAGE ON SCHEMA public TO ` + role + `; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ` + role + `; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ` + role + `; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ` + role + `; REVOKE TRUNCATE,TRIGGER,REFERENCES ON ALL TABLES IN SCHEMA public FROM ` + role + `; REVOKE UPDATE,DELETE ON security_audit FROM ` + role + `; REVOKE ALL ON schema_migrations FROM ` + role)
+			_, err = migration.Exec(`GRANT USAGE ON SCHEMA public TO ` + role + `; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ` + role + `; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ` + role + `; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ` + role + `; REVOKE TRUNCATE,TRIGGER,REFERENCES ON ALL TABLES IN SCHEMA public FROM ` + role + `; REVOKE UPDATE,DELETE ON security_audit FROM ` + role + `; REVOKE ALL ON schema_migrations FROM ` + role + `; REVOKE EXECUTE ON FUNCTION corporate_owner_effective_role(text,text,text) FROM ` + role)
 		}
 		migration.Close()
 		if err != nil {
@@ -89,7 +89,7 @@ func (s *Server) corporateHandler() http.Handler {
 	s.auth.routes(public)
 	public.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
 	public.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		protected := strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/files/") || r.URL.Path == "/mcp"
+		protected := strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/files/") || authIsMCPPath(r.URL.Path)
 		if !protected {
 			s.routes().ServeHTTP(w, r)
 			return
@@ -99,7 +99,7 @@ func (s *Server) corporateHandler() http.Handler {
 		if !ok {
 			return
 		}
-		scoped, cleanup, err := s.DB.scoped(r.Context(), p.ID)
+		scoped, cleanup, err := s.DB.scopedProjects(r.Context(), p.ID, p.MCPProjects)
 		if err != nil {
 			apiErr(w, 503, "database unavailable")
 			return
