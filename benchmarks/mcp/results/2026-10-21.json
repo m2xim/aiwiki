@@ -1,0 +1,2224 @@
+{
+  "schema": "aiwiki-mcp-baseline-public/1",
+  "date": "2026-10-21",
+  "runId": "20261021191554-533c94",
+  "measuredApplicationCommit": "2cde7ba710c7c2759a899cff874f24ae54a67576",
+  "workingTreeDirty": true,
+  "sourceNote": "Harness files were uncommitted during measurement; their hashes identify the executed version. Application source is unchanged from the listed commit.",
+  "sourceHashes": {
+    "runner": "49ded6dce54f5a8e32a88365783a36d86cf7f531b3d6cede9cb993be76c3dcbd",
+    "methodology": "b2d6cabca520082cd5d1ec9756b03c7d2bab9eef779d7ae77408b6dde2b3277c",
+    "corpus": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+    "serverBinary": "35e1e9527f1da20879060ad542a997041bc68b898b708c444e52c4661574647a"
+  },
+  "environment": {
+    "node": "v24.14.1",
+    "go": "go version go1.25.6 windows/amd64",
+    "os": "win32",
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor            ",
+    "tokenizer": {
+      "package": "js-tiktoken",
+      "version": "1.0.21",
+      "encoding": "cl100k_base",
+      "api": "getEncoding",
+      "specialTokens": "counted as ordinary text"
+    }
+  },
+  "options": {
+    "repetitions": 20,
+    "warmupPasses": 1,
+    "searchPageSize": 10,
+    "strategiesOrder": "alternates each repetition (odd: forward, even: reversed)"
+  },
+  "corpus": {
+    "version": "mcp-baseline-v1",
+    "spaces": 3,
+    "documents": 28,
+    "searchTasks": 12,
+    "readTasks": 7,
+    "documentBodyBytes": [
+      {
+        "key": "offers-backend",
+        "bytes": 2263
+      },
+      {
+        "key": "offers-current",
+        "bytes": 18148
+      },
+      {
+        "key": "offers-legacy",
+        "bytes": 4357
+      },
+      {
+        "key": "queue-watch",
+        "bytes": 927
+      },
+      {
+        "key": "shipment-handoff",
+        "bytes": 3293
+      },
+      {
+        "key": "returns-guide",
+        "bytes": 4938
+      },
+      {
+        "key": "dispatch-map",
+        "bytes": 2922
+      },
+      {
+        "key": "platform-api",
+        "bytes": 5083
+      },
+      {
+        "key": "svc-orbit",
+        "bytes": 3652
+      },
+      {
+        "key": "orbit-tools",
+        "bytes": 3307
+      },
+      {
+        "key": "deploy-current",
+        "bytes": 4576
+      },
+      {
+        "key": "deploy-archive",
+        "bytes": 2519
+      },
+      {
+        "key": "cache-runbook",
+        "bytes": 5291
+      },
+      {
+        "key": "ledger-reconcile",
+        "bytes": 6997
+      },
+      {
+        "key": "token-rotation",
+        "bytes": 3432
+      },
+      {
+        "key": "api-errors",
+        "bytes": 4189
+      },
+      {
+        "key": "telemetry-fields",
+        "bytes": 3493
+      },
+      {
+        "key": "support-intake",
+        "bytes": 5822
+      },
+      {
+        "key": "account-access",
+        "bytes": 3991
+      },
+      {
+        "key": "language-support",
+        "bytes": 2763
+      },
+      {
+        "key": "incident-comms",
+        "bytes": 4031
+      },
+      {
+        "key": "reimbursement",
+        "bytes": 4755
+      },
+      {
+        "key": "oncall-glossary",
+        "bytes": 3432
+      },
+      {
+        "key": "handover-template",
+        "bytes": 3290
+      },
+      {
+        "key": "release-evidence",
+        "bytes": 3042
+      },
+      {
+        "key": "load-profile",
+        "bytes": 135442
+      },
+      {
+        "key": "audit-event",
+        "bytes": 105432
+      },
+      {
+        "key": "support-escalation",
+        "bytes": 18912
+      }
+    ]
+  },
+  "setup": {
+    "overhead": {
+      "calls": 1,
+      "requests": 4,
+      "requestBytes": 420,
+      "responseBytes": 18269,
+      "totalBytes": 18689,
+      "outputTokens": 26,
+      "inputTokens": 4181,
+      "totalTokens": 4207,
+      "durationMs": 2.389
+    },
+    "parts": {
+      "initializeInstructions": {
+        "chars": 658,
+        "bytes": 658,
+        "tokens": 148,
+        "requestBytes": 165,
+        "responseBytes": 818,
+        "durationMs": 0.343
+      },
+      "initializedNotification": {
+        "requestBytes": 54,
+        "responseBytes": 0,
+        "durationMs": 0.297
+      },
+      "toolsList": {
+        "tools": 10,
+        "schemaBytes": 8747,
+        "tokens": 1826,
+        "requestBytes": 59,
+        "responseBytes": 8793,
+        "durationMs": 0.713
+      },
+      "bootstrap": {
+        "calls": 1,
+        "requests": 1,
+        "requestBytes": 142,
+        "responseBytes": 8658,
+        "outputTokens": 26,
+        "inputTokens": 2207,
+        "durationMs": 1.036,
+        "totalBytes": 8800,
+        "totalTokens": 2233,
+        "spaceArgument": "first fixture space",
+        "contentChars": 5762
+      }
+    },
+    "note": "single sample per run; shared by every strategy and added once per session/task view, never per call"
+  },
+  "search": {
+    "pageSize": 10,
+    "scope": "global article-level ranking over all spaces including the app's built-in seeded articles",
+    "overall": {
+      "samples": 240,
+      "tasks": 12,
+      "withGroundTruth": {
+        "samples": 220,
+        "recallAt5": 0.9545454545454546,
+        "recallAt10": 0.9545454545454546,
+        "mrrAt5": 0.9545454545454546,
+        "mrrAt10": 0.9545454545454546,
+        "anyRelevantInTop5": 1,
+        "anyRelevantInTop10": 1
+      },
+      "noHit": {
+        "samples": 20,
+        "correct": 20,
+        "accuracy": 1,
+        "meanReturned": 0
+      },
+      "modeCounts": {
+        "any": 120,
+        "all": 120
+      },
+      "durationMs": {
+        "n": 240,
+        "median": 7.921,
+        "p95": 13.288,
+        "p95IsMax": false,
+        "min": 6.711,
+        "max": 13.896,
+        "mean": 9.124741666666667
+      }
+    },
+    "byCategory": {
+      "alias": {
+        "samples": 20,
+        "tasks": 1,
+        "withGroundTruth": {
+          "samples": 20,
+          "recallAt5": 1,
+          "recallAt10": 1,
+          "mrrAt5": 1,
+          "mrrAt10": 1,
+          "anyRelevantInTop5": 1,
+          "anyRelevantInTop10": 1
+        },
+        "noHit": {
+          "samples": 0,
+          "correct": 0,
+          "accuracy": null,
+          "meanReturned": null
+        },
+        "modeCounts": {
+          "all": 20
+        },
+        "durationMs": {
+          "n": 20,
+          "median": 7.812,
+          "p95": 8.021,
+          "p95IsMax": false,
+          "min": 7.391,
+          "max": 8.236,
+          "mean": 7.776749999999998
+        }
+      },
+      "body-only": {
+        "samples": 40,
+        "tasks": 2,
+        "withGroundTruth": {
+          "samples": 40,
+          "recallAt5": 1,
+          "recallAt10": 1,
+          "mrrAt5": 1,
+          "mrrAt10": 1,
+          "anyRelevantInTop5": 1,
+          "anyRelevantInTop10": 1
+        },
+        "noHit": {
+          "samples": 0,
+          "correct": 0,
+          "accuracy": null,
+          "meanReturned": null
+        },
+        "modeCounts": {
+          "all": 40
+        },
+        "durationMs": {
+          "n": 40,
+          "median": 7.376,
+          "p95": 7.957,
+          "p95IsMax": false,
+          "min": 6.711,
+          "max": 8.158,
+          "mean": 7.42115
+        }
+      },
+      "code": {
+        "samples": 20,
+        "tasks": 1,
+        "withGroundTruth": {
+          "samples": 20,
+          "recallAt5": 1,
+          "recallAt10": 1,
+          "mrrAt5": 1,
+          "mrrAt10": 1,
+          "anyRelevantInTop5": 1,
+          "anyRelevantInTop10": 1
+        },
+        "noHit": {
+          "samples": 0,
+          "correct": 0,
+          "accuracy": null,
+          "meanReturned": null
+        },
+        "modeCounts": {
+          "all": 20
+        },
+        "durationMs": {
+          "n": 20,
+          "median": 7.389,
+          "p95": 7.743,
+          "p95IsMax": false,
+          "min": 7.053,
+          "max": 7.921,
+          "mean": 7.4041
+        }
+      },
+      "crossspace": {
+        "samples": 20,
+        "tasks": 1,
+        "withGroundTruth": {
+          "samples": 20,
+          "recallAt5": 1,
+          "recallAt10": 1,
+          "mrrAt5": 1,
+          "mrrAt10": 1,
+          "anyRelevantInTop5": 1,
+          "anyRelevantInTop10": 1
+        },
+        "noHit": {
+          "samples": 0,
+          "correct": 0,
+          "accuracy": null,
+          "meanReturned": null
+        },
+        "modeCounts": {
+          "any": 20
+        },
+        "durationMs": {
+          "n": 20,
+          "median": 12.956,
+          "p95": 13.366,
+          "p95IsMax": false,
+          "min": 12.65,
+          "max": 13.896,
+          "mean": 12.9959
+        }
+      },
+      "false-friend": {
+        "samples": 20,
+        "tasks": 1,
+        "withGroundTruth": {
+          "samples": 20,
+          "recallAt5": 1,
+          "recallAt10": 1,
+          "mrrAt5": 1,
+          "mrrAt10": 1,
+          "anyRelevantInTop5": 1,
+          "anyRelevantInTop10": 1
+        },
+        "noHit": {
+          "samples": 0,
+          "correct": 0,
+          "accuracy": null,
+          "meanReturned": null
+        },
+        "modeCounts": {
+          "all": 20
+        },
+        "durationMs": {
+          "n": 20,
+          "median": 7.386,
+          "p95": 7.691,
+          "p95IsMax": false,
+          "min": 6.973,
+          "max": 7.718,
+          "mean": 7.36695
+        }
+      },
+      "missing term": {
+        "samples": 20,
+        "tasks": 1,
+        "withGroundTruth": {
+          "samples": 0,
+          "recallAt5": null,
+          "recallAt10": null,
+          "mrrAt5": null,
+          "mrrAt10": null,
+          "anyRelevantInTop5": null,
+          "anyRelevantInTop10": null
+        },
+        "noHit": {
+          "samples": 20,
+          "correct": 20,
+          "accuracy": 1,
+          "meanReturned": 0
+        },
+        "modeCounts": {
+          "any": 20
+        },
+        "durationMs": {
+          "n": 20,
+          "median": 7.032,
+          "p95": 7.616,
+          "p95IsMax": false,
+          "min": 6.823,
+          "max": 7.852,
+          "mean": 7.1259
+        }
+      },
+      "morphology": {
+        "samples": 20,
+        "tasks": 1,
+        "withGroundTruth": {
+          "samples": 20,
+          "recallAt5": 1,
+          "recallAt10": 1,
+          "mrrAt5": 1,
+          "mrrAt10": 1,
+          "anyRelevantInTop5": 1,
+          "anyRelevantInTop10": 1
+        },
+        "noHit": {
+          "samples": 0,
+          "correct": 0,
+          "accuracy": null,
+          "meanReturned": null
+        },
+        "modeCounts": {
+          "any": 20
+        },
+        "durationMs": {
+          "n": 20,
+          "median": 10.181,
+          "p95": 10.62,
+          "p95IsMax": false,
+          "min": 9.75,
+          "max": 10.722,
+          "mean": 10.201150000000002
+        }
+      },
+      "paraphrase": {
+        "samples": 40,
+        "tasks": 2,
+        "withGroundTruth": {
+          "samples": 40,
+          "recallAt5": 0.75,
+          "recallAt10": 0.75,
+          "mrrAt5": 0.75,
+          "mrrAt10": 0.75,
+          "anyRelevantInTop5": 1,
+          "anyRelevantInTop10": 1
+        },
+        "noHit": {
+          "samples": 0,
+          "correct": 0,
+          "accuracy": null,
+          "meanReturned": null
+        },
+        "modeCounts": {
+          "any": 40
+        },
+        "durationMs": {
+          "n": 40,
+          "median": 9.207,
+          "p95": 13.556,
+          "p95IsMax": false,
+          "min": 8.231,
+          "max": 13.74,
+          "mean": 10.958875000000003
+        }
+      },
+      "service": {
+        "samples": 40,
+        "tasks": 2,
+        "withGroundTruth": {
+          "samples": 40,
+          "recallAt5": 1,
+          "recallAt10": 1,
+          "mrrAt5": 1,
+          "mrrAt10": 1,
+          "anyRelevantInTop5": 1,
+          "anyRelevantInTop10": 1
+        },
+        "noHit": {
+          "samples": 0,
+          "correct": 0,
+          "accuracy": null,
+          "meanReturned": null
+        },
+        "modeCounts": {
+          "any": 20,
+          "all": 20
+        },
+        "durationMs": {
+          "n": 40,
+          "median": 8.232,
+          "p95": 12.284,
+          "p95IsMax": false,
+          "min": 7.53,
+          "max": 13.156,
+          "mean": 9.93305
+        }
+      }
+    },
+    "perTask": [
+      {
+        "task": "s01",
+        "category": "service",
+        "relevant": [
+          "offers-backend"
+        ],
+        "mode": "any",
+        "total": 27,
+        "top10": [
+          "offers-backend",
+          "oncall-glossary",
+          "incident-comms",
+          "queue-watch",
+          "load-profile",
+          "audit-event",
+          "support-escalation",
+          "offers-current",
+          "ledger-reconcile",
+          "reimbursement"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 11.847,
+          "p95": 12.391,
+          "p95IsMax": false,
+          "min": 11.604,
+          "max": 13.156,
+          "mean": 11.9842
+        }
+      },
+      {
+        "task": "s02",
+        "category": "alias",
+        "relevant": [
+          "svc-orbit"
+        ],
+        "mode": "all",
+        "total": 1,
+        "top10": [
+          "svc-orbit"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 7.812,
+          "p95": 8.021,
+          "p95IsMax": false,
+          "min": 7.391,
+          "max": 8.236,
+          "mean": 7.776749999999998
+        }
+      },
+      {
+        "task": "s03",
+        "category": "paraphrase",
+        "relevant": [
+          "offers-backend",
+          "offers-current"
+        ],
+        "mode": "any",
+        "total": 30,
+        "top10": [
+          "shipment-handoff",
+          "offers-backend",
+          "unmapped:agent-rules",
+          "unmapped:writing-knowledge",
+          "offers-current",
+          "release-evidence",
+          "support-intake",
+          "dispatch-map",
+          "unmapped:research-template",
+          "unmapped:start-here"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 0.5,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 8.592,
+          "p95": 9.078,
+          "p95IsMax": false,
+          "min": 8.231,
+          "max": 9.207,
+          "mean": 8.656749999999999
+        }
+      },
+      {
+        "task": "s04",
+        "category": "morphology",
+        "relevant": [
+          "returns-guide"
+        ],
+        "mode": "any",
+        "total": 33,
+        "top10": [
+          "returns-guide",
+          "dispatch-map",
+          "token-rotation",
+          "unmapped:writing-knowledge",
+          "offers-current",
+          "audit-event",
+          "ledger-reconcile",
+          "platform-api",
+          "account-access",
+          "language-support"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 10.181,
+          "p95": 10.62,
+          "p95IsMax": false,
+          "min": 9.75,
+          "max": 10.722,
+          "mean": 10.201150000000002
+        }
+      },
+      {
+        "task": "s05",
+        "category": "body-only",
+        "relevant": [
+          "platform-api"
+        ],
+        "mode": "all",
+        "total": 1,
+        "top10": [
+          "platform-api"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 7.707,
+          "p95": 8.129,
+          "p95IsMax": false,
+          "min": 7.243,
+          "max": 8.158,
+          "mean": 7.70975
+        }
+      },
+      {
+        "task": "s06",
+        "category": "code",
+        "relevant": [
+          "api-errors"
+        ],
+        "mode": "all",
+        "total": 1,
+        "top10": [
+          "api-errors"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 7.389,
+          "p95": 7.743,
+          "p95IsMax": false,
+          "min": 7.053,
+          "max": 7.921,
+          "mean": 7.4041
+        }
+      },
+      {
+        "task": "s07",
+        "category": "false-friend",
+        "relevant": [
+          "svc-orbit"
+        ],
+        "mode": "all",
+        "total": 1,
+        "top10": [
+          "svc-orbit"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 7.386,
+          "p95": 7.691,
+          "p95IsMax": false,
+          "min": 6.973,
+          "max": 7.718,
+          "mean": 7.36695
+        }
+      },
+      {
+        "task": "s08",
+        "category": "missing term",
+        "relevant": [],
+        "mode": "any",
+        "total": 0,
+        "top10": [],
+        "recallAt5": null,
+        "recallAt10": null,
+        "rrAt10": null,
+        "noHitCorrect": true,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 7.032,
+          "p95": 7.616,
+          "p95IsMax": false,
+          "min": 6.823,
+          "max": 7.852,
+          "mean": 7.1259
+        }
+      },
+      {
+        "task": "s09",
+        "category": "crossspace",
+        "relevant": [
+          "shipment-handoff",
+          "handover-template"
+        ],
+        "mode": "any",
+        "total": 32,
+        "top10": [
+          "shipment-handoff",
+          "support-escalation",
+          "support-intake",
+          "offers-current",
+          "handover-template",
+          "language-support",
+          "queue-watch",
+          "audit-event",
+          "load-profile",
+          "unmapped:engineering-template"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 12.956,
+          "p95": 13.366,
+          "p95IsMax": false,
+          "min": 12.65,
+          "max": 13.896,
+          "mean": 12.9959
+        }
+      },
+      {
+        "task": "s10",
+        "category": "service",
+        "relevant": [
+          "cache-runbook"
+        ],
+        "mode": "all",
+        "total": 1,
+        "top10": [
+          "cache-runbook"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 7.902,
+          "p95": 8.205,
+          "p95IsMax": false,
+          "min": 7.53,
+          "max": 8.232,
+          "mean": 7.8819
+        }
+      },
+      {
+        "task": "s11",
+        "category": "paraphrase",
+        "relevant": [
+          "handover-template",
+          "shipment-handoff"
+        ],
+        "mode": "any",
+        "total": 33,
+        "top10": [
+          "shipment-handoff",
+          "offers-current",
+          "dispatch-map",
+          "support-intake",
+          "support-escalation",
+          "returns-guide",
+          "queue-watch",
+          "load-profile",
+          "audit-event",
+          "ledger-reconcile"
+        ],
+        "recallAt5": 0.5,
+        "recallAt10": 0.5,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 13.288,
+          "p95": 13.706,
+          "p95IsMax": false,
+          "min": 12.785,
+          "max": 13.74,
+          "mean": 13.261000000000001
+        }
+      },
+      {
+        "task": "s12",
+        "category": "body-only",
+        "relevant": [
+          "offers-backend"
+        ],
+        "mode": "all",
+        "total": 1,
+        "top10": [
+          "offers-backend"
+        ],
+        "recallAt5": 1,
+        "recallAt10": 1,
+        "rrAt10": 1,
+        "noHitCorrect": null,
+        "stableAcrossRepetitions": true,
+        "durationMs": {
+          "n": 20,
+          "median": 7.092,
+          "p95": 7.395,
+          "p95IsMax": false,
+          "min": 6.711,
+          "max": 7.434,
+          "mean": 7.13255
+        }
+      }
+    ],
+    "unstableTasks": []
+  },
+  "read": [
+    {
+      "task": "r07",
+      "bodyChars": 520,
+      "sectionChars": 232,
+      "full": 2537,
+      "outlineSection": 2551,
+      "knownAnchor": 2341,
+      "fullWithSetup": 6744,
+      "outlineWithSetup": 6758,
+      "outlineToFullRatio": 1.005518328734726,
+      "withSetupRatio": 1.0020759193357058
+    },
+    {
+      "task": "r01",
+      "bodyChars": 1450,
+      "sectionChars": 297,
+      "full": 2727,
+      "outlineSection": 2488,
+      "knownAnchor": 2241,
+      "fullWithSetup": 6934,
+      "outlineWithSetup": 6695,
+      "outlineToFullRatio": 0.9123579024569124,
+      "withSetupRatio": 0.9655321603691953
+    },
+    {
+      "task": "r05",
+      "bodyChars": 2400,
+      "sectionChars": 189,
+      "full": 1542,
+      "outlineSection": 941,
+      "knownAnchor": 753,
+      "fullWithSetup": 5749,
+      "outlineWithSetup": 5148,
+      "outlineToFullRatio": 0.6102464332036317,
+      "withSetupRatio": 0.8954600800139154
+    },
+    {
+      "task": "r02",
+      "bodyChars": 12000,
+      "sectionChars": 261,
+      "full": 6017,
+      "outlineSection": 2556,
+      "knownAnchor": 2319,
+      "fullWithSetup": 10224,
+      "outlineWithSetup": 6763,
+      "outlineToFullRatio": 0.42479641017118164,
+      "withSetupRatio": 0.661482785602504
+    },
+    {
+      "task": "r03",
+      "bodyChars": 12500,
+      "sectionChars": 208,
+      "full": 5769,
+      "outlineSection": 2139,
+      "knownAnchor": 1905,
+      "fullWithSetup": 9976,
+      "outlineWithSetup": 6346,
+      "outlineToFullRatio": 0.3707748309932397,
+      "withSetupRatio": 0.6361267040898155
+    },
+    {
+      "task": "r04",
+      "bodyChars": 70000,
+      "sectionChars": 70000,
+      "full": 22448,
+      "outlineSection": 22496,
+      "knownAnchor": 22336,
+      "fullWithSetup": 26655,
+      "outlineWithSetup": 26703,
+      "outlineToFullRatio": 1.0021382751247327,
+      "withSetupRatio": 1.001800787844682
+    },
+    {
+      "task": "r06",
+      "bodyChars": 90000,
+      "sectionChars": 2672,
+      "full": 29667,
+      "outlineSection": 3158,
+      "knownAnchor": 2943,
+      "fullWithSetup": 33874,
+      "outlineWithSetup": 7365,
+      "outlineToFullRatio": 0.10644824215458254,
+      "withSetupRatio": 0.21742339257247448
+    }
+  ],
+  "write": [
+    {
+      "task": "r07",
+      "full": 720,
+      "partial": 514,
+      "ratio": 0.7138888888888889,
+      "verified": true
+    },
+    {
+      "task": "r01",
+      "full": 1346,
+      "partial": 592,
+      "ratio": 0.4398216939078752,
+      "verified": true
+    },
+    {
+      "task": "r05",
+      "full": 1746,
+      "partial": 409,
+      "ratio": 0.23424971363115693,
+      "verified": true
+    },
+    {
+      "task": "r02",
+      "full": 7737,
+      "partial": 564,
+      "ratio": 0.07289647150058162,
+      "verified": true
+    },
+    {
+      "task": "r03",
+      "full": 7994,
+      "partial": 514,
+      "ratio": 0.06429822366775081,
+      "verified": true
+    },
+    {
+      "task": "r04",
+      "full": 42988,
+      "partial": 21701,
+      "ratio": 0.5048152972922676,
+      "verified": true
+    },
+    {
+      "task": "r06",
+      "full": 55105,
+      "partial": 1189,
+      "ratio": 0.021576989383903455,
+      "verified": true
+    }
+  ],
+  "readPayloadStability": [
+    {
+      "task": "r01",
+      "strategy": "A",
+      "stable": true
+    },
+    {
+      "task": "r01",
+      "strategy": "B",
+      "stable": true
+    },
+    {
+      "task": "r01",
+      "strategy": "C",
+      "stable": true
+    },
+    {
+      "task": "r02",
+      "strategy": "A",
+      "stable": true
+    },
+    {
+      "task": "r02",
+      "strategy": "B",
+      "stable": true
+    },
+    {
+      "task": "r02",
+      "strategy": "C",
+      "stable": true
+    },
+    {
+      "task": "r03",
+      "strategy": "A",
+      "stable": true
+    },
+    {
+      "task": "r03",
+      "strategy": "B",
+      "stable": true
+    },
+    {
+      "task": "r03",
+      "strategy": "C",
+      "stable": true
+    },
+    {
+      "task": "r04",
+      "strategy": "A",
+      "stable": true
+    },
+    {
+      "task": "r04",
+      "strategy": "B",
+      "stable": true
+    },
+    {
+      "task": "r04",
+      "strategy": "C",
+      "stable": true
+    },
+    {
+      "task": "r05",
+      "strategy": "A",
+      "stable": true
+    },
+    {
+      "task": "r05",
+      "strategy": "B",
+      "stable": true
+    },
+    {
+      "task": "r05",
+      "strategy": "C",
+      "stable": true
+    },
+    {
+      "task": "r06",
+      "strategy": "A",
+      "stable": true
+    },
+    {
+      "task": "r06",
+      "strategy": "B",
+      "stable": true
+    },
+    {
+      "task": "r06",
+      "strategy": "C",
+      "stable": true
+    },
+    {
+      "task": "r07",
+      "strategy": "A",
+      "stable": true
+    },
+    {
+      "task": "r07",
+      "strategy": "B",
+      "stable": true
+    },
+    {
+      "task": "r07",
+      "strategy": "C",
+      "stable": true
+    }
+  ],
+  "readSearchHits": {
+    "A": {
+      "runs": 140,
+      "oracleConditional": {
+        "answerVerified": 140,
+        "note": "the oracle chooses article and heading regardless of search"
+      },
+      "observed": {
+        "targetInSearchPage": 140,
+        "answerInSearchSnippet": 80,
+        "targetInSearchPageAndAnswerVerified": 140,
+        "targetRank": {
+          "n": 140,
+          "median": 1,
+          "p95": 2,
+          "p95IsMax": false,
+          "min": 1,
+          "max": 2,
+          "mean": 1.1428571428571428
+        }
+      }
+    },
+    "B": {
+      "runs": 140,
+      "oracleConditional": {
+        "answerVerified": 140,
+        "note": "the oracle chooses article and heading regardless of search"
+      },
+      "observed": {
+        "targetInSearchPage": 140,
+        "answerInSearchSnippet": 80,
+        "targetInSearchPageAndAnswerVerified": 140,
+        "targetRank": {
+          "n": 140,
+          "median": 1,
+          "p95": 2,
+          "p95IsMax": false,
+          "min": 1,
+          "max": 2,
+          "mean": 1.1428571428571428
+        }
+      }
+    },
+    "C": {
+      "runs": 140,
+      "oracleConditional": {
+        "answerVerified": 140,
+        "note": "the oracle chooses article and heading regardless of search"
+      },
+      "observed": {
+        "targetInSearchPage": 140,
+        "answerInSearchSnippet": 80,
+        "targetInSearchPageAndAnswerVerified": 140,
+        "targetRank": {
+          "n": 140,
+          "median": 1,
+          "p95": 2,
+          "p95IsMax": false,
+          "min": 1,
+          "max": 2,
+          "mean": 1.1428571428571428
+        }
+      }
+    }
+  },
+  "correctness": {
+    "staleRevisionRejected": {
+      "runs": 40,
+      "passed": 40,
+      "failed": 0
+    },
+    "concurrentEditExactlyOneWinner": {
+      "runs": 40,
+      "passed": 40,
+      "failed": 0
+    },
+    "historicalSectionAfterHeadingRename": {
+      "runs": 40,
+      "passed": 40,
+      "failed": 0
+    }
+  },
+  "tracesSha256": "56c42fac743ed038d3084246a2b1650283a3bd7afc434bf9837c2977d286b50e",
+  "failures": [],
+  "limitations": [
+    "No LLM run: scripted calls only; no reasoning, autonomous navigation, answer grading or provider usage/billing is measured.",
+    "Search is article-level only; there is no section-level search candidate, so section selection in B/C is a fixture oracle (C is a known-anchor lower bound).",
+    "Tokens are a cl100k_base proxy (js-tiktoken), not Claude tokens; SDK-specific prefixes and JSON-RPC envelopes are not tokenized.",
+    "Local loopback HTTP on one machine: clocks, OS scheduling, GC and SQLite caching add noise; durations are not model latency or production latency.",
+    "No ACL/authentication (the app is unauthenticated), no concurrency load, no production-scale data: sample counts are small and are not capacity measurements.",
+    "The corpus is authored by hand (synthetic, frozen); results do not generalize beyond it and ground truth is not tuned against the measured ranking.",
+    "The fresh server contains the application's built-in seeded Russian articles; they compete in global search and appear in wiki_bootstrap output.",
+    "Standalone [[link:KEY]] tokens are resolved by this runner into [Title](/?article=ID); inside ](...) or after article= they become /?article=ID or ID."
+  ],
+  "pilot": {
+    "model": "claude-sonnet-5-5",
+    "cliVersion": "2.1.301 (Claude Code)",
+    "design": {
+      "strategyCount": 2,
+      "repeatsPerTaskStrategy": 2,
+      "plannedTrials": 8,
+      "attemptedTrials": 8,
+      "complete": true,
+      "limitedRun": false,
+      "isolatedSessions": 8,
+      "completedTrials": 8,
+      "infrastructureFailures": 0,
+      "qualityDenominator": 8,
+      "qualitySuccesses": 5,
+      "qualityFailures": 3,
+      "qualitySuccessRate": 0.625,
+      "parallelism": 1,
+      "timeoutSeconds": 180,
+      "retrievalSuccesses": 7
+    },
+    "fixture": {
+      "version": "mcp-baseline-v1",
+      "documentCount": 28,
+      "sha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+      "tasks": [
+        "r02",
+        "r06"
+      ]
+    },
+    "source": {
+      "head": "2cde7ba710c7c2759a899cff874f24ae54a67576",
+      "dirty": true,
+      "dirtyBasis": "git status --porcelain including staged, unstaged and nonignored untracked changes"
+    },
+    "serverBinarySha256": "35e1e9527f1da20879060ad542a997041bc68b898b708c444e52c4661574647a",
+    "executionRunnerSha256": null,
+    "executionSourceNote": "Original pilot did not record a runner hash. Only the pure evidence grader was corrected after the 8 trials; original results and traces remain immutable. Current file hash identifies the published corrected grader, not the exact executed pre-correction source.",
+    "evaluation": {
+      "version": "read-evidence-v2",
+      "reason": "Fixes rubric implementation: an outline heading or wrong anchored section is not evidence of reading the target section. Original results and raw traces retained unchanged.",
+      "rubricSha256": "d4e3b3357b879318909750d01c16537c412a03d0156fb0d01964094711c61bfe",
+      "originalResultsSha256": "a962cca8e4e52fd1491607ea18a06fb7ba81dd5cd3bf1a60bb8d286d64242b6d"
+    },
+    "correctedGraderSha256": "d4e3b3357b879318909750d01c16537c412a03d0156fb0d01964094711c61bfe",
+    "trials": [
+      {
+        "key": "trial-01",
+        "task": "r02",
+        "strategy": "full",
+        "repeat": 1,
+        "status": "completed",
+        "infrastructureFailure": null,
+        "result": {
+          "success": true,
+          "hasAnswer": true,
+          "retrievalSuccess": true,
+          "supportsAnswer": true,
+          "correctSectionRead": false,
+          "reportsCannotFind": false,
+          "citedArticle": true,
+          "anchorEvidence": false,
+          "hasEvidence": true,
+          "policyAdherent": true,
+          "toolErrorCount": 0,
+          "readCallCount": 1,
+          "targetReadCallCount": 1,
+          "validTargetReadCount": 1,
+          "citation": {
+            "articleId": "d8158a6caa2fcb008f2b0247c83cc759",
+            "anchor": null
+          },
+          "cli": {
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "rawTraceSha256": "1dafc8e005222475c9d07ff7c2f759b5288c70ddb818f680f5925a292c04047f",
+        "resolvedModel": "claude-sonnet-5-5",
+        "providerUsage": {
+          "inputTokens": 8,
+          "cachedInputTokens": 27952,
+          "cacheCreationInputTokens": 10558,
+          "totalInputTokens": 38518,
+          "outputTokens": 317,
+          "totalTokens": 38835
+        },
+        "providerModelTokens": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 8,
+            "cachedInputTokens": 27952,
+            "cacheCreationInputTokens": 10558,
+            "outputTokens": 317
+          }
+        },
+        "providerReportedCostUsd": 0.0482132,
+        "numTurns": 4,
+        "durations": {
+          "durationMs": 30495,
+          "apiDurationMs": 30410,
+          "wallMs": 31379.466
+        },
+        "calls": [
+          {
+            "name": "wiki_bootstrap",
+            "isError": false,
+            "requestBytes": 180,
+            "responseBytes": 10457,
+            "requestTokens": 3,
+            "responseTokens": 2690
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 258,
+            "responseBytes": 1881,
+            "requestTokens": 24,
+            "responseTokens": 476
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 214,
+            "responseBytes": 19042,
+            "requestTokens": 25,
+            "responseTokens": 3877
+          }
+        ],
+        "accounting": {
+          "initializeInstructionTokens": 148,
+          "toolsSchemaTokens": 1826,
+          "bootstrapTokens": 2690,
+          "bootstrapAlsoIncludedInToolResultTokens": true,
+          "toolArgumentTokens": 52,
+          "toolResultTokens": 7043,
+          "tokenizer": "cl100k_base proxy; provider usage below is authoritative for Claude"
+        },
+        "expectedProbes": [
+          {
+            "method": "server/discover",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "status": 405
+          }
+        ]
+      },
+      {
+        "key": "trial-02",
+        "task": "r02",
+        "strategy": "outline",
+        "repeat": 1,
+        "status": "completed",
+        "infrastructureFailure": null,
+        "result": {
+          "success": true,
+          "hasAnswer": true,
+          "retrievalSuccess": true,
+          "supportsAnswer": true,
+          "correctSectionRead": true,
+          "reportsCannotFind": false,
+          "citedArticle": true,
+          "anchorEvidence": true,
+          "hasEvidence": true,
+          "policyAdherent": true,
+          "toolErrorCount": 0,
+          "readCallCount": 2,
+          "targetReadCallCount": 2,
+          "validTargetReadCount": 2,
+          "citation": {
+            "articleId": "a155e4ecd53325e8a579ce7083673073",
+            "anchor": "текущий-порядок"
+          },
+          "cli": {
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "rawTraceSha256": "3862f8e37caff63968425867aa2e7a6161b378f9e4af2d86f7d541831577318c",
+        "resolvedModel": "claude-sonnet-5-5",
+        "providerUsage": {
+          "inputTokens": 8,
+          "cachedInputTokens": 29140,
+          "cacheCreationInputTokens": 6811,
+          "totalInputTokens": 35959,
+          "outputTokens": 425,
+          "totalTokens": 36384
+        },
+        "providerModelTokens": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 8,
+            "cachedInputTokens": 29140,
+            "cacheCreationInputTokens": 6811,
+            "outputTokens": 425
+          }
+        },
+        "providerReportedCostUsd": 0.034423999999999996,
+        "numTurns": 5,
+        "durations": {
+          "durationMs": 17660,
+          "apiDurationMs": 17615,
+          "wallMs": 18311.509
+        },
+        "calls": [
+          {
+            "name": "wiki_bootstrap",
+            "isError": false,
+            "requestBytes": 180,
+            "responseBytes": 10573,
+            "requestTokens": 3,
+            "responseTokens": 2730
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 243,
+            "responseBytes": 1871,
+            "requestTokens": 20,
+            "responseTokens": 467
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 229,
+            "responseBytes": 834,
+            "requestTokens": 26,
+            "responseTokens": 204
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 255,
+            "responseBytes": 756,
+            "requestTokens": 34,
+            "responseTokens": 165
+          }
+        ],
+        "accounting": {
+          "initializeInstructionTokens": 148,
+          "toolsSchemaTokens": 1826,
+          "bootstrapTokens": 2730,
+          "bootstrapAlsoIncludedInToolResultTokens": true,
+          "toolArgumentTokens": 83,
+          "toolResultTokens": 3566,
+          "tokenizer": "cl100k_base proxy; provider usage below is authoritative for Claude"
+        },
+        "expectedProbes": [
+          {
+            "method": "server/discover",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "status": 405
+          }
+        ]
+      },
+      {
+        "key": "trial-03",
+        "task": "r06",
+        "strategy": "outline",
+        "repeat": 1,
+        "status": "completed",
+        "infrastructureFailure": null,
+        "result": {
+          "success": true,
+          "hasAnswer": true,
+          "retrievalSuccess": true,
+          "supportsAnswer": true,
+          "correctSectionRead": true,
+          "reportsCannotFind": false,
+          "citedArticle": true,
+          "anchorEvidence": true,
+          "hasEvidence": true,
+          "policyAdherent": true,
+          "toolErrorCount": 0,
+          "readCallCount": 4,
+          "targetReadCallCount": 4,
+          "validTargetReadCount": 4,
+          "citation": {
+            "articleId": "c75bd278dbc75acdec5904240ee059af",
+            "anchor": "capacity-observations"
+          },
+          "cli": {
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "rawTraceSha256": "b2453a51520efe2a1beead3dc6f00da13c2f6a058de8b9bd2983d427ef0714ac",
+        "resolvedModel": "claude-sonnet-5-5",
+        "providerUsage": {
+          "inputTokens": 16,
+          "cachedInputTokens": 72094,
+          "cacheCreationInputTokens": 9071,
+          "totalInputTokens": 81181,
+          "outputTokens": 1073,
+          "totalTokens": 82254
+        },
+        "providerModelTokens": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 16,
+            "cachedInputTokens": 72094,
+            "cacheCreationInputTokens": 9071,
+            "outputTokens": 1073
+          }
+        },
+        "providerReportedCostUsd": 0.0542554,
+        "numTurns": 9,
+        "durations": {
+          "durationMs": 16328,
+          "apiDurationMs": 15782,
+          "wallMs": 17563.125
+        },
+        "calls": [
+          {
+            "name": "wiki_bootstrap",
+            "isError": false,
+            "requestBytes": 180,
+            "responseBytes": 10377,
+            "requestTokens": 3,
+            "responseTokens": 2690
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 214,
+            "responseBytes": 629,
+            "requestTokens": 15,
+            "responseTokens": 148
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 229,
+            "responseBytes": 753,
+            "requestTokens": 24,
+            "responseTokens": 178
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 255,
+            "responseBytes": 132774,
+            "requestTokens": 32,
+            "responseTokens": 26624
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 247,
+            "responseBytes": 4252,
+            "requestTokens": 26,
+            "responseTokens": 823
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 239,
+            "responseBytes": 440,
+            "requestTokens": 25,
+            "responseTokens": 75
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 256,
+            "responseBytes": 752,
+            "requestTokens": 33,
+            "responseTokens": 172
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 197,
+            "responseBytes": 745,
+            "requestTokens": 15,
+            "responseTokens": 170
+          }
+        ],
+        "accounting": {
+          "initializeInstructionTokens": 148,
+          "toolsSchemaTokens": 1826,
+          "bootstrapTokens": 2690,
+          "bootstrapAlsoIncludedInToolResultTokens": true,
+          "toolArgumentTokens": 173,
+          "toolResultTokens": 30880,
+          "tokenizer": "cl100k_base proxy; provider usage below is authoritative for Claude"
+        },
+        "expectedProbes": [
+          {
+            "method": "server/discover",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "status": 405
+          }
+        ]
+      },
+      {
+        "key": "trial-04",
+        "task": "r06",
+        "strategy": "full",
+        "repeat": 1,
+        "status": "completed",
+        "infrastructureFailure": null,
+        "result": {
+          "success": false,
+          "hasAnswer": true,
+          "retrievalSuccess": true,
+          "supportsAnswer": true,
+          "correctSectionRead": true,
+          "reportsCannotFind": false,
+          "citedArticle": true,
+          "anchorEvidence": false,
+          "hasEvidence": true,
+          "policyAdherent": false,
+          "toolErrorCount": 0,
+          "readCallCount": 4,
+          "targetReadCallCount": 4,
+          "validTargetReadCount": 4,
+          "citation": {
+            "articleId": "4ebe1d9e96447c02d180ca765e6363ff",
+            "anchor": null
+          },
+          "cli": {
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "rawTraceSha256": "b56aeb6b62f6b118344aea7ac7d76bf13f4bd4584f365267868add054935abb9",
+        "resolvedModel": "claude-sonnet-5-5",
+        "providerUsage": {
+          "inputTokens": 14,
+          "cachedInputTokens": 61873,
+          "cacheCreationInputTokens": 9123,
+          "totalInputTokens": 71010,
+          "outputTokens": 948,
+          "totalTokens": 71958
+        },
+        "providerModelTokens": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 14,
+            "cachedInputTokens": 61873,
+            "cacheCreationInputTokens": 9123,
+            "outputTokens": 948
+          }
+        },
+        "providerReportedCostUsd": 0.052187300000000006,
+        "numTurns": 9,
+        "durations": {
+          "durationMs": 17634,
+          "apiDurationMs": 17133,
+          "wallMs": 18136.213
+        },
+        "calls": [
+          {
+            "name": "wiki_bootstrap",
+            "isError": false,
+            "requestBytes": 180,
+            "responseBytes": 10443,
+            "requestTokens": 3,
+            "responseTokens": 2702
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 214,
+            "responseBytes": 629,
+            "requestTokens": 15,
+            "responseTokens": 151
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 195,
+            "responseBytes": 766,
+            "requestTokens": 8,
+            "responseTokens": 172
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 214,
+            "responseBytes": 137336,
+            "requestTokens": 25,
+            "responseTokens": 27551
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 229,
+            "responseBytes": 753,
+            "requestTokens": 29,
+            "responseTokens": 181
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 255,
+            "responseBytes": 772,
+            "requestTokens": 31,
+            "responseTokens": 179
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 247,
+            "responseBytes": 4252,
+            "requestTokens": 31,
+            "responseTokens": 828
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 239,
+            "responseBytes": 440,
+            "requestTokens": 30,
+            "responseTokens": 80
+          }
+        ],
+        "accounting": {
+          "initializeInstructionTokens": 148,
+          "toolsSchemaTokens": 1826,
+          "bootstrapTokens": 2702,
+          "bootstrapAlsoIncludedInToolResultTokens": true,
+          "toolArgumentTokens": 172,
+          "toolResultTokens": 31844,
+          "tokenizer": "cl100k_base proxy; provider usage below is authoritative for Claude"
+        },
+        "expectedProbes": [
+          {
+            "method": "server/discover",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "status": 405
+          }
+        ]
+      },
+      {
+        "key": "trial-05",
+        "task": "r02",
+        "strategy": "outline",
+        "repeat": 2,
+        "status": "completed",
+        "infrastructureFailure": null,
+        "result": {
+          "success": true,
+          "hasAnswer": true,
+          "retrievalSuccess": true,
+          "supportsAnswer": true,
+          "correctSectionRead": true,
+          "reportsCannotFind": false,
+          "citedArticle": true,
+          "anchorEvidence": true,
+          "hasEvidence": true,
+          "policyAdherent": true,
+          "toolErrorCount": 0,
+          "readCallCount": 2,
+          "targetReadCallCount": 2,
+          "validTargetReadCount": 2,
+          "citation": {
+            "articleId": "3af03932de4c895a0752804ac7500a7c",
+            "anchor": "текущий-порядок"
+          },
+          "cli": {
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "rawTraceSha256": "4fb12f84ce8bbb859afc5eb19490d0ed2210c0ab42bf21a719d2cf7450ebf4cb",
+        "resolvedModel": "claude-sonnet-5-5",
+        "providerUsage": {
+          "inputTokens": 8,
+          "cachedInputTokens": 30594,
+          "cacheCreationInputTokens": 5398,
+          "totalInputTokens": 36000,
+          "outputTokens": 459,
+          "totalTokens": 36459
+        },
+        "providerModelTokens": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 8,
+            "cachedInputTokens": 30594,
+            "cacheCreationInputTokens": 5398,
+            "outputTokens": 459
+          }
+        },
+        "providerReportedCostUsd": 0.029257400000000003,
+        "numTurns": 5,
+        "durations": {
+          "durationMs": 7170,
+          "apiDurationMs": 7115,
+          "wallMs": 7678.574
+        },
+        "calls": [
+          {
+            "name": "wiki_bootstrap",
+            "isError": false,
+            "requestBytes": 180,
+            "responseBytes": 10421,
+            "requestTokens": 3,
+            "responseTokens": 2692
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 243,
+            "responseBytes": 1871,
+            "requestTokens": 20,
+            "responseTokens": 477
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 229,
+            "responseBytes": 834,
+            "requestTokens": 28,
+            "responseTokens": 210
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 255,
+            "responseBytes": 756,
+            "requestTokens": 36,
+            "responseTokens": 167
+          }
+        ],
+        "accounting": {
+          "initializeInstructionTokens": 148,
+          "toolsSchemaTokens": 1826,
+          "bootstrapTokens": 2692,
+          "bootstrapAlsoIncludedInToolResultTokens": true,
+          "toolArgumentTokens": 87,
+          "toolResultTokens": 3546,
+          "tokenizer": "cl100k_base proxy; provider usage below is authoritative for Claude"
+        },
+        "expectedProbes": [
+          {
+            "method": "server/discover",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "status": 405
+          }
+        ]
+      },
+      {
+        "key": "trial-06",
+        "task": "r02",
+        "strategy": "full",
+        "repeat": 2,
+        "status": "completed",
+        "infrastructureFailure": null,
+        "result": {
+          "success": true,
+          "hasAnswer": true,
+          "retrievalSuccess": true,
+          "supportsAnswer": true,
+          "correctSectionRead": false,
+          "reportsCannotFind": false,
+          "citedArticle": true,
+          "anchorEvidence": false,
+          "hasEvidence": true,
+          "policyAdherent": true,
+          "toolErrorCount": 0,
+          "readCallCount": 1,
+          "targetReadCallCount": 1,
+          "validTargetReadCount": 1,
+          "citation": {
+            "articleId": "a322e99c7012dc0d7a487523bbd93979",
+            "anchor": null
+          },
+          "cli": {
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "rawTraceSha256": "956774478ebda4a9379d78c9860183679fd0a8f24a9363c3fd44f31019365191",
+        "resolvedModel": "claude-sonnet-5-5",
+        "providerUsage": {
+          "inputTokens": 8,
+          "cachedInputTokens": 29408,
+          "cacheCreationInputTokens": 9102,
+          "totalInputTokens": 38518,
+          "outputTokens": 348,
+          "totalTokens": 38866
+        },
+        "providerModelTokens": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 8,
+            "cachedInputTokens": 29408,
+            "cacheCreationInputTokens": 9102,
+            "outputTokens": 348
+          }
+        },
+        "providerReportedCostUsd": 0.0428448,
+        "numTurns": 4,
+        "durations": {
+          "durationMs": 20883,
+          "apiDurationMs": 20797,
+          "wallMs": 21488.305
+        },
+        "calls": [
+          {
+            "name": "wiki_bootstrap",
+            "isError": false,
+            "requestBytes": 180,
+            "responseBytes": 10344,
+            "requestTokens": 3,
+            "responseTokens": 2690
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 262,
+            "responseBytes": 1881,
+            "requestTokens": 27,
+            "responseTokens": 475
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 214,
+            "responseBytes": 19042,
+            "requestTokens": 24,
+            "responseTokens": 3873
+          }
+        ],
+        "accounting": {
+          "initializeInstructionTokens": 148,
+          "toolsSchemaTokens": 1826,
+          "bootstrapTokens": 2690,
+          "bootstrapAlsoIncludedInToolResultTokens": true,
+          "toolArgumentTokens": 54,
+          "toolResultTokens": 7038,
+          "tokenizer": "cl100k_base proxy; provider usage below is authoritative for Claude"
+        },
+        "expectedProbes": [
+          {
+            "method": "server/discover",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "status": 405
+          }
+        ]
+      },
+      {
+        "key": "trial-07",
+        "task": "r06",
+        "strategy": "full",
+        "repeat": 2,
+        "status": "completed",
+        "infrastructureFailure": null,
+        "result": {
+          "success": false,
+          "hasAnswer": false,
+          "retrievalSuccess": false,
+          "supportsAnswer": true,
+          "correctSectionRead": false,
+          "reportsCannotFind": true,
+          "citedArticle": true,
+          "anchorEvidence": false,
+          "hasEvidence": true,
+          "policyAdherent": false,
+          "toolErrorCount": 0,
+          "readCallCount": 2,
+          "targetReadCallCount": 2,
+          "validTargetReadCount": 2,
+          "citation": {
+            "articleId": "e3896cb5d2c404e04f21f090b2325881",
+            "anchor": null
+          },
+          "cli": {
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "rawTraceSha256": "86b3086f3aba7c4a09b74714b30bf2f41e8d050714b1677de6095401b64c02f8",
+        "resolvedModel": "claude-sonnet-5-5",
+        "providerUsage": {
+          "inputTokens": 10,
+          "cachedInputTokens": 39775,
+          "cacheCreationInputTokens": 5803,
+          "totalInputTokens": 45588,
+          "outputTokens": 701,
+          "totalTokens": 46289
+        },
+        "providerModelTokens": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 10,
+            "cachedInputTokens": 39775,
+            "cacheCreationInputTokens": 5803,
+            "outputTokens": 701
+          }
+        },
+        "providerReportedCostUsd": 0.0342195,
+        "numTurns": 6,
+        "durations": {
+          "durationMs": 15750,
+          "apiDurationMs": 15256,
+          "wallMs": 16259.694
+        },
+        "calls": [
+          {
+            "name": "wiki_bootstrap",
+            "isError": false,
+            "requestBytes": 180,
+            "responseBytes": 10313,
+            "requestTokens": 3,
+            "responseTokens": 2682
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 214,
+            "responseBytes": 629,
+            "requestTokens": 15,
+            "responseTokens": 153
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 195,
+            "responseBytes": 766,
+            "requestTokens": 8,
+            "responseTokens": 174
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 214,
+            "responseBytes": 137336,
+            "requestTokens": 25,
+            "responseTokens": 27553
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 229,
+            "responseBytes": 753,
+            "requestTokens": 29,
+            "responseTokens": 183
+          }
+        ],
+        "accounting": {
+          "initializeInstructionTokens": 148,
+          "toolsSchemaTokens": 1826,
+          "bootstrapTokens": 2682,
+          "bootstrapAlsoIncludedInToolResultTokens": true,
+          "toolArgumentTokens": 80,
+          "toolResultTokens": 30745,
+          "tokenizer": "cl100k_base proxy; provider usage below is authoritative for Claude"
+        },
+        "expectedProbes": [
+          {
+            "method": "server/discover",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "status": 405
+          }
+        ]
+      },
+      {
+        "key": "trial-08",
+        "task": "r06",
+        "strategy": "outline",
+        "repeat": 2,
+        "status": "completed",
+        "infrastructureFailure": null,
+        "result": {
+          "success": false,
+          "hasAnswer": true,
+          "retrievalSuccess": true,
+          "supportsAnswer": true,
+          "correctSectionRead": false,
+          "reportsCannotFind": false,
+          "citedArticle": true,
+          "anchorEvidence": false,
+          "hasEvidence": true,
+          "policyAdherent": false,
+          "toolErrorCount": 0,
+          "readCallCount": 2,
+          "targetReadCallCount": 2,
+          "validTargetReadCount": 2,
+          "citation": {
+            "articleId": "fdda6af28ffc0c0657ab84d0d2b42faf",
+            "anchor": "capacity-observations"
+          },
+          "cli": {
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "rawTraceSha256": "4374fa465927b72f1688619361f3191e838752682c7641ac1b3d183cdc769ace",
+        "resolvedModel": "claude-sonnet-5-5",
+        "providerUsage": {
+          "inputTokens": 12,
+          "cachedInputTokens": 49083,
+          "cacheCreationInputTokens": 5877,
+          "totalInputTokens": 54972,
+          "outputTokens": 818,
+          "totalTokens": 55790
+        },
+        "providerModelTokens": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 12,
+            "cachedInputTokens": 49083,
+            "cacheCreationInputTokens": 5877,
+            "outputTokens": 818
+          }
+        },
+        "providerReportedCostUsd": 0.036620299999999995,
+        "numTurns": 6,
+        "durations": {
+          "durationMs": 11653,
+          "apiDurationMs": 11148,
+          "wallMs": 12153.956
+        },
+        "calls": [
+          {
+            "name": "wiki_bootstrap",
+            "isError": false,
+            "requestBytes": 180,
+            "responseBytes": 10561,
+            "requestTokens": 3,
+            "responseTokens": 2710
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 214,
+            "responseBytes": 629,
+            "requestTokens": 15,
+            "responseTokens": 150
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 229,
+            "responseBytes": 753,
+            "requestTokens": 29,
+            "responseTokens": 180
+          },
+          {
+            "name": "wiki_read",
+            "isError": false,
+            "requestBytes": 255,
+            "responseBytes": 132774,
+            "requestTokens": 37,
+            "responseTokens": 26629
+          },
+          {
+            "name": "wiki_search",
+            "isError": false,
+            "requestBytes": 255,
+            "responseBytes": 772,
+            "requestTokens": 30,
+            "responseTokens": 178
+          }
+        ],
+        "accounting": {
+          "initializeInstructionTokens": 148,
+          "toolsSchemaTokens": 1826,
+          "bootstrapTokens": 2710,
+          "bootstrapAlsoIncludedInToolResultTokens": true,
+          "toolArgumentTokens": 114,
+          "toolResultTokens": 29847,
+          "tokenizer": "cl100k_base proxy; provider usage below is authoritative for Claude"
+        },
+        "expectedProbes": [
+          {
+            "method": "server/discover",
+            "status": 200
+          },
+          {
+            "method": "GET",
+            "status": 405
+          }
+        ]
+      }
+    ],
+    "limitations": [
+      "Provider token counts are taken only from Claude JSON usage/modelUsage; cl100k_base values are payload proxies.",
+      "This pilot measures two frozen read tasks on a synthetic corpus and does not support broad agent-quality claims.",
+      "Full Claude JSON and raw MCP traces remain in this ignored run directory and may contain local runtime details."
+    ]
+  }
+}
