@@ -1,0 +1,5523 @@
+{
+  "format": "aiwiki-section-ranking-evaluation-v1",
+  "measuredAt": "2026-10-21T20:04:13.896Z",
+  "repetitions": 20,
+  "status": "ok",
+  "integrity": {
+    "corpus": {
+      "version": "mcp-baseline-v1",
+      "sortedCanonicalJsonSha256": "0c050b006aa538e5286d4a9a4b0db027a1d4bf2bde592edf6b3aa963b019cb42",
+      "jsonStringifySha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+      "sourceFileSha256": "93199de804bdb1b3d8216d6d087f0e84165de93a0f29d85d783cbf542339c923"
+    },
+    "queryManifestJsonSha256": "15f56b747a42cd7f82ec3b124b52b6cee0ac4837125fe698504a0d1aef62e3c7",
+    "queryManifestSourceFileSha256": "2ee21f302300abce75674920a49b8fe3609dd649b56ff8d4e7d98ae3cb71c0f9",
+    "querySets": [
+      {
+        "name": "frozen-old7-readTasks-development",
+        "version": "mcp-baseline-v1",
+        "count": 7,
+        "sortedCanonicalSetSha256": "ff73de88985b88fc0a045b604eed696393366ad3f59f1fe5fc508257a449f098",
+        "sourceFileSha256": "93199de804bdb1b3d8216d6d087f0e84165de93a0f29d85d783cbf542339c923"
+      },
+      {
+        "name": "section-queries-v2",
+        "version": "section-queries-v2",
+        "count": 22,
+        "sortedCanonicalSetSha256": "9f7b877eddb4a1bbe6ece10877d65cf59dd07372120eaf8655a87ae09626f5ae",
+        "sourceFileSha256": "2ee21f302300abce75674920a49b8fe3609dd649b56ff8d4e7d98ae3cb71c0f9"
+      }
+    ],
+    "baselineBinarySha256": "7e5e70b2f5f11d59366ead32f16e025319bb0605929fccbb79d5ff08269edfc4",
+    "requiredBaselineBinarySha256": "7e5e70b2f5f11d59366ead32f16e025319bb0605929fccbb79d5ff08269edfc4",
+    "baselineHashSource": "audited-windows-default",
+    "baselineSourceRef": {
+      "value": "3803cb0",
+      "status": "declared-not-verified-from-binary"
+    },
+    "frozenAtBeforeSearch": "2026-10-21T20:04:29.045Z",
+    "finalExportsUnchanged": true,
+    "finalExportCanonicalSha256": {
+      "baseline": "893a2336ce257e3d57314b00ee732bd71fbf1d87e3405a41e1fce24c69bffbc5",
+      "candidate": "893a2336ce257e3d57314b00ee732bd71fbf1d87e3405a41e1fce24c69bffbc5"
+    }
+  },
+  "environment": {
+    "baselineBinarySha256": "7e5e70b2f5f11d59366ead32f16e025319bb0605929fccbb79d5ff08269edfc4",
+    "candidateBinarySha256": "8d7f540d6f1e977b27bd8d3c99c96a426464eda1e4bcf967ec7717e7ba85acc4",
+    "candidateBuild": {
+      "durationMs": 13996.619,
+      "command": "go build -trimpath -mod=readonly -o <run-dir>/aiwiki-candidate ./cmd/aiwiki",
+      "env": {
+        "GOTOOLCHAIN": "local",
+        "GOPROXY": "off",
+        "GOFLAGS": "-mod=readonly"
+      }
+    },
+    "node": "v24.14.1",
+    "goVersion": "go version go1.25.6 windows/amd64",
+    "platform": {
+      "os": "win32",
+      "arch": "x64",
+      "release": "10.0.26200",
+      "cpu": "AMD Ryzen 9 7900X 12-Core Processor            "
+    },
+    "tokenizer": {
+      "package": "js-tiktoken",
+      "version": "1.0.21",
+      "encoding": "cl100k_base"
+    },
+    "runnerSha256": "ddd020ae02dee40e3377bfbbe4bfffd929cd43e2fced49cc558cb230448909d4",
+    "methodologySha256": "34389436d999329c800e60bc1b051c73c76b288c477c062326ac9c3574a2d25d"
+  },
+  "definitions": {
+    "searchLatency": "local loopback HTTP wiki_search_sections duration, excluding read verification and setup",
+    "tokens": "cl100k_base proxy; tokens per individual query and variant, never a pooled between-question ratio",
+    "coverage": "top1/top5 ask whether any authored relevant section was found; recall@5 is relevant authored sections found divided by relevant section count; MRR@5 uses first relevant rank",
+    "noHit": "queries with an empty authored relevantSections list are reported separately as true-negative / false-positive counts",
+    "factQuality": "old7 top-1 hit's executable bounded wiki_read text is checked for the frozen answer literal; offset-before-answer is reported separately"
+  },
+  "source": {
+    "baseCommit": "3803cb0d7c264aaeff69e5e0c35ccbc57fde0f76",
+    "dirty": true,
+    "files": {
+      "internal/server/mcp_tools.go": "64e2fdeae39459346b614d93f1233090b0951da70670bc9459f7c3350b725927",
+      "internal/server/mcp_search_sections.go": "d91b5f678c35d475a99e6b28aee9fec004a1f9b10f98eb48d940496b4f694100",
+      "internal/server/mcp_section_rank.go": "3d98289b4254363f7e156021b944f28d28c9c63a504dd4fb38ed86133863a0da"
+    },
+    "rebuildChecks": {
+      "untrimmedSha256": "c87259347cb1c1f8c87edd6b1e52748ff4d568887122cfb87380c96f8d71181b",
+      "trimmedSha256": "8d7f540d6f1e977b27bd8d3c99c96a426464eda1e4bcf967ec7717e7ba85acc4",
+      "bothReproduced": true
+    }
+  },
+  "evidence": {
+    "pairedSummarySha256": "5ac9e4ceec41b20c0c5161d4def7dc1558bc1ceb341d1c458bbaa81baa4ac735",
+    "pairedTracesSha256": "1d4e7e2de98c06e5c974c2a86721b73f2aef2fed6d248576fb9aba03cc3cb508",
+    "fullBenchmarkSummarySha256": "60306b7bee8ba034fa273b6947205eda1d89cfff0f7e2c7bf6f74405d19e20a8",
+    "modelSummarySha256": "e5fd1e0e86bee2d1aedcbcc30d8625688f9b42eb543f444a7923f4e3d6bdff71",
+    "intermediateBenchmarkSummarySha256": "4679f543e8dc1ba9f07f2c5a89f8de4f7193f7f6064e654e3a634a2df27784a2",
+    "intermediateModelSummarySha256": "b5a58b17e1c62c2f9795c19a59a898410cf2f74ad0f7fb827b2d0a2134372f08"
+  },
+  "results": {
+    "frozen-old7-readTasks-development": {
+      "baseline": {
+        "queryCount": 7,
+        "positiveQueryCount": 7,
+        "top1Queries": 3,
+        "top5Queries": 5,
+        "top1Coverage": 0.42857142857142855,
+        "top5Coverage": 0.7142857142857143,
+        "recallAt5Macro": 0.7142857142857143,
+        "mrrAt5": 0.5714285714285714,
+        "noHit": {
+          "expectedNegativeQueries": 0,
+          "samples": 0,
+          "trueNegative": 0,
+          "falsePositive": 0,
+          "accuracy": null
+        },
+        "latencyMs": {
+          "n": 140,
+          "median": 14.184,
+          "p95": 18.818,
+          "min": 8.774,
+          "max": 22.226
+        },
+        "perQuery": [
+          {
+            "key": "r01",
+            "category": "old7-read-task",
+            "query": "найти уникальный код восстановленного контрольного пакета",
+            "relevantSections": [
+              {
+                "articleKey": "offers-backend",
+                "headingTitle": "Причина и восстановление",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "offers-backend",
+                "heading": "Причина и восстановление",
+                "anchor": "причина-и-восстановление"
+              },
+              {
+                "articleKey": "queue-watch",
+                "heading": "Порог и действие",
+                "anchor": "порог-и-действие"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 16.317,
+              "p95": 20.333,
+              "min": 13.778,
+              "max": 21.259
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 229,
+                "p95": 229,
+                "min": 229,
+                "max": 229
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4223,
+                "p95": 4223,
+                "min": 4223,
+                "max": 4223
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 32,
+                "p95": 32,
+                "min": 32,
+                "max": 32
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1094,
+                "p95": 1094,
+                "min": 1094,
+                "max": 1094
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r02",
+            "category": "old7-read-task",
+            "query": "В действующей процедуре обработки офферов найдите буквальную отметку подтверждения",
+            "relevantSections": [
+              {
+                "articleKey": "offers-current",
+                "headingTitle": "Текущий порядок",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 0.5,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "offers-legacy",
+                "heading": "Историческая заметка",
+                "anchor": "историческая-заметка"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Текущий порядок",
+                "anchor": "текущий-порядок"
+              },
+              {
+                "articleKey": "queue-watch",
+                "heading": "Порог и действие",
+                "anchor": "порог-и-действие"
+              },
+              {
+                "articleKey": "writing-knowledge",
+                "heading": "Как записывать знания",
+                "anchor": "как-записывать-знания"
+              },
+              {
+                "articleKey": "shipment-handoff",
+                "heading": "Передача",
+                "anchor": "передача"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 12.172,
+              "p95": 15.17,
+              "min": 10.33,
+              "max": 15.219
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 276,
+                "p95": 276,
+                "min": 276,
+                "max": 276
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4716,
+                "p95": 4716,
+                "min": 4716,
+                "max": 4716
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 46,
+                "p95": 46,
+                "min": 46,
+                "max": 46
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1212,
+                "p95": 1212,
+                "min": 1212,
+                "max": 1212
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 0,
+              "misses": 20,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r03",
+            "category": "old7-read-task",
+            "query": "какую группу приняла эскалацию во втором разделе",
+            "relevantSections": [
+              {
+                "articleKey": "support-escalation",
+                "headingTitle": "Escalation",
+                "headingOccurrence": 2
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "support-escalation",
+                "heading": "Escalation",
+                "anchor": "escalation-2"
+              },
+              {
+                "articleKey": "writing-knowledge",
+                "heading": "Как записывать знания",
+                "anchor": "как-записывать-знания"
+              },
+              {
+                "articleKey": "research-template",
+                "heading": "Гипотезы",
+                "anchor": "гипотезы"
+              },
+              {
+                "articleKey": "agent-rules",
+                "heading": "Правила для агентов",
+                "anchor": "правила-для-агентов"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Эскалация",
+                "anchor": "эскалация"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 12.576,
+              "p95": 14.808,
+              "min": 9.767,
+              "max": 15.668
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 210,
+                "p95": 210,
+                "min": 210,
+                "max": 210
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3911,
+                "p95": 3911,
+                "min": 3911,
+                "max": 3911
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 35,
+                "p95": 35,
+                "min": 35,
+                "max": 35
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 964,
+                "p95": 964,
+                "min": 964,
+                "max": 964
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r04",
+            "category": "old7-read-task",
+            "query": "найти маркер большого audit payload",
+            "relevantSections": [
+              {
+                "articleKey": "audit-event",
+                "headingTitle": "Payload record",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Profile notes",
+                "anchor": "profile-notes"
+              },
+              {
+                "articleKey": "api-errors",
+                "heading": "Conflict response",
+                "anchor": "conflict-response"
+              },
+              {
+                "articleKey": "platform-api",
+                "heading": "Request lifecycle",
+                "anchor": "request-lifecycle"
+              },
+              {
+                "articleKey": "writing-knowledge",
+                "heading": "Как записывать знания",
+                "anchor": "как-записывать-знания"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 12.796,
+              "p95": 15.665,
+              "min": 10.679,
+              "max": 16.148
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 174,
+                "p95": 174,
+                "min": 174,
+                "max": 174
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3672,
+                "p95": 3672,
+                "min": 3672,
+                "max": 3672
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 23,
+                "p95": 23,
+                "min": 23,
+                "max": 23
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 927,
+                "p95": 927,
+                "min": 927,
+                "max": 927
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r05",
+            "category": "old7-read-task",
+            "query": "найти поле связи событий",
+            "relevantSections": [
+              {
+                "articleKey": "telemetry-fields",
+                "headingTitle": "Event fields",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": 0,
+            "mrrAt5": 0,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "writing-knowledge",
+                "heading": "Как записывать знания",
+                "anchor": "как-записывать-знания"
+              },
+              {
+                "articleKey": "start-here",
+                "heading": "Полезные инструкции",
+                "anchor": "полезные-инструкции"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 10.467,
+              "p95": 13.96,
+              "min": 8.774,
+              "max": 14.285
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 165,
+                "p95": 165,
+                "min": 165,
+                "max": 165
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 1785,
+                "p95": 1785,
+                "min": 1785,
+                "max": 1785
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 22,
+                "p95": 22,
+                "min": 22,
+                "max": 22
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 395,
+                "p95": 395,
+                "min": 395,
+                "max": 395
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 0,
+              "misses": 20,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r06",
+            "category": "old7-read-task",
+            "query": "найти уникальный ответ в крупном разделе профиля нагрузки",
+            "relevantSections": [
+              {
+                "articleKey": "load-profile",
+                "headingTitle": "Capacity observations",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": 0,
+            "mrrAt5": 0,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "support-escalation",
+                "heading": "Escalation",
+                "anchor": "escalation-2"
+              },
+              {
+                "articleKey": "queue-watch",
+                "heading": "Порог и действие",
+                "anchor": "порог-и-действие"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 18.202,
+              "p95": 22.035,
+              "min": 14.942,
+              "max": 22.226
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 227,
+                "p95": 227,
+                "min": 227,
+                "max": 227
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4592,
+                "p95": 4592,
+                "min": 4592,
+                "max": 4592
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 35,
+                "p95": 35,
+                "min": 35,
+                "max": 35
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1180,
+                "p95": 1180,
+                "min": 1180,
+                "max": 1180
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 0,
+              "misses": 20,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r07",
+            "category": "old7-read-task",
+            "query": "найти контрольный факт в короткой статье о наблюдении за очередью",
+            "relevantSections": [
+              {
+                "articleKey": "queue-watch",
+                "headingTitle": "Порог и действие",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 0.5,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "writing-knowledge",
+                "heading": "Как записывать знания",
+                "anchor": "как-записывать-знания"
+              },
+              {
+                "articleKey": "queue-watch",
+                "heading": "Порог и действие",
+                "anchor": "порог-и-действие"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Причина и восстановление",
+                "anchor": "причина-и-восстановление"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.82,
+              "p95": 17.586,
+              "min": 12.892,
+              "max": 18.805
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 242,
+                "p95": 242,
+                "min": 241,
+                "max": 242
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4917,
+                "p95": 4917,
+                "min": 4916,
+                "max": 4917
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 40,
+                "p95": 40,
+                "min": 40,
+                "max": 40
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1254,
+                "p95": 1254,
+                "min": 1254,
+                "max": 1254
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 0,
+              "misses": 20,
+              "answerBeforeReadOffset": 0
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "queryCount": 7,
+        "positiveQueryCount": 7,
+        "top1Queries": 6,
+        "top5Queries": 6,
+        "top1Coverage": 0.8571428571428571,
+        "top5Coverage": 0.8571428571428571,
+        "recallAt5Macro": 0.8571428571428571,
+        "mrrAt5": 0.8571428571428571,
+        "noHit": {
+          "expectedNegativeQueries": 0,
+          "samples": 0,
+          "trueNegative": 0,
+          "falsePositive": 0,
+          "accuracy": null
+        },
+        "latencyMs": {
+          "n": 140,
+          "median": 15.796,
+          "p95": 19.36,
+          "min": 11.498,
+          "max": 21.975
+        },
+        "perQuery": [
+          {
+            "key": "r01",
+            "category": "old7-read-task",
+            "query": "найти уникальный код восстановленного контрольного пакета",
+            "relevantSections": [
+              {
+                "articleKey": "offers-backend",
+                "headingTitle": "Причина и восстановление",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "offers-backend",
+                "heading": "Причина и восстановление",
+                "anchor": "причина-и-восстановление"
+              },
+              {
+                "articleKey": "queue-watch",
+                "heading": "Порог и действие",
+                "anchor": "порог-и-действие"
+              },
+              {
+                "articleKey": "language-support",
+                "heading": "Передача",
+                "anchor": "передача"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Escalation",
+                "anchor": "escalation-2"
+              },
+              {
+                "articleKey": "agent-rules",
+                "heading": "Правила для агентов",
+                "anchor": "правила-для-агентов"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.317,
+              "p95": 16.607,
+              "min": 11.498,
+              "max": 18.469
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 229,
+                "p95": 229,
+                "min": 229,
+                "max": 229
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3836,
+                "p95": 3836,
+                "min": 3836,
+                "max": 3836
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 32,
+                "p95": 32,
+                "min": 32,
+                "max": 32
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1012,
+                "p95": 1012,
+                "min": 1012,
+                "max": 1012
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r02",
+            "category": "old7-read-task",
+            "query": "В действующей процедуре обработки офферов найдите буквальную отметку подтверждения",
+            "relevantSections": [
+              {
+                "articleKey": "offers-current",
+                "headingTitle": "Текущий порядок",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "offers-current",
+                "heading": "Текущий порядок",
+                "anchor": "текущий-порядок"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Эскалация",
+                "anchor": "эскалация"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "offers-legacy",
+                "heading": "Историческая заметка",
+                "anchor": "историческая-заметка"
+              },
+              {
+                "articleKey": "offers-legacy",
+                "heading": "Архивный порядок — НЕ ИСПОЛЬЗОВАТЬ",
+                "anchor": "архивный-порядок-не-использовать"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 16.215,
+              "p95": 20.05,
+              "min": 13.446,
+              "max": 20.414
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 276,
+                "p95": 276,
+                "min": 276,
+                "max": 276
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4259,
+                "p95": 4259,
+                "min": 4259,
+                "max": 4259
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 46,
+                "p95": 46,
+                "min": 46,
+                "max": 46
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1167,
+                "p95": 1167,
+                "min": 1167,
+                "max": 1167
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r03",
+            "category": "old7-read-task",
+            "query": "какую группу приняла эскалацию во втором разделе",
+            "relevantSections": [
+              {
+                "articleKey": "support-escalation",
+                "headingTitle": "Escalation",
+                "headingOccurrence": 2
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "support-escalation",
+                "heading": "Escalation",
+                "anchor": "escalation-2"
+              },
+              {
+                "articleKey": "start-here",
+                "heading": "Начните здесь",
+                "anchor": "начните-здесь"
+              },
+              {
+                "articleKey": "writing-knowledge",
+                "heading": "Как записывать знания",
+                "anchor": "как-записывать-знания"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Эскалация",
+                "anchor": "эскалация"
+              },
+              {
+                "articleKey": "research-template",
+                "heading": "Гипотезы",
+                "anchor": "гипотезы"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.718,
+              "p95": 17.751,
+              "min": 11.641,
+              "max": 18.19
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 210,
+                "p95": 210,
+                "min": 210,
+                "max": 210
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3638,
+                "p95": 3638,
+                "min": 3638,
+                "max": 3638
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 35,
+                "p95": 35,
+                "min": 35,
+                "max": 35
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 902,
+                "p95": 902,
+                "min": 902,
+                "max": 902
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r04",
+            "category": "old7-read-task",
+            "query": "найти маркер большого audit payload",
+            "relevantSections": [
+              {
+                "articleKey": "audit-event",
+                "headingTitle": "Payload record",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Profile notes",
+                "anchor": "profile-notes"
+              },
+              {
+                "articleKey": "api-errors",
+                "heading": "Conflict response",
+                "anchor": "conflict-response"
+              },
+              {
+                "articleKey": "platform-api",
+                "heading": "Request lifecycle",
+                "anchor": "request-lifecycle"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.981,
+              "p95": 19.36,
+              "min": 13.727,
+              "max": 19.36
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 174,
+                "p95": 174,
+                "min": 174,
+                "max": 174
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 2759,
+                "p95": 2759,
+                "min": 2759,
+                "max": 2759
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 23,
+                "p95": 23,
+                "min": 23,
+                "max": 23
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 713,
+                "p95": 713,
+                "min": 713,
+                "max": 713
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r05",
+            "category": "old7-read-task",
+            "query": "найти поле связи событий",
+            "relevantSections": [
+              {
+                "articleKey": "telemetry-fields",
+                "headingTitle": "Event fields",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "telemetry-fields",
+                "heading": "Event fields",
+                "anchor": "event-fields"
+              },
+              {
+                "articleKey": "telemetry-fields",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "start-here",
+                "heading": "Полезные инструкции",
+                "anchor": "полезные-инструкции"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "writing-knowledge",
+                "heading": "Как записывать знания",
+                "anchor": "как-записывать-знания"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 15.88,
+              "p95": 18.718,
+              "min": 13.22,
+              "max": 18.768
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 165,
+                "p95": 165,
+                "min": 165,
+                "max": 165
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3149,
+                "p95": 3149,
+                "min": 3149,
+                "max": 3149
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 22,
+                "p95": 22,
+                "min": 22,
+                "max": 22
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 801,
+                "p95": 801,
+                "min": 801,
+                "max": 801
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r06",
+            "category": "old7-read-task",
+            "query": "найти уникальный ответ в крупном разделе профиля нагрузки",
+            "relevantSections": [
+              {
+                "articleKey": "load-profile",
+                "headingTitle": "Capacity observations",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": 0,
+            "mrrAt5": 0,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "support-escalation",
+                "heading": "Escalation",
+                "anchor": "escalation-2"
+              },
+              {
+                "articleKey": "start-here",
+                "heading": "Начните здесь",
+                "anchor": "начните-здесь"
+              },
+              {
+                "articleKey": "queue-watch",
+                "heading": "Порог и действие",
+                "anchor": "порог-и-действие"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Причина и восстановление",
+                "anchor": "причина-и-восстановление"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 18.051,
+              "p95": 21.695,
+              "min": 15.473,
+              "max": 21.975
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 227,
+                "p95": 227,
+                "min": 227,
+                "max": 227
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4137,
+                "p95": 4137,
+                "min": 4137,
+                "max": 4137
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 35,
+                "p95": 35,
+                "min": 35,
+                "max": 35
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1079,
+                "p95": 1079,
+                "min": 1079,
+                "max": 1079
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 0,
+              "misses": 20,
+              "answerBeforeReadOffset": 0
+            }
+          },
+          {
+            "key": "r07",
+            "category": "old7-read-task",
+            "query": "найти контрольный факт в короткой статье о наблюдении за очередью",
+            "relevantSections": [
+              {
+                "articleKey": "queue-watch",
+                "headingTitle": "Порог и действие",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "queue-watch",
+                "heading": "Порог и действие",
+                "anchor": "порог-и-действие"
+              },
+              {
+                "articleKey": "queue-watch",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "writing-knowledge",
+                "heading": "Как записывать знания",
+                "anchor": "как-записывать-знания"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Причина и восстановление",
+                "anchor": "причина-и-восстановление"
+              },
+              {
+                "articleKey": "start-here",
+                "heading": "Начните здесь",
+                "anchor": "начните-здесь"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 15.81,
+              "p95": 17.233,
+              "min": 13.03,
+              "max": 18.37
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 242,
+                "p95": 242,
+                "min": 241,
+                "max": 242
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4032,
+                "p95": 4032,
+                "min": 4031,
+                "max": 4032
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 40,
+                "p95": 40,
+                "min": 40,
+                "max": 40
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1015,
+                "p95": 1015,
+                "min": 1015,
+                "max": 1015
+              }
+            },
+            "noHit": null,
+            "boundedFact": {
+              "found": 20,
+              "misses": 0,
+              "answerBeforeReadOffset": 0
+            }
+          }
+        ]
+      },
+      "pairedSearchCosts": [
+        {
+          "key": "r01",
+          "baselineMedianMs": 16.317,
+          "candidateMedianMs": 14.317,
+          "baselineMedianBytes": 4452,
+          "candidateMedianBytes": 4065,
+          "baselineMedianTokens": 1126,
+          "candidateMedianTokens": 1044
+        },
+        {
+          "key": "r02",
+          "baselineMedianMs": 12.172,
+          "candidateMedianMs": 16.215,
+          "baselineMedianBytes": 4992,
+          "candidateMedianBytes": 4535,
+          "baselineMedianTokens": 1258,
+          "candidateMedianTokens": 1213
+        },
+        {
+          "key": "r03",
+          "baselineMedianMs": 12.576,
+          "candidateMedianMs": 14.718,
+          "baselineMedianBytes": 4121,
+          "candidateMedianBytes": 3848,
+          "baselineMedianTokens": 999,
+          "candidateMedianTokens": 937
+        },
+        {
+          "key": "r04",
+          "baselineMedianMs": 12.796,
+          "candidateMedianMs": 14.981,
+          "baselineMedianBytes": 3846,
+          "candidateMedianBytes": 2933,
+          "baselineMedianTokens": 950,
+          "candidateMedianTokens": 736
+        },
+        {
+          "key": "r05",
+          "baselineMedianMs": 10.467,
+          "candidateMedianMs": 15.88,
+          "baselineMedianBytes": 1950,
+          "candidateMedianBytes": 3314,
+          "baselineMedianTokens": 417,
+          "candidateMedianTokens": 823
+        },
+        {
+          "key": "r06",
+          "baselineMedianMs": 18.202,
+          "candidateMedianMs": 18.051,
+          "baselineMedianBytes": 4819,
+          "candidateMedianBytes": 4364,
+          "baselineMedianTokens": 1215,
+          "candidateMedianTokens": 1114
+        },
+        {
+          "key": "r07",
+          "baselineMedianMs": 14.82,
+          "candidateMedianMs": 15.81,
+          "baselineMedianBytes": 5159,
+          "candidateMedianBytes": 4274,
+          "baselineMedianTokens": 1294,
+          "candidateMedianTokens": 1055
+        }
+      ]
+    },
+    "section-queries-v2": {
+      "baseline": {
+        "queryCount": 22,
+        "positiveQueryCount": 17,
+        "top1Queries": 12,
+        "top5Queries": 13,
+        "top1Coverage": 0.7058823529411765,
+        "top5Coverage": 0.7647058823529411,
+        "recallAt5Macro": 0.7647058823529411,
+        "mrrAt5": 0.7254901960784313,
+        "noHit": {
+          "expectedNegativeQueries": 5,
+          "samples": 100,
+          "trueNegative": 100,
+          "falsePositive": 0,
+          "accuracy": 1
+        },
+        "latencyMs": {
+          "n": 440,
+          "median": 13.021,
+          "p95": 21.157,
+          "min": 8.131,
+          "max": 26.654
+        },
+        "perQuery": [
+          {
+            "key": "n01",
+            "category": "article-identity-heading",
+            "query": "offers-backend incident symptom after certificate rotation",
+            "relevantSections": [
+              {
+                "articleKey": "offers-backend",
+                "headingTitle": "Симптомы",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 0.3333333333333332,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "token-rotation",
+                "heading": "Schedule",
+                "anchor": "schedule"
+              },
+              {
+                "articleKey": "oncall-glossary",
+                "heading": "Terms",
+                "anchor": "terms"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Симптомы",
+                "anchor": "симптомы"
+              },
+              {
+                "articleKey": "incident-comms",
+                "heading": "Update format",
+                "anchor": "update-format"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 10.853,
+              "p95": 13.367,
+              "min": 8.753,
+              "max": 14.61
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 179,
+                "p95": 179,
+                "min": 179,
+                "max": 179
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 2599,
+                "p95": 2599,
+                "min": 2599,
+                "max": 2599
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 18,
+                "p95": 18,
+                "min": 18,
+                "max": 18
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 681,
+                "p95": 681,
+                "min": 681,
+                "max": 681
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n02",
+            "category": "metadata-only",
+            "query": "deploy archive obsolete",
+            "relevantSections": [
+              {
+                "articleKey": "deploy-archive",
+                "headingTitle": "Historical procedure — obsolete",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "deploy-archive",
+                "heading": "Historical procedure — obsolete",
+                "anchor": "historical-procedure-obsolete"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 10.253,
+              "p95": 13.541,
+              "min": 8.713,
+              "max": 13.59
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 144,
+                "p95": 144,
+                "min": 144,
+                "max": 144
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 899,
+                "p95": 899,
+                "min": 899,
+                "max": 899
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 14,
+                "p95": 14,
+                "min": 14,
+                "max": 14
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 206,
+                "p95": 206,
+                "min": 206,
+                "max": 206
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n03",
+            "category": "morphology-ru",
+            "query": "проверить возврат после повреждения упаковки",
+            "relevantSections": [
+              {
+                "articleKey": "returns-guide",
+                "headingTitle": "Проверка",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": 0,
+            "mrrAt5": 0,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "ledger-reconcile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 16.471,
+              "p95": 21.064,
+              "min": 14.905,
+              "max": 21.405
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 205,
+                "p95": 205,
+                "min": 205,
+                "max": 205
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4580,
+                "p95": 4580,
+                "min": 4580,
+                "max": 4580
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 29,
+                "p95": 29,
+                "min": 29,
+                "max": 29
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1167,
+                "p95": 1167,
+                "min": 1167,
+                "max": 1167
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n04",
+            "category": "english-russian-natural-question",
+            "query": "Which Orbit is the расчётный сервис, and what is its short alias?",
+            "relevantSections": [
+              {
+                "articleKey": "svc-orbit",
+                "headingTitle": "Identity",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "svc-orbit",
+                "heading": "Identity",
+                "anchor": "identity"
+              },
+              {
+                "articleKey": "orbit-tools",
+                "heading": "Team context",
+                "anchor": "team-context"
+              },
+              {
+                "articleKey": "incident-comms",
+                "heading": "Update format",
+                "anchor": "update-format"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 17.969,
+              "p95": 20.766,
+              "min": 15.16,
+              "max": 23.502
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 201,
+                "p95": 201,
+                "min": 201,
+                "max": 201
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3513,
+                "p95": 3513,
+                "min": 3513,
+                "max": 3513
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 31,
+                "p95": 31,
+                "min": 31,
+                "max": 31
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 891,
+                "p95": 891,
+                "min": 891,
+                "max": 891
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n05",
+            "category": "close-distractors-retry-contract",
+            "query": "same request key reused with changed payload: retry outcome",
+            "relevantSections": [
+              {
+                "articleKey": "platform-api",
+                "headingTitle": "Request lifecycle",
+                "headingOccurrence": 1
+              },
+              {
+                "articleKey": "api-errors",
+                "headingTitle": "Conflict response",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "platform-api",
+                "heading": "Request lifecycle",
+                "anchor": "request-lifecycle"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "api-errors",
+                "heading": "Conflict response",
+                "anchor": "conflict-response"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 18.613,
+              "p95": 21.368,
+              "min": 14.946,
+              "max": 22.061
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 180,
+                "p95": 180,
+                "min": 180,
+                "max": 180
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3992,
+                "p95": 3992,
+                "min": 3992,
+                "max": 3992
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 21,
+                "p95": 21,
+                "min": 21,
+                "max": 21
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1023,
+                "p95": 1023,
+                "min": 1023,
+                "max": 1023
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n06",
+            "category": "code-identifier",
+            "query": "service_key identifies the emitting service",
+            "relevantSections": [
+              {
+                "articleKey": "telemetry-fields",
+                "headingTitle": "Event fields",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "telemetry-fields",
+                "heading": "Event fields",
+                "anchor": "event-fields"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.082,
+              "p95": 13.524,
+              "min": 9.073,
+              "max": 13.949
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 164,
+                "p95": 164,
+                "min": 164,
+                "max": 164
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 768,
+                "p95": 768,
+                "min": 768,
+                "max": 768
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 17,
+                "p95": 17,
+                "min": 17,
+                "max": 17
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 181,
+                "p95": 181,
+                "min": 181,
+                "max": 181
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n07",
+            "category": "repeated-heading-occurrence",
+            "query": "Support escalation once an incident is accepted; receiver confirms ownership",
+            "relevantSections": [
+              {
+                "articleKey": "support-escalation",
+                "headingTitle": "Escalation",
+                "headingOccurrence": 2
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": 0,
+            "mrrAt5": 0,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "oncall-glossary",
+                "heading": "Terms",
+                "anchor": "terms"
+              },
+              {
+                "articleKey": "deploy-archive",
+                "heading": "Historical procedure — obsolete",
+                "anchor": "historical-procedure-obsolete"
+              },
+              {
+                "articleKey": "orbit-tools",
+                "heading": "Team context",
+                "anchor": "team-context"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 17.182,
+              "p95": 20.189,
+              "min": 14.038,
+              "max": 20.323
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 197,
+                "p95": 197,
+                "min": 197,
+                "max": 197
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3587,
+                "p95": 3587,
+                "min": 3587,
+                "max": 3587
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 22,
+                "p95": 22,
+                "min": 22,
+                "max": 22
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 922,
+                "p95": 922,
+                "min": 922,
+                "max": 922
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n08",
+            "category": "verbose-natural-question",
+            "query": "Where should an operator look before warming the read-through cache, and which comparison shows that recovery worked?",
+            "relevantSections": [
+              {
+                "articleKey": "cache-runbook",
+                "headingTitle": "Recovery",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "cache-runbook",
+                "heading": "Recovery",
+                "anchor": "recovery"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 19.337,
+              "p95": 24.345,
+              "min": 17.296,
+              "max": 26.654
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 238,
+                "p95": 238,
+                "min": 238,
+                "max": 238
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3871,
+                "p95": 3871,
+                "min": 3871,
+                "max": 3871
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 31,
+                "p95": 31,
+                "min": 31,
+                "max": 31
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 997,
+                "p95": 997,
+                "min": 997,
+                "max": 997
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n09",
+            "category": "short-phrase",
+            "query": "canary error rate ten minutes",
+            "relevantSections": [
+              {
+                "articleKey": "deploy-current",
+                "headingTitle": "Before rollout",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "deploy-current",
+                "heading": "Before rollout",
+                "anchor": "before-rollout"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.014,
+              "p95": 13.145,
+              "min": 8.98,
+              "max": 13.268
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 150,
+                "p95": 150,
+                "min": 150,
+                "max": 150
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 756,
+                "p95": 756,
+                "min": 756,
+                "max": 756
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 17,
+                "p95": 17,
+                "min": 17,
+                "max": 17
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 180,
+                "p95": 180,
+                "min": 180,
+                "max": 180
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n10",
+            "category": "short-phrase",
+            "query": "handover evidence owner deadline",
+            "relevantSections": [
+              {
+                "articleKey": "handover-template",
+                "headingTitle": "Template",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "handover-template",
+                "heading": "Template",
+                "anchor": "template"
+              },
+              {
+                "articleKey": "release-evidence",
+                "heading": "Evidence",
+                "anchor": "evidence"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Evidence",
+                "anchor": "evidence"
+              },
+              {
+                "articleKey": "deploy-current",
+                "heading": "Before rollout",
+                "anchor": "before-rollout"
+              },
+              {
+                "articleKey": "incident-comms",
+                "heading": "Update format",
+                "anchor": "update-format"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.478,
+              "p95": 12.783,
+              "min": 8.338,
+              "max": 13.021
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 153,
+                "p95": 153,
+                "min": 153,
+                "max": 153
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3272,
+                "p95": 3272,
+                "min": 3272,
+                "max": 3272
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 852,
+                "p95": 852,
+                "min": 852,
+                "max": 852
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n11",
+            "category": "explicit-historical-intent",
+            "query": "For historical cases before queue confirmation, which manual CSV import procedure was used?",
+            "relevantSections": [
+              {
+                "articleKey": "offers-legacy",
+                "headingTitle": "Архивный порядок — НЕ ИСПОЛЬЗОВАТЬ",
+                "headingOccurrence": 1
+              },
+              {
+                "articleKey": "offers-legacy",
+                "headingTitle": "Историческая заметка",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": 0,
+            "mrrAt5": 0,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "deploy-archive",
+                "heading": "Historical procedure — obsolete",
+                "anchor": "historical-procedure-obsolete"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 18.854,
+              "p95": 22.872,
+              "min": 16.463,
+              "max": 23.498
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 212,
+                "p95": 212,
+                "min": 212,
+                "max": 212
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4073,
+                "p95": 4073,
+                "min": 4073,
+                "max": 4073
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 26,
+                "p95": 26,
+                "min": 26,
+                "max": 26
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1039,
+                "p95": 1039,
+                "min": 1039,
+                "max": 1039
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n12",
+            "category": "natural-question-ru",
+            "query": "Передать незакрытую отправку следующему оператору: что указать и кто подтверждает приём?",
+            "relevantSections": [
+              {
+                "articleKey": "shipment-handoff",
+                "headingTitle": "Передача",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": 0,
+            "mrrAt5": 0,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-intake",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 20.373,
+              "p95": 22.824,
+              "min": 16.832,
+              "max": 25.311
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 285,
+                "p95": 285,
+                "min": 285,
+                "max": 285
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4939,
+                "p95": 4939,
+                "min": 4939,
+                "max": 4939
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 46,
+                "p95": 46,
+                "min": 46,
+                "max": 46
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1291,
+                "p95": 1291,
+                "min": 1291,
+                "max": 1291
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n13",
+            "category": "close-distractor-entity-disambiguation",
+            "query": "Orbit Support toolbox onboarding access coordinator",
+            "relevantSections": [
+              {
+                "articleKey": "orbit-tools",
+                "headingTitle": "Team context",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "orbit-tools",
+                "heading": "Team context",
+                "anchor": "team-context"
+              },
+              {
+                "articleKey": "svc-orbit",
+                "heading": "Identity",
+                "anchor": "identity"
+              },
+              {
+                "articleKey": "oncall-glossary",
+                "heading": "Terms",
+                "anchor": "terms"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.197,
+              "p95": 13.848,
+              "min": 8.584,
+              "max": 14.428
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 172,
+                "p95": 172,
+                "min": 172,
+                "max": 172
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 1912,
+                "p95": 1912,
+                "min": 1912,
+                "max": 1912
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 19,
+                "p95": 19,
+                "min": 19,
+                "max": 19
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 488,
+                "p95": 488,
+                "min": 488,
+                "max": 488
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n14",
+            "category": "article-identity-heading",
+            "query": "ledger reconciliation daily settlement batch debit credit totals",
+            "relevantSections": [
+              {
+                "articleKey": "ledger-reconcile",
+                "headingTitle": "Daily check",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "ledger-reconcile",
+                "heading": "Daily check",
+                "anchor": "daily-check"
+              },
+              {
+                "articleKey": "svc-orbit",
+                "heading": "Identity",
+                "anchor": "identity"
+              },
+              {
+                "articleKey": "orbit-tools",
+                "heading": "Team context",
+                "anchor": "team-context"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 15.482,
+              "p95": 20.55,
+              "min": 13.347,
+              "max": 21.366
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 185,
+                "p95": 185,
+                "min": 185,
+                "max": 185
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3518,
+                "p95": 3518,
+                "min": 3518,
+                "max": 3518
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 19,
+                "p95": 19,
+                "min": 19,
+                "max": 19
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 905,
+                "p95": 905,
+                "min": 905,
+                "max": 905
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n15",
+            "category": "morphology-en",
+            "query": "reimbursing expenses with dated receipt and cost centre approval",
+            "relevantSections": [
+              {
+                "articleKey": "reimbursement",
+                "headingTitle": "Submission",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "reimbursement",
+                "heading": "Submission",
+                "anchor": "submission"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 15.722,
+              "p95": 17.813,
+              "min": 14.273,
+              "max": 18.218
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 185,
+                "p95": 185,
+                "min": 185,
+                "max": 185
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3940,
+                "p95": 3940,
+                "min": 3940,
+                "max": 3940
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 23,
+                "p95": 23,
+                "min": 23,
+                "max": 23
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1010,
+                "p95": 1010,
+                "min": 1010,
+                "max": 1010
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n16",
+            "category": "natural-question-ru",
+            "query": "Что собрать при регистрации обращения, если нужно передать язык интерфейса и ожидаемый результат?",
+            "relevantSections": [
+              {
+                "articleKey": "support-intake",
+                "headingTitle": "Required details",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "support-intake",
+                "heading": "Required details",
+                "anchor": "required-details"
+              },
+              {
+                "articleKey": "agent-rules",
+                "heading": "Правила для агентов",
+                "anchor": "правила-для-агентов"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 17.22,
+              "p95": 23.685,
+              "min": 15.647,
+              "max": 23.686
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 301,
+                "p95": 301,
+                "min": 301,
+                "max": 301
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4643,
+                "p95": 4643,
+                "min": 4643,
+                "max": 4643
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 48,
+                "p95": 48,
+                "min": 48,
+                "max": 48
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1151,
+                "p95": 1151,
+                "min": 1151,
+                "max": 1151
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n17",
+            "category": "morphology-en",
+            "query": "rotating machine credentials after suspected exposure or every ninety days",
+            "relevantSections": [
+              {
+                "articleKey": "token-rotation",
+                "headingTitle": "Schedule",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "token-rotation",
+                "heading": "Schedule",
+                "anchor": "schedule"
+              },
+              {
+                "articleKey": "incident-comms",
+                "heading": "Update format",
+                "anchor": "update-format"
+              },
+              {
+                "articleKey": "oncall-glossary",
+                "heading": "Terms",
+                "anchor": "terms"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "deploy-archive",
+                "heading": "Historical procedure — obsolete",
+                "anchor": "historical-procedure-obsolete"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 12.687,
+              "p95": 13.208,
+              "min": 11.19,
+              "max": 15.874
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 195,
+                "p95": 195,
+                "min": 195,
+                "max": 195
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3535,
+                "p95": 3535,
+                "min": 3535,
+                "max": 3535
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 22,
+                "p95": 22,
+                "min": 22,
+                "max": 22
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 894,
+                "p95": 894,
+                "min": 894,
+                "max": 894
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n18",
+            "category": "negative-absent-concept",
+            "query": "палеонтология аммонитов стратиграфическая колонка",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 9.563,
+              "p95": 12.108,
+              "min": 8.356,
+              "max": 14.126
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 216,
+                "p95": 216,
+                "min": 216,
+                "max": 216
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 35,
+                "p95": 35,
+                "min": 35,
+                "max": 35
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          },
+          {
+            "key": "n19",
+            "category": "negative-absent-concept",
+            "query": "neutrino oscillation scintillator detector",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 8.983,
+              "p95": 10.134,
+              "min": 8.341,
+              "max": 10.143
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 163,
+                "p95": 163,
+                "min": 163,
+                "max": 163
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 20,
+                "p95": 20,
+                "min": 20,
+                "max": 20
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          },
+          {
+            "key": "n20",
+            "category": "negative-absent-concept",
+            "query": "глазурование фарфора керамическая глазурь",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 9.203,
+              "p95": 10.622,
+              "min": 8.131,
+              "max": 11.441
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 200,
+                "p95": 200,
+                "min": 200,
+                "max": 200
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 33,
+                "p95": 33,
+                "min": 33,
+                "max": 33
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          },
+          {
+            "key": "n21",
+            "category": "negative-absent-concept",
+            "query": "exoplanet transit spectroscopy atmospheric retrieval",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 9.222,
+              "p95": 10.466,
+              "min": 8.379,
+              "max": 11.051
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 173,
+                "p95": 173,
+                "min": 173,
+                "max": 173
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 19,
+                "p95": 19,
+                "min": 19,
+                "max": 19
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          },
+          {
+            "key": "n22",
+            "category": "negative-absent-concept",
+            "query": "микориза грибница спорообразование",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 9.018,
+              "p95": 10.696,
+              "min": 8.218,
+              "max": 11.55
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 187,
+                "p95": 187,
+                "min": 187,
+                "max": 187
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 28,
+                "p95": 28,
+                "min": 28,
+                "max": 28
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          }
+        ]
+      },
+      "candidate": {
+        "queryCount": 22,
+        "positiveQueryCount": 17,
+        "top1Queries": 14,
+        "top5Queries": 17,
+        "top1Coverage": 0.8235294117647058,
+        "top5Coverage": 1,
+        "recallAt5Macro": 0.9705882352941176,
+        "mrrAt5": 0.8794117647058823,
+        "noHit": {
+          "expectedNegativeQueries": 5,
+          "samples": 100,
+          "trueNegative": 100,
+          "falsePositive": 0,
+          "accuracy": 1
+        },
+        "latencyMs": {
+          "n": 440,
+          "median": 13.35,
+          "p95": 19.717,
+          "min": 10.21,
+          "max": 24.862
+        },
+        "perQuery": [
+          {
+            "key": "n01",
+            "category": "article-identity-heading",
+            "query": "offers-backend incident symptom after certificate rotation",
+            "relevantSections": [
+              {
+                "articleKey": "offers-backend",
+                "headingTitle": "Симптомы",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 0.5,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "token-rotation",
+                "heading": "Schedule",
+                "anchor": "schedule"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Симптомы",
+                "anchor": "симптомы"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Причина и восстановление",
+                "anchor": "причина-и-восстановление"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "oncall-glossary",
+                "heading": "Terms",
+                "anchor": "terms"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 13.842,
+              "p95": 17.265,
+              "min": 11.088,
+              "max": 18.038
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 179,
+                "p95": 179,
+                "min": 179,
+                "max": 179
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3290,
+                "p95": 3290,
+                "min": 3290,
+                "max": 3290
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 18,
+                "p95": 18,
+                "min": 18,
+                "max": 18
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 891,
+                "p95": 891,
+                "min": 891,
+                "max": 891
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n02",
+            "category": "metadata-only",
+            "query": "deploy archive obsolete",
+            "relevantSections": [
+              {
+                "articleKey": "deploy-archive",
+                "headingTitle": "Historical procedure — obsolete",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "deploy-archive",
+                "heading": "Historical procedure — obsolete",
+                "anchor": "historical-procedure-obsolete"
+              },
+              {
+                "articleKey": "deploy-archive",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.836,
+              "p95": 15.157,
+              "min": 10.583,
+              "max": 15.866
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 144,
+                "p95": 144,
+                "min": 144,
+                "max": 144
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 1443,
+                "p95": 1443,
+                "min": 1443,
+                "max": 1443
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 14,
+                "p95": 14,
+                "min": 14,
+                "max": 14
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 374,
+                "p95": 374,
+                "min": 374,
+                "max": 374
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n03",
+            "category": "morphology-ru",
+            "query": "проверить возврат после повреждения упаковки",
+            "relevantSections": [
+              {
+                "articleKey": "returns-guide",
+                "headingTitle": "Проверка",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "returns-guide",
+                "heading": "Проверка",
+                "anchor": "проверка"
+              },
+              {
+                "articleKey": "returns-guide",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "dispatch-map",
+                "heading": "Команды",
+                "anchor": "команды"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Причина и восстановление",
+                "anchor": "причина-и-восстановление"
+              },
+              {
+                "articleKey": "offers-current",
+                "heading": "Текущий порядок",
+                "anchor": "текущий-порядок"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.444,
+              "p95": 16.462,
+              "min": 11.88,
+              "max": 17.908
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 205,
+                "p95": 205,
+                "min": 205,
+                "max": 205
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4452,
+                "p95": 4452,
+                "min": 4452,
+                "max": 4452
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 29,
+                "p95": 29,
+                "min": 29,
+                "max": 29
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1157,
+                "p95": 1157,
+                "min": 1157,
+                "max": 1157
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n04",
+            "category": "english-russian-natural-question",
+            "query": "Which Orbit is the расчётный сервис, and what is its short alias?",
+            "relevantSections": [
+              {
+                "articleKey": "svc-orbit",
+                "headingTitle": "Identity",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "svc-orbit",
+                "heading": "Identity",
+                "anchor": "identity"
+              },
+              {
+                "articleKey": "svc-orbit",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "orbit-tools",
+                "heading": "Team context",
+                "anchor": "team-context"
+              },
+              {
+                "articleKey": "orbit-tools",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Profile notes",
+                "anchor": "profile-notes"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.948,
+              "p95": 17.579,
+              "min": 11.898,
+              "max": 18.182
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 201,
+                "p95": 201,
+                "min": 201,
+                "max": 201
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3123,
+                "p95": 3123,
+                "min": 3123,
+                "max": 3123
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 31,
+                "p95": 31,
+                "min": 31,
+                "max": 31
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 837,
+                "p95": 837,
+                "min": 837,
+                "max": 837
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n05",
+            "category": "close-distractors-retry-contract",
+            "query": "same request key reused with changed payload: retry outcome",
+            "relevantSections": [
+              {
+                "articleKey": "platform-api",
+                "headingTitle": "Request lifecycle",
+                "headingOccurrence": 1
+              },
+              {
+                "articleKey": "api-errors",
+                "headingTitle": "Conflict response",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "platform-api",
+                "heading": "Request lifecycle",
+                "anchor": "request-lifecycle"
+              },
+              {
+                "articleKey": "api-errors",
+                "heading": "Conflict response",
+                "anchor": "conflict-response"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Profile notes",
+                "anchor": "profile-notes"
+              },
+              {
+                "articleKey": "ledger-reconcile",
+                "heading": "Daily check",
+                "anchor": "daily-check"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 16.434,
+              "p95": 20.519,
+              "min": 14.825,
+              "max": 22.04
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 180,
+                "p95": 180,
+                "min": 180,
+                "max": 180
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3439,
+                "p95": 3439,
+                "min": 3439,
+                "max": 3439
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 21,
+                "p95": 21,
+                "min": 21,
+                "max": 21
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 887,
+                "p95": 887,
+                "min": 887,
+                "max": 887
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n06",
+            "category": "code-identifier",
+            "query": "service_key identifies the emitting service",
+            "relevantSections": [
+              {
+                "articleKey": "telemetry-fields",
+                "headingTitle": "Event fields",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "telemetry-fields",
+                "heading": "Event fields",
+                "anchor": "event-fields"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 12.21,
+              "p95": 16.7,
+              "min": 10.881,
+              "max": 17.43
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 164,
+                "p95": 164,
+                "min": 164,
+                "max": 164
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 770,
+                "p95": 770,
+                "min": 770,
+                "max": 770
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 17,
+                "p95": 17,
+                "min": 17,
+                "max": 17
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 181,
+                "p95": 181,
+                "min": 181,
+                "max": 181
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n07",
+            "category": "repeated-heading-occurrence",
+            "query": "Support escalation once an incident is accepted; receiver confirms ownership",
+            "relevantSections": [
+              {
+                "articleKey": "support-escalation",
+                "headingTitle": "Escalation",
+                "headingOccurrence": 2
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 0.25,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "svc-orbit",
+                "heading": "Identity",
+                "anchor": "identity"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Escalation",
+                "anchor": "escalation"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Escalation",
+                "anchor": "escalation-2"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Evidence",
+                "anchor": "evidence"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 15.187,
+              "p95": 19.681,
+              "min": 12.379,
+              "max": 20.376
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 197,
+                "p95": 197,
+                "min": 197,
+                "max": 197
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3488,
+                "p95": 3488,
+                "min": 3488,
+                "max": 3488
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 22,
+                "p95": 22,
+                "min": 22,
+                "max": 22
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 931,
+                "p95": 931,
+                "min": 931,
+                "max": 931
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n08",
+            "category": "verbose-natural-question",
+            "query": "Where should an operator look before warming the read-through cache, and which comparison shows that recovery worked?",
+            "relevantSections": [
+              {
+                "articleKey": "cache-runbook",
+                "headingTitle": "Recovery",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "cache-runbook",
+                "heading": "Recovery",
+                "anchor": "recovery"
+              },
+              {
+                "articleKey": "cache-runbook",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "load-profile",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "audit-event",
+                "heading": "Payload record",
+                "anchor": "payload-record"
+              },
+              {
+                "articleKey": "support-escalation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 21.24,
+              "p95": 24.093,
+              "min": 17.606,
+              "max": 24.862
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 238,
+                "p95": 238,
+                "min": 238,
+                "max": 238
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 3890,
+                "p95": 3890,
+                "min": 3890,
+                "max": 3890
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 31,
+                "p95": 31,
+                "min": 31,
+                "max": 31
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1005,
+                "p95": 1005,
+                "min": 1005,
+                "max": 1005
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n09",
+            "category": "short-phrase",
+            "query": "canary error rate ten minutes",
+            "relevantSections": [
+              {
+                "articleKey": "deploy-current",
+                "headingTitle": "Before rollout",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "deploy-current",
+                "heading": "Before rollout",
+                "anchor": "before-rollout"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.148,
+              "p95": 17.53,
+              "min": 11.291,
+              "max": 17.869
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 150,
+                "p95": 150,
+                "min": 150,
+                "max": 150
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 758,
+                "p95": 758,
+                "min": 758,
+                "max": 758
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 17,
+                "p95": 17,
+                "min": 17,
+                "max": 17
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 180,
+                "p95": 180,
+                "min": 180,
+                "max": 180
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n10",
+            "category": "short-phrase",
+            "query": "handover evidence owner deadline",
+            "relevantSections": [
+              {
+                "articleKey": "handover-template",
+                "headingTitle": "Template",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "handover-template",
+                "heading": "Template",
+                "anchor": "template"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 13.108,
+              "p95": 16.316,
+              "min": 10.766,
+              "max": 16.346
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 153,
+                "p95": 153,
+                "min": 153,
+                "max": 153
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 774,
+                "p95": 774,
+                "min": 774,
+                "max": 774
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 176,
+                "p95": 176,
+                "min": 176,
+                "max": 176
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n11",
+            "category": "explicit-historical-intent",
+            "query": "For historical cases before queue confirmation, which manual CSV import procedure was used?",
+            "relevantSections": [
+              {
+                "articleKey": "offers-legacy",
+                "headingTitle": "Архивный порядок — НЕ ИСПОЛЬЗОВАТЬ",
+                "headingOccurrence": 1
+              },
+              {
+                "articleKey": "offers-legacy",
+                "headingTitle": "Историческая заметка",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 0,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 0.5,
+            "mrrAt5": 0.20000000000000004,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "deploy-archive",
+                "heading": "Historical procedure — obsolete",
+                "anchor": "historical-procedure-obsolete"
+              },
+              {
+                "articleKey": "deploy-archive",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "deploy-current",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "deploy-current",
+                "heading": "Before rollout",
+                "anchor": "before-rollout"
+              },
+              {
+                "articleKey": "offers-legacy",
+                "heading": "Архивный порядок — НЕ ИСПОЛЬЗОВАТЬ",
+                "anchor": "архивный-порядок-не-использовать"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.036,
+              "p95": 16.819,
+              "min": 11.824,
+              "max": 16.88
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 212,
+                "p95": 212,
+                "min": 212,
+                "max": 212
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4200,
+                "p95": 4200,
+                "min": 4200,
+                "max": 4200
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 26,
+                "p95": 26,
+                "min": 26,
+                "max": 26
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1110,
+                "p95": 1110,
+                "min": 1110,
+                "max": 1110
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n12",
+            "category": "natural-question-ru",
+            "query": "Передать незакрытую отправку следующему оператору: что указать и кто подтверждает приём?",
+            "relevantSections": [
+              {
+                "articleKey": "shipment-handoff",
+                "headingTitle": "Передача",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "shipment-handoff",
+                "heading": "Передача",
+                "anchor": "передача"
+              },
+              {
+                "articleKey": "shipment-handoff",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "dispatch-map",
+                "heading": "Команды",
+                "anchor": "команды"
+              },
+              {
+                "articleKey": "offers-backend",
+                "heading": "Симптомы",
+                "anchor": "симптомы"
+              },
+              {
+                "articleKey": "queue-watch",
+                "heading": "Порог и действие",
+                "anchor": "порог-и-действие"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.07,
+              "p95": 18.111,
+              "min": 12.371,
+              "max": 18.706
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 285,
+                "p95": 285,
+                "min": 285,
+                "max": 285
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4377,
+                "p95": 4377,
+                "min": 4377,
+                "max": 4377
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 46,
+                "p95": 46,
+                "min": 46,
+                "max": 46
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1175,
+                "p95": 1175,
+                "min": 1175,
+                "max": 1175
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n13",
+            "category": "close-distractor-entity-disambiguation",
+            "query": "Orbit Support toolbox onboarding access coordinator",
+            "relevantSections": [
+              {
+                "articleKey": "orbit-tools",
+                "headingTitle": "Team context",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "orbit-tools",
+                "heading": "Team context",
+                "anchor": "team-context"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.414,
+              "p95": 17.197,
+              "min": 11.153,
+              "max": 17.567
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 172,
+                "p95": 172,
+                "min": 172,
+                "max": 172
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 801,
+                "p95": 801,
+                "min": 801,
+                "max": 801
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 19,
+                "p95": 19,
+                "min": 19,
+                "max": 19
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 181,
+                "p95": 181,
+                "min": 181,
+                "max": 181
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n14",
+            "category": "article-identity-heading",
+            "query": "ledger reconciliation daily settlement batch debit credit totals",
+            "relevantSections": [
+              {
+                "articleKey": "ledger-reconcile",
+                "headingTitle": "Daily check",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "ledger-reconcile",
+                "heading": "Daily check",
+                "anchor": "daily-check"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 13.547,
+              "p95": 16.509,
+              "min": 11.81,
+              "max": 18.47
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 185,
+                "p95": 185,
+                "min": 185,
+                "max": 185
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 797,
+                "p95": 797,
+                "min": 797,
+                "max": 797
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 19,
+                "p95": 19,
+                "min": 19,
+                "max": 19
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 181,
+                "p95": 181,
+                "min": 181,
+                "max": 181
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n15",
+            "category": "morphology-en",
+            "query": "reimbursing expenses with dated receipt and cost centre approval",
+            "relevantSections": [
+              {
+                "articleKey": "reimbursement",
+                "headingTitle": "Submission",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "reimbursement",
+                "heading": "Submission",
+                "anchor": "submission"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 12.889,
+              "p95": 15.831,
+              "min": 11.489,
+              "max": 16.286
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 185,
+                "p95": 185,
+                "min": 185,
+                "max": 185
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 778,
+                "p95": 778,
+                "min": 778,
+                "max": 778
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 23,
+                "p95": 23,
+                "min": 23,
+                "max": 23
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 175,
+                "p95": 175,
+                "min": 175,
+                "max": 175
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n16",
+            "category": "natural-question-ru",
+            "query": "Что собрать при регистрации обращения, если нужно передать язык интерфейса и ожидаемый результат?",
+            "relevantSections": [
+              {
+                "articleKey": "support-intake",
+                "headingTitle": "Required details",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "support-intake",
+                "heading": "Required details",
+                "anchor": "required-details"
+              },
+              {
+                "articleKey": "support-intake",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "language-support",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "language-support",
+                "heading": "Передача",
+                "anchor": "передача"
+              },
+              {
+                "articleKey": "shipment-handoff",
+                "heading": "Передача",
+                "anchor": "передача"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 14.238,
+              "p95": 16.995,
+              "min": 12.683,
+              "max": 18.216
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 301,
+                "p95": 301,
+                "min": 301,
+                "max": 301
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 4227,
+                "p95": 4227,
+                "min": 4227,
+                "max": 4227
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 48,
+                "p95": 48,
+                "min": 48,
+                "max": 48
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 1096,
+                "p95": 1096,
+                "min": 1096,
+                "max": 1096
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n17",
+            "category": "morphology-en",
+            "query": "rotating machine credentials after suspected exposure or every ninety days",
+            "relevantSections": [
+              {
+                "articleKey": "token-rotation",
+                "headingTitle": "Schedule",
+                "headingOccurrence": 1
+              }
+            ],
+            "top1Successes": 20,
+            "top5Successes": 20,
+            "repetitions": 20,
+            "recallAt5": 1,
+            "mrrAt5": 1,
+            "payloadStable": true,
+            "rankedHits": [
+              {
+                "articleKey": "token-rotation",
+                "heading": "Schedule",
+                "anchor": "schedule"
+              },
+              {
+                "articleKey": "token-rotation",
+                "heading": "Рабочие заметки",
+                "anchor": "рабочие-заметки"
+              },
+              {
+                "articleKey": "oncall-glossary",
+                "heading": "Terms",
+                "anchor": "terms"
+              },
+              {
+                "articleKey": "incident-comms",
+                "heading": "Update format",
+                "anchor": "update-format"
+              }
+            ],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 13.048,
+              "p95": 13.443,
+              "min": 11.82,
+              "max": 13.622
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 195,
+                "p95": 195,
+                "min": 195,
+                "max": 195
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 2251,
+                "p95": 2251,
+                "min": 2251,
+                "max": 2251
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 22,
+                "p95": 22,
+                "min": 22,
+                "max": 22
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 608,
+                "p95": 608,
+                "min": 608,
+                "max": 608
+              }
+            },
+            "noHit": null,
+            "boundedFact": null
+          },
+          {
+            "key": "n18",
+            "category": "negative-absent-concept",
+            "query": "палеонтология аммонитов стратиграфическая колонка",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.507,
+              "p95": 12.578,
+              "min": 10.684,
+              "max": 12.604
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 216,
+                "p95": 216,
+                "min": 216,
+                "max": 216
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 35,
+                "p95": 35,
+                "min": 35,
+                "max": 35
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          },
+          {
+            "key": "n19",
+            "category": "negative-absent-concept",
+            "query": "neutrino oscillation scintillator detector",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.267,
+              "p95": 12.314,
+              "min": 10.21,
+              "max": 12.383
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 163,
+                "p95": 163,
+                "min": 163,
+                "max": 163
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 20,
+                "p95": 20,
+                "min": 20,
+                "max": 20
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          },
+          {
+            "key": "n20",
+            "category": "negative-absent-concept",
+            "query": "глазурование фарфора керамическая глазурь",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 12.207,
+              "p95": 14.925,
+              "min": 10.384,
+              "max": 15.213
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 200,
+                "p95": 200,
+                "min": 200,
+                "max": 200
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 33,
+                "p95": 33,
+                "min": 33,
+                "max": 33
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          },
+          {
+            "key": "n21",
+            "category": "negative-absent-concept",
+            "query": "exoplanet transit spectroscopy atmospheric retrieval",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.7,
+              "p95": 13.385,
+              "min": 10.666,
+              "max": 13.414
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 173,
+                "p95": 173,
+                "min": 173,
+                "max": 173
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 19,
+                "p95": 19,
+                "min": 19,
+                "max": 19
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          },
+          {
+            "key": "n22",
+            "category": "negative-absent-concept",
+            "query": "микориза грибница спорообразование",
+            "relevantSections": [],
+            "top1Successes": 0,
+            "top5Successes": 0,
+            "repetitions": 20,
+            "recallAt5": null,
+            "mrrAt5": null,
+            "payloadStable": true,
+            "rankedHits": [],
+            "searchLatencyMs": {
+              "n": 20,
+              "median": 11.616,
+              "p95": 12.789,
+              "min": 10.32,
+              "max": 12.855
+            },
+            "payload": {
+              "requestBytes": {
+                "n": 20,
+                "median": 187,
+                "p95": 187,
+                "min": 187,
+                "max": 187
+              },
+              "responseBytes": {
+                "n": 20,
+                "median": 151,
+                "p95": 151,
+                "min": 151,
+                "max": 151
+              },
+              "outputTokens": {
+                "n": 20,
+                "median": 28,
+                "p95": 28,
+                "min": 28,
+                "max": 28
+              },
+              "inputTokens": {
+                "n": 20,
+                "median": 16,
+                "p95": 16,
+                "min": 16,
+                "max": 16
+              }
+            },
+            "noHit": {
+              "expectedNegative": true,
+              "trueNegative": 20,
+              "falsePositive": 0
+            },
+            "boundedFact": null
+          }
+        ]
+      },
+      "pairedSearchCosts": [
+        {
+          "key": "n01",
+          "baselineMedianMs": 10.853,
+          "candidateMedianMs": 13.842,
+          "baselineMedianBytes": 2778,
+          "candidateMedianBytes": 3469,
+          "baselineMedianTokens": 699,
+          "candidateMedianTokens": 909
+        },
+        {
+          "key": "n02",
+          "baselineMedianMs": 10.253,
+          "candidateMedianMs": 11.836,
+          "baselineMedianBytes": 1043,
+          "candidateMedianBytes": 1587,
+          "baselineMedianTokens": 220,
+          "candidateMedianTokens": 388
+        },
+        {
+          "key": "n03",
+          "baselineMedianMs": 16.471,
+          "candidateMedianMs": 14.444,
+          "baselineMedianBytes": 4785,
+          "candidateMedianBytes": 4657,
+          "baselineMedianTokens": 1196,
+          "candidateMedianTokens": 1186
+        },
+        {
+          "key": "n04",
+          "baselineMedianMs": 17.969,
+          "candidateMedianMs": 14.948,
+          "baselineMedianBytes": 3714,
+          "candidateMedianBytes": 3324,
+          "baselineMedianTokens": 922,
+          "candidateMedianTokens": 868
+        },
+        {
+          "key": "n05",
+          "baselineMedianMs": 18.613,
+          "candidateMedianMs": 16.434,
+          "baselineMedianBytes": 4172,
+          "candidateMedianBytes": 3619,
+          "baselineMedianTokens": 1044,
+          "candidateMedianTokens": 908
+        },
+        {
+          "key": "n06",
+          "baselineMedianMs": 11.082,
+          "candidateMedianMs": 12.21,
+          "baselineMedianBytes": 932,
+          "candidateMedianBytes": 934,
+          "baselineMedianTokens": 198,
+          "candidateMedianTokens": 198
+        },
+        {
+          "key": "n07",
+          "baselineMedianMs": 17.182,
+          "candidateMedianMs": 15.187,
+          "baselineMedianBytes": 3784,
+          "candidateMedianBytes": 3685,
+          "baselineMedianTokens": 944,
+          "candidateMedianTokens": 953
+        },
+        {
+          "key": "n08",
+          "baselineMedianMs": 19.337,
+          "candidateMedianMs": 21.24,
+          "baselineMedianBytes": 4109,
+          "candidateMedianBytes": 4128,
+          "baselineMedianTokens": 1028,
+          "candidateMedianTokens": 1036
+        },
+        {
+          "key": "n09",
+          "baselineMedianMs": 11.014,
+          "candidateMedianMs": 14.148,
+          "baselineMedianBytes": 906,
+          "candidateMedianBytes": 908,
+          "baselineMedianTokens": 197,
+          "candidateMedianTokens": 197
+        },
+        {
+          "key": "n10",
+          "baselineMedianMs": 11.478,
+          "candidateMedianMs": 13.108,
+          "baselineMedianBytes": 3425,
+          "candidateMedianBytes": 927,
+          "baselineMedianTokens": 868,
+          "candidateMedianTokens": 192
+        },
+        {
+          "key": "n11",
+          "baselineMedianMs": 18.854,
+          "candidateMedianMs": 14.036,
+          "baselineMedianBytes": 4285,
+          "candidateMedianBytes": 4412,
+          "baselineMedianTokens": 1065,
+          "candidateMedianTokens": 1136
+        },
+        {
+          "key": "n12",
+          "baselineMedianMs": 20.373,
+          "candidateMedianMs": 14.07,
+          "baselineMedianBytes": 5224,
+          "candidateMedianBytes": 4662,
+          "baselineMedianTokens": 1337,
+          "candidateMedianTokens": 1221
+        },
+        {
+          "key": "n13",
+          "baselineMedianMs": 11.197,
+          "candidateMedianMs": 14.414,
+          "baselineMedianBytes": 2084,
+          "candidateMedianBytes": 973,
+          "baselineMedianTokens": 507,
+          "candidateMedianTokens": 200
+        },
+        {
+          "key": "n14",
+          "baselineMedianMs": 15.482,
+          "candidateMedianMs": 13.547,
+          "baselineMedianBytes": 3703,
+          "candidateMedianBytes": 982,
+          "baselineMedianTokens": 924,
+          "candidateMedianTokens": 200
+        },
+        {
+          "key": "n15",
+          "baselineMedianMs": 15.722,
+          "candidateMedianMs": 12.889,
+          "baselineMedianBytes": 4125,
+          "candidateMedianBytes": 963,
+          "baselineMedianTokens": 1033,
+          "candidateMedianTokens": 198
+        },
+        {
+          "key": "n16",
+          "baselineMedianMs": 17.22,
+          "candidateMedianMs": 14.238,
+          "baselineMedianBytes": 4944,
+          "candidateMedianBytes": 4528,
+          "baselineMedianTokens": 1199,
+          "candidateMedianTokens": 1144
+        },
+        {
+          "key": "n17",
+          "baselineMedianMs": 12.687,
+          "candidateMedianMs": 13.048,
+          "baselineMedianBytes": 3730,
+          "candidateMedianBytes": 2446,
+          "baselineMedianTokens": 916,
+          "candidateMedianTokens": 630
+        },
+        {
+          "key": "n18",
+          "baselineMedianMs": 9.563,
+          "candidateMedianMs": 11.507,
+          "baselineMedianBytes": 367,
+          "candidateMedianBytes": 367,
+          "baselineMedianTokens": 51,
+          "candidateMedianTokens": 51
+        },
+        {
+          "key": "n19",
+          "baselineMedianMs": 8.983,
+          "candidateMedianMs": 11.267,
+          "baselineMedianBytes": 314,
+          "candidateMedianBytes": 314,
+          "baselineMedianTokens": 36,
+          "candidateMedianTokens": 36
+        },
+        {
+          "key": "n20",
+          "baselineMedianMs": 9.203,
+          "candidateMedianMs": 12.207,
+          "baselineMedianBytes": 351,
+          "candidateMedianBytes": 351,
+          "baselineMedianTokens": 49,
+          "candidateMedianTokens": 49
+        },
+        {
+          "key": "n21",
+          "baselineMedianMs": 9.222,
+          "candidateMedianMs": 11.7,
+          "baselineMedianBytes": 324,
+          "candidateMedianBytes": 324,
+          "baselineMedianTokens": 35,
+          "candidateMedianTokens": 35
+        },
+        {
+          "key": "n22",
+          "baselineMedianMs": 9.018,
+          "candidateMedianMs": 11.616,
+          "baselineMedianBytes": 338,
+          "candidateMedianBytes": 338,
+          "baselineMedianTokens": 44,
+          "candidateMedianTokens": 44
+        }
+      ]
+    }
+  },
+  "legacyHarness": {
+    "binarySha256": "c87259347cb1c1f8c87edd6b1e52748ff4d568887122cfb87380c96f8d71181b",
+    "setupProxy": {
+      "calls": 1,
+      "requests": 4,
+      "requestBytes": 421,
+      "responseBytes": 20170,
+      "totalBytes": 20591,
+      "outputTokens": 24,
+      "inputTokens": 4536,
+      "totalTokens": 4560,
+      "durationMs": 2.131
+    },
+    "articleSearch": {
+      "samples": 240,
+      "tasks": 12,
+      "withGroundTruth": {
+        "samples": 220,
+        "recallAt5": 0.9545454545454546,
+        "recallAt10": 0.9545454545454546,
+        "mrrAt5": 0.9545454545454546,
+        "mrrAt10": 0.9545454545454546,
+        "anyRelevantInTop5": 1,
+        "anyRelevantInTop10": 1
+      },
+      "noHit": {
+        "samples": 20,
+        "correct": 20,
+        "accuracy": 1,
+        "meanReturned": 0
+      },
+      "modeCounts": {
+        "any": 120,
+        "all": 120
+      },
+      "durationMs": {
+        "n": 240,
+        "median": 8.625,
+        "p95": 14.204,
+        "p95IsMax": false,
+        "min": 6.728,
+        "max": 17.517,
+        "mean": 9.602779166666668
+      }
+    },
+    "candidates": {
+      "D": {
+        "runs": 140,
+        "verified": 120,
+        "answerInSearchSnippet": 100,
+        "forcedReadAfterSnippetAnswer": 100,
+        "top5ArticleAnchorHits": 120,
+        "top5Coverage": {
+          "denominator": 140,
+          "hits": 120,
+          "rate": 0.8571428571428571
+        },
+        "failures": 20,
+        "protocolFailures": 0
+      },
+      "E": {
+        "runs": 140,
+        "verified": 140,
+        "answerInSearchSnippet": 0,
+        "forcedReadAfterSnippetAnswer": 0,
+        "top5ArticleAnchorHits": null,
+        "top5Coverage": null,
+        "failures": 0,
+        "protocolFailures": 0
+      }
+    },
+    "correctness": {
+      "staleRevisionRejected": {
+        "runs": 40,
+        "passed": 40,
+        "failed": 0
+      },
+      "concurrentEditExactlyOneWinner": {
+        "runs": 40,
+        "passed": 40,
+        "failed": 0
+      },
+      "historicalSectionAfterHeadingRename": {
+        "runs": 40,
+        "passed": 40,
+        "failed": 0
+      },
+      "boundedLongSectionExactReconstruction": {
+        "runs": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "boundedContinuationUsesPinnedRevisionAfterEdit": {
+        "runs": 1,
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    "failures": []
+  },
+  "modelPilot": {
+    "design": {
+      "strategyCount": 2,
+      "repeatsPerTaskStrategy": 2,
+      "plannedTrials": 8,
+      "attemptedTrials": 8,
+      "complete": true,
+      "limitedRun": false,
+      "isolatedSessions": 8,
+      "completedTrials": 8,
+      "infrastructureFailures": 0,
+      "qualityDenominator": 8,
+      "qualitySuccesses": 8,
+      "retrievalSuccesses": 8,
+      "routeComplianceSuccesses": 8,
+      "qualityFailures": 0,
+      "qualitySuccessRate": 1,
+      "parallelism": 1,
+      "timeoutSeconds": 180
+    },
+    "model": "claude-sonnet-5-5",
+    "cliVersion": "2.1.301 (Claude Code)",
+    "source": {
+      "runnerSha256": "d78cc1dcb4ad2170e828efbb890ce1fdac89b4d4b5c5486e1eb9860caa0f6d0a",
+      "corpusSha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+      "historicalBaseline": {
+        "resultsDate": "2026-10-21",
+        "runnerSha256": "49ded6dce54f5a8e32a88365783a36d86cf7f531b3d6cede9cb993be76c3dcbd",
+        "corpusSha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+        "caveat": "Historical source hash is the published runner hash; the executed pilot runner hash was not recorded."
+      }
+    },
+    "serverBinarySha256": "c87259347cb1c1f8c87edd6b1e52748ff4d568887122cfb87380c96f8d71181b",
+    "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c",
+    "trials": [
+      {
+        "key": "trial-01",
+        "task": "r02",
+        "strategy": "sections-bounded",
+        "repeat": 1,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "providerTokens": {
+          "inputTokens": 8,
+          "cachedInputTokens": 33335,
+          "cacheCreationInputTokens": 5968,
+          "totalInputTokens": 39311,
+          "outputTokens": 465,
+          "totalTokens": 39776
+        },
+        "numTurns": 4,
+        "toolCalls": [
+          "wiki_bootstrap",
+          "wiki_search_sections",
+          "wiki_read"
+        ]
+      },
+      {
+        "key": "trial-02",
+        "task": "r02",
+        "strategy": "outline-bounded",
+        "repeat": 1,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "providerTokens": {
+          "inputTokens": 10,
+          "cachedInputTokens": 43503,
+          "cacheCreationInputTokens": 5517,
+          "totalInputTokens": 49030,
+          "outputTokens": 551,
+          "totalTokens": 49581
+        },
+        "numTurns": 5,
+        "toolCalls": [
+          "wiki_bootstrap",
+          "wiki_search",
+          "wiki_read",
+          "wiki_read"
+        ]
+      },
+      {
+        "key": "trial-03",
+        "task": "r06",
+        "strategy": "outline-bounded",
+        "repeat": 1,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "providerTokens": {
+          "inputTokens": 10,
+          "cachedInputTokens": 50601,
+          "cacheCreationInputTokens": 9860,
+          "totalInputTokens": 60471,
+          "outputTokens": 465,
+          "totalTokens": 60936
+        },
+        "numTurns": 5,
+        "toolCalls": [
+          "wiki_bootstrap",
+          "wiki_search",
+          "wiki_read",
+          "wiki_read"
+        ]
+      },
+      {
+        "key": "trial-04",
+        "task": "r06",
+        "strategy": "sections-bounded",
+        "repeat": 1,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "providerTokens": {
+          "inputTokens": 8,
+          "cachedInputTokens": 33399,
+          "cacheCreationInputTokens": 6743,
+          "totalInputTokens": 40150,
+          "outputTokens": 376,
+          "totalTokens": 40526
+        },
+        "numTurns": 4,
+        "toolCalls": [
+          "wiki_bootstrap",
+          "wiki_search_sections",
+          "wiki_read"
+        ]
+      },
+      {
+        "key": "trial-05",
+        "task": "r02",
+        "strategy": "outline-bounded",
+        "repeat": 2,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "providerTokens": {
+          "inputTokens": 10,
+          "cachedInputTokens": 43216,
+          "cacheCreationInputTokens": 5382,
+          "totalInputTokens": 48608,
+          "outputTokens": 471,
+          "totalTokens": 49079
+        },
+        "numTurns": 5,
+        "toolCalls": [
+          "wiki_bootstrap",
+          "wiki_search",
+          "wiki_read",
+          "wiki_read"
+        ]
+      },
+      {
+        "key": "trial-06",
+        "task": "r02",
+        "strategy": "sections-bounded",
+        "repeat": 2,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "providerTokens": {
+          "inputTokens": 8,
+          "cachedInputTokens": 33416,
+          "cacheCreationInputTokens": 6036,
+          "totalInputTokens": 39460,
+          "outputTokens": 505,
+          "totalTokens": 39965
+        },
+        "numTurns": 4,
+        "toolCalls": [
+          "wiki_bootstrap",
+          "wiki_search_sections",
+          "wiki_read"
+        ]
+      },
+      {
+        "key": "trial-07",
+        "task": "r06",
+        "strategy": "sections-bounded",
+        "repeat": 2,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "providerTokens": {
+          "inputTokens": 8,
+          "cachedInputTokens": 33316,
+          "cacheCreationInputTokens": 6657,
+          "totalInputTokens": 39981,
+          "outputTokens": 362,
+          "totalTokens": 40343
+        },
+        "numTurns": 4,
+        "toolCalls": [
+          "wiki_bootstrap",
+          "wiki_search_sections",
+          "wiki_read"
+        ]
+      },
+      {
+        "key": "trial-08",
+        "task": "r06",
+        "strategy": "outline-bounded",
+        "repeat": 2,
+        "status": "completed",
+        "retrievalSuccess": true,
+        "routeCompliance": true,
+        "providerTokens": {
+          "inputTokens": 8,
+          "cachedInputTokens": 41137,
+          "cacheCreationInputTokens": 9993,
+          "totalInputTokens": 51138,
+          "outputTokens": 435,
+          "totalTokens": 51573
+        },
+        "numTurns": 5,
+        "toolCalls": [
+          "wiki_bootstrap",
+          "wiki_search",
+          "wiki_read",
+          "wiki_read"
+        ]
+      }
+    ]
+  },
+  "pairedModelCosts": [
+    {
+      "task": "r02",
+      "repeat": 1,
+      "outlineTotal": 49581,
+      "sectionsTotal": 39776,
+      "bothRoutesValid": true,
+      "reduction": 0.19775720538109354
+    },
+    {
+      "task": "r02",
+      "repeat": 2,
+      "outlineTotal": 49079,
+      "sectionsTotal": 39965,
+      "bothRoutesValid": true,
+      "reduction": 0.1857006051468041
+    },
+    {
+      "task": "r06",
+      "repeat": 1,
+      "outlineTotal": 60936,
+      "sectionsTotal": 40526,
+      "bothRoutesValid": true,
+      "reduction": 0.33494157804910074
+    },
+    {
+      "task": "r06",
+      "repeat": 2,
+      "outlineTotal": 51573,
+      "sectionsTotal": 40343,
+      "bothRoutesValid": true,
+      "reduction": 0.2177495976576891
+    }
+  ],
+  "intermediateDevelopment": {
+    "note": "Old7 development run before max(local,context) and local-evidence tie-break; no v2 query scores had been seen.",
+    "binarySha256": "653a191f2f98c5658ecd3dfab065d6ff99000f6a359167c2c2dfc145e8ca1af2",
+    "old7Candidates": {
+      "D": {
+        "runs": 140,
+        "verified": 100,
+        "answerInSearchSnippet": 100,
+        "forcedReadAfterSnippetAnswer": 100,
+        "top5ArticleAnchorHits": 120,
+        "top5Coverage": {
+          "denominator": 140,
+          "hits": 120,
+          "rate": 0.8571428571428571
+        },
+        "failures": 40,
+        "protocolFailures": 0
+      },
+      "E": {
+        "runs": 140,
+        "verified": 140,
+        "answerInSearchSnippet": 0,
+        "forcedReadAfterSnippetAnswer": 0,
+        "top5ArticleAnchorHits": null,
+        "top5Coverage": null,
+        "failures": 0,
+        "protocolFailures": 0
+      }
+    },
+    "model": {
+      "design": {
+        "strategyCount": 2,
+        "repeatsPerTaskStrategy": 2,
+        "plannedTrials": 8,
+        "attemptedTrials": 8,
+        "complete": true,
+        "limitedRun": false,
+        "isolatedSessions": 8,
+        "completedTrials": 8,
+        "infrastructureFailures": 0,
+        "qualityDenominator": 8,
+        "qualitySuccesses": 6,
+        "retrievalSuccesses": 8,
+        "routeComplianceSuccesses": 6,
+        "qualityFailures": 2,
+        "qualitySuccessRate": 0.75,
+        "parallelism": 1,
+        "timeoutSeconds": 180
+      },
+      "model": "claude-sonnet-5-5",
+      "cliVersion": "2.1.301 (Claude Code)",
+      "source": {
+        "runnerSha256": "d78cc1dcb4ad2170e828efbb890ce1fdac89b4d4b5c5486e1eb9860caa0f6d0a",
+        "corpusSha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+        "historicalBaseline": {
+          "resultsDate": "2026-10-21",
+          "runnerSha256": "49ded6dce54f5a8e32a88365783a36d86cf7f531b3d6cede9cb993be76c3dcbd",
+          "corpusSha256": "e78fa42446048058d1c1bcf023516bac7bd719148327abbb1ac25bc0e2992d16",
+          "caveat": "Historical source hash is the published runner hash; the executed pilot runner hash was not recorded."
+        }
+      },
+      "serverBinarySha256": "653a191f2f98c5658ecd3dfab065d6ff99000f6a359167c2c2dfc145e8ca1af2",
+      "manifestSha256": "99c89672da6c064974c90120c7a6522cb2b82a6d13bf344741eb5a14eda98f1c",
+      "trials": [
+        {
+          "key": "trial-01",
+          "task": "r02",
+          "strategy": "sections-bounded",
+          "repeat": 1,
+          "status": "completed",
+          "retrievalSuccess": true,
+          "routeCompliance": true,
+          "providerTokens": {
+            "inputTokens": 8,
+            "cachedInputTokens": 27701,
+            "cacheCreationInputTokens": 11822,
+            "totalInputTokens": 39531,
+            "outputTokens": 482,
+            "totalTokens": 40013
+          },
+          "numTurns": 4,
+          "toolCalls": [
+            "wiki_bootstrap",
+            "wiki_search_sections",
+            "wiki_read"
+          ]
+        },
+        {
+          "key": "trial-02",
+          "task": "r02",
+          "strategy": "outline-bounded",
+          "repeat": 1,
+          "status": "completed",
+          "retrievalSuccess": true,
+          "routeCompliance": true,
+          "providerTokens": {
+            "inputTokens": 8,
+            "cachedInputTokens": 34508,
+            "cacheCreationInputTokens": 8160,
+            "totalInputTokens": 42676,
+            "outputTokens": 482,
+            "totalTokens": 43158
+          },
+          "numTurns": 5,
+          "toolCalls": [
+            "wiki_bootstrap",
+            "wiki_search",
+            "wiki_read",
+            "wiki_read"
+          ]
+        },
+        {
+          "key": "trial-03",
+          "task": "r06",
+          "strategy": "outline-bounded",
+          "repeat": 1,
+          "status": "completed",
+          "retrievalSuccess": true,
+          "routeCompliance": true,
+          "providerTokens": {
+            "inputTokens": 10,
+            "cachedInputTokens": 49385,
+            "cacheCreationInputTokens": 11465,
+            "totalInputTokens": 60860,
+            "outputTokens": 438,
+            "totalTokens": 61298
+          },
+          "numTurns": 5,
+          "toolCalls": [
+            "wiki_bootstrap",
+            "wiki_search",
+            "wiki_read",
+            "wiki_read"
+          ]
+        },
+        {
+          "key": "trial-04",
+          "task": "r06",
+          "strategy": "sections-bounded",
+          "repeat": 1,
+          "status": "completed",
+          "retrievalSuccess": true,
+          "routeCompliance": true,
+          "providerTokens": {
+            "inputTokens": 8,
+            "cachedInputTokens": 31122,
+            "cacheCreationInputTokens": 7459,
+            "totalInputTokens": 38589,
+            "outputTokens": 379,
+            "totalTokens": 38968
+          },
+          "numTurns": 4,
+          "toolCalls": [
+            "wiki_bootstrap",
+            "wiki_search_sections",
+            "wiki_read"
+          ]
+        },
+        {
+          "key": "trial-05",
+          "task": "r02",
+          "strategy": "outline-bounded",
+          "repeat": 2,
+          "status": "completed",
+          "retrievalSuccess": true,
+          "routeCompliance": false,
+          "providerTokens": {
+            "inputTokens": 8,
+            "cachedInputTokens": 32401,
+            "cacheCreationInputTokens": 4832,
+            "totalInputTokens": 37241,
+            "outputTokens": 381,
+            "totalTokens": 37622
+          },
+          "numTurns": 4,
+          "toolCalls": [
+            "wiki_bootstrap",
+            "wiki_read",
+            "wiki_read"
+          ]
+        },
+        {
+          "key": "trial-06",
+          "task": "r02",
+          "strategy": "sections-bounded",
+          "repeat": 2,
+          "status": "completed",
+          "retrievalSuccess": true,
+          "routeCompliance": true,
+          "providerTokens": {
+            "inputTokens": 8,
+            "cachedInputTokens": 33313,
+            "cacheCreationInputTokens": 5893,
+            "totalInputTokens": 39214,
+            "outputTokens": 414,
+            "totalTokens": 39628
+          },
+          "numTurns": 4,
+          "toolCalls": [
+            "wiki_bootstrap",
+            "wiki_search_sections",
+            "wiki_read"
+          ]
+        },
+        {
+          "key": "trial-07",
+          "task": "r06",
+          "strategy": "sections-bounded",
+          "repeat": 2,
+          "status": "completed",
+          "retrievalSuccess": true,
+          "routeCompliance": true,
+          "providerTokens": {
+            "inputTokens": 8,
+            "cachedInputTokens": 32481,
+            "cacheCreationInputTokens": 5868,
+            "totalInputTokens": 38357,
+            "outputTokens": 359,
+            "totalTokens": 38716
+          },
+          "numTurns": 4,
+          "toolCalls": [
+            "wiki_bootstrap",
+            "wiki_search_sections",
+            "wiki_read"
+          ]
+        },
+        {
+          "key": "trial-08",
+          "task": "r06",
+          "strategy": "outline-bounded",
+          "repeat": 2,
+          "status": "completed",
+          "retrievalSuccess": true,
+          "routeCompliance": false,
+          "providerTokens": {
+            "inputTokens": 10,
+            "cachedInputTokens": 51011,
+            "cacheCreationInputTokens": 9987,
+            "totalInputTokens": 61008,
+            "outputTokens": 419,
+            "totalTokens": 61427
+          },
+          "numTurns": 5,
+          "toolCalls": [
+            "wiki_bootstrap",
+            "wiki_search",
+            "wiki_read",
+            "wiki_read"
+          ]
+        }
+      ]
+    }
+  }
+}

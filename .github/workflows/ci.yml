@@ -49,3 +49,8 @@ jobs:
 
       - name: Benchmark grader regression checks (no model calls)
         run: node --test benchmarks/mcp/grading.test.mjs benchmarks/mcp/candidate-grading.test.mjs
+
+      - name: Section evaluation syntax checks (no model calls)
+        run: |
+          node --check benchmarks/mcp/section-search-eval.mjs
+          node --check benchmarks/mcp/section-queries-v2.mjs
