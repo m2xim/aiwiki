@@ -90,7 +90,7 @@ func mcpToolList() []map[string]any {
 			"limit":    prop("integer", "Page size, default 20, maximum 100."),
 			"offset":   prop("integer", "Number of results to skip (use next_offset from the previous response)."),
 		})},
-		{"name": "wiki_search_sections", "description": "Search heading paths and each section's own text across the wiki, or within filters. Returns compact ranked section hits with revision-pinned bounded read_args; use those directly in wiki_read. All query terms first, partial matches only when no section matches all (mode any). Preamble has empty anchor. Global queries exclude archived spaces; explicit space_id can include its archived space. Pages reflect current data, not a snapshot.", "inputSchema": objectSchema(map[string]any{
+		{"name": "wiki_search_sections", "description": "Search sections using their own heading/text, weaker ancestor headings and article identity (title, summary, tags, property values). Common function words are ignored when other terms remain; rare terms and local evidence rank higher. mode all covers effective terms, otherwise partial fallback any. matched_in separates local fields from article context; context-only hits may have empty snippet and need verification. Use revision-pinned read_args directly in wiki_read. Global search excludes archived spaces unless explicitly scoped. Pages reflect current data, not a snapshot.", "inputSchema": objectSchema(map[string]any{
 			"q":        prop("string", "Required nonempty search words; Russian and English morphology."),
 			"space_id": prop("string", "Only this space; omit for global search."),
 			"kind":     prop("string", "Only this article kind."),

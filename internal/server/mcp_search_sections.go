@@ -24,12 +24,13 @@ type sectionSearchHit struct {
 }
 
 type sectionSearchCandidate struct {
-	article   Article
-	section   searchableSection
-	matched   int
-	matchedIn []string
-	sortScore float64
-	order     int
+	article    Article
+	section    searchableSection
+	matched    int
+	matchedIn  []string
+	sortScore  float64
+	localScore float64
+	order      int
 }
 
 type searchableSection struct {
@@ -120,58 +121,20 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 	}
 	defer rows.Close()
 
-	var all, partial []sectionSearchCandidate
+	m = effectiveMatcher(m)
+	ranker := newSectionRanker(m)
 	order := 0
 	for rows.Next() {
 		a, scanErr := scanArticle(rows)
 		if scanErr != nil {
 			return toolErr("database error")
 		}
-		for _, section := range splitSearchSections(a.Body) {
-			synthetic := Article{Title: section.path, Body: section.text}
-			sc, ok := m.rankArticle(synthetic)
-			if !ok {
-				order++
-				continue
-			}
-			matchedIn := make([]string, 0, len(sc.hit.MatchedIn))
-			for _, field := range sc.hit.MatchedIn {
-				if field == "title" {
-					matchedIn = append(matchedIn, "heading_path")
-				} else {
-					matchedIn = append(matchedIn, field)
-				}
-			}
-			candidate := sectionSearchCandidate{article: a, section: section, matched: sc.matched, matchedIn: matchedIn, sortScore: sc.hit.Score, order: order}
-			partial = append(partial, candidate)
-			if sc.matched == len(m.terms) {
-				all = append(all, candidate)
-			}
-			order++
-		}
+		ranker.addArticle(a, splitSearchSections(a.Body), &order)
 	}
 	if err := rows.Err(); err != nil {
 		return toolErr("database error")
 	}
-	mode, candidates := "all", all
-	if len(candidates) == 0 && len(m.terms) >= 2 {
-		mode, candidates = "any", partial
-	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].matched != candidates[j].matched {
-			return candidates[i].matched > candidates[j].matched
-		}
-		if candidates[i].sortScore != candidates[j].sortScore {
-			return candidates[i].sortScore > candidates[j].sortScore
-		}
-		if candidates[i].article.UpdatedAt != candidates[j].article.UpdatedAt {
-			return candidates[i].article.UpdatedAt > candidates[j].article.UpdatedAt
-		}
-		if candidates[i].article.ID != candidates[j].article.ID {
-			return candidates[i].article.ID < candidates[j].article.ID
-		}
-		return candidates[i].order < candidates[j].order
-	})
+	candidates, mode := ranker.results()
 	total := len(candidates)
 	results := make([]sectionSearchHit, 0, limit)
 	if offset < total {
@@ -185,7 +148,7 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 				ID: c.article.ID, Title: c.article.Title, SpaceID: c.article.SpaceID, Revision: c.article.Revision,
 				Anchor: c.section.anchor, Heading: c.section.heading, HeadingPath: c.section.path,
 				Snippet: sectionSnippet(c.section.text, pos, matched),
-				Score:   math.Round(c.sortScore*100) / 100, MatchedIn: c.matchedIn,
+				Score:   math.Round(c.sortScore*1000) / 1000, MatchedIn: c.matchedIn,
 				ReadArgs: sectionReadArgs(c.article, c.section, pos, matched),
 			})
 		}

@@ -71,12 +71,19 @@ continuation's snapshot. Unknown snapshots, invalid types/ranges and offsets pas
 the end are errors. Offset exactly at the end is an empty final slice.
 
 `wiki_search_sections {q,space_id?,kind?,pinned?,tag[]?,property[]?,limit?,offset?}`
-searches heading paths and each heading's own text, without descendant duplication.
+searches each heading's own text and heading, weaker ancestors, and article
+identity (title, summary, tags, property values), without inheriting sibling or
+descendant body text. Weighted lexical relevance uses query-time article IDF,
+saturated and length-normalized body matches; partial results are not ordered
+by raw matched-word count. Conservative function words/retrieval imperatives
+are omitted when other terms remain. `mode:all` covers effective terms.
 Default page 5, maximum 20. Returns `{total,offset,mode,results,next_offset?}`; hits
 include article ID/title/space/revision, anchor, heading path, score, snippet and
 executable bounded `read_args` near the match. Empty anchor denotes preamble or
-headless text. Metadata filters match article search; article metadata alone does
-not produce section hits. Pages reflect current data. Full specification and
+headless text. `matched_in` lists `heading`, `ancestor_heading`, `body` and
+article-context `title`, `tags`, `summary`, `properties` separately. Context-only
+hits are possible: an empty snippet does not prove section-level evidence.
+Metadata filters match article search. Pages reflect current data. Full specification and
 limitations: [MCP-SECTION-CONTRACT.md](MCP-SECTION-CONTRACT.md).
 
 ## Seed
