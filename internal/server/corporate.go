@@ -99,7 +99,11 @@ func (s *Server) corporateHandler() http.Handler {
 		if !ok {
 			return
 		}
-		scoped, cleanup, err := s.DB.scopedProjects(r.Context(), p.ID, p.MCPProjects)
+		mode := p.MCPMode
+		if p.MCPProjects != nil && mode == "" {
+			mode = "read"
+		}
+		scoped, cleanup, err := s.DB.scopedMCP(r.Context(), p.ID, p.MCPProjects, mode)
 		if err != nil {
 			apiErr(w, 503, "database unavailable")
 			return
@@ -116,6 +120,9 @@ func (s *Server) corporateHandler() http.Handler {
 
 func (s *Server) changeAuthor(proposed string) string {
 	if s.principal != nil {
+		if s.principal.MCPActorID != "" {
+			return s.principal.MCPActorID
+		}
 		return s.principal.ID
 	}
 	return proposed

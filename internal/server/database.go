@@ -181,6 +181,17 @@ func (d *database) scoped(ctx context.Context, userID string) (*database, func()
 // to one connection. A nil project list means unrestricted; a non-nil empty
 // list denies access to every project.
 func (d *database) scopedProjects(ctx context.Context, userID string, projects []string) (*database, func(), error) {
+	mode := ""
+	if projects != nil {
+		mode = "read"
+	}
+	return d.scopedMCP(ctx, userID, projects, mode)
+}
+
+func (d *database) scopedMCP(ctx context.Context, userID string, projects []string, mode string) (*database, func(), error) {
+	if projects == nil && mode != "" || projects != nil && mode != "read" && mode != "write" {
+		return nil, nil, errors.New("invalid MCP scope mode")
+	}
 	if !d.pg {
 		if projects != nil {
 			return nil, nil, errors.New("MCP project scopes require PostgreSQL")
@@ -205,9 +216,9 @@ func (d *database) scopedProjects(ctx context.Context, userID string, projects [
 	if err != nil {
 		return nil, nil, err
 	}
-	var gotUser, gotProjects string
-	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_projects', $2, false)`, userID, projectScope).Scan(&gotUser, &gotProjects)
-	if err == nil && (gotUser != userID || gotProjects != projectScope) {
+	var gotUser, gotProjects, gotMode string
+	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_projects', $2, false), set_config('app.mcp_mode', $3, false)`, userID, projectScope, mode).Scan(&gotUser, &gotProjects, &gotMode)
+	if err == nil && (gotUser != userID || gotProjects != projectScope || gotMode != mode) {
 		err = errors.New("session scope was not applied")
 	}
 	if err != nil {
@@ -227,9 +238,9 @@ func (d *database) scopedProjects(ctx context.Context, userID string, projects [
 				discardConn(conn)
 				return
 			}
-			var clearedUser, clearedProjects string
-			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_projects', '', false)`).Scan(&clearedUser, &clearedProjects)
-			if err != nil || clearedUser != "" || clearedProjects != "" {
+			var clearedUser, clearedProjects, clearedMode string
+			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_projects', '', false), set_config('app.mcp_mode', '', false)`).Scan(&clearedUser, &clearedProjects, &clearedMode)
+			if err != nil || clearedUser != "" || clearedProjects != "" || clearedMode != "" {
 				discardConn(conn)
 				return
 			}
@@ -242,7 +253,7 @@ func (d *database) scopedProjects(ctx context.Context, userID string, projects [
 		resumeProjects = []string{}
 	}
 	view.resume = func(ctx context.Context) (*database, func(), error) {
-		return d.scopedProjects(ctx, userID, resumeProjects)
+		return d.scopedMCP(ctx, userID, resumeProjects, mode)
 	}
 	return view, cleanup, nil
 }

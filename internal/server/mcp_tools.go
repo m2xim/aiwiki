@@ -133,7 +133,10 @@ func mcpToolList() []map[string]any {
 func (s *Server) callTool(params map[string]json.RawMessage) any {
 	var name string
 	_ = json.Unmarshal(params["name"], &name)
-	if s.principal != nil && s.principal.MCPProjects != nil && !mcpReadTool(name) {
+	if !mcpScopedTool(s.principal, name) {
+		if strings.HasPrefix(s.principal.MCPDelegationID, "pat_") {
+			return toolErr("MCP credential is read-only or does not permit this tool")
+		}
 		return toolErr("temporary MCP access is read-only")
 	}
 	var args map[string]json.RawMessage

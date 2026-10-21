@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Archive, ArrowLeft, Plus, RefreshCw, Shield } from 'lucide-react';
 import { AccessGrant, CatalogSpace, client, Project, Team, TeamMember } from './api';
 import MCPDelegations from './MCPDelegations';
+import MCPPersistentAccess from './MCPPersistentAccess';
 import './AdminPanel.css';
 
 type UserRow = { id: string; name: string; disabled: boolean; admin: boolean };
@@ -114,7 +115,7 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
       <nav>{([['catalog', 'Пространства'], ['teams', 'Команды'], ['projects', 'Проекты'], ['users', 'Пользователи'], ['tokens', 'MCP-доступ']] as [Tab, string][]).filter(([key])=>isAdmin||key==='catalog'||key==='projects'||key==='tokens').map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}{tab !== 'tokens' && <button className="corp-admin-refresh" onClick={() => void refresh()} disabled={busy} aria-label="Обновить"><RefreshCw size={15}/></button>}</nav>
       {error && <div className="corp-admin-error" role="alert">{error}</div>}
       <main aria-busy={busy}>
-        {tab === 'tokens' && <MCPDelegations/>}
+        {tab === 'tokens' && <><MCPPersistentAccess/><MCPDelegations/></>}
         {tab === 'catalog' && <>
           <div className="corp-admin-create"><input value={name} onChange={e => setName(e.target.value)} placeholder="Название пространства"/><input value={description} onChange={e => setDescription(e.target.value)} placeholder="Описание (необязательно)"/><select value={personal ? 'personal' : 'team'} onChange={e => setPersonal(e.target.value === 'personal')}><option value="personal">Личное</option>{isAdmin && <option value="team">Командное</option>}</select><button onClick={() => void create()} disabled={busy || !name.trim()}><Plus size={15}/>Создать</button></div>
           <div className="corp-admin-catalog-tools"><input value={catalogFilter} onChange={e => setCatalogFilter(e.target.value)} placeholder="Поиск по пространствам, проектам и тегам" aria-label="Фильтр каталога"/><select value={catalogSort} onChange={e => setCatalogSort(e.target.value as typeof catalogSort)} aria-label="Сортировка каталога"><option value="recent">Сначала недавно изменённые</option><option value="name">По названию</option><option value="count">По числу документов</option></select></div>
