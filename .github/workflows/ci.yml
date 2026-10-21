@@ -43,3 +43,9 @@ jobs:
 
       - name: History diff checks
         run: node scripts/qa-diff.mjs
+
+      - name: Install benchmark development dependencies
+        run: npm ci --prefix benchmarks/mcp
+
+      - name: Benchmark grader regression checks (no model calls)
+        run: node --test benchmarks/mcp/grading.test.mjs

@@ -1,0 +1,8 @@
+{
+  "name": "aiwiki-mcp-benchmark",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "bench": "node run.mjs" },
+  "devDependencies": { "js-tiktoken": "1.0.21" }
+}

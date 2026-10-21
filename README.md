@@ -63,6 +63,9 @@ MCP Streamable HTTP: `http://127.0.0.1:8090/mcp`. Для клиентов без
 
 ## Проверки
 
+Сценарные замеры MCP, поиска и чтения разделов: [benchmarks/mcp](benchmarks/mcp/README.md).
+Это отдельный стенд на синтетических данных; он не обращается к рабочей wiki.
+
 ```powershell
 go test ./...
 cd web

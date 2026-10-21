@@ -34,6 +34,7 @@ function formatLicense(value) {
 const lockFiles = [
   { file: path.join(root, 'package-lock.json'), base: root },
   { file: path.join(root, 'web', 'package-lock.json'), base: path.join(root, 'web') },
+  { file: path.join(root, 'benchmarks', 'mcp', 'package-lock.json'), base: path.join(root, 'benchmarks', 'mcp') },
 ].map((entry) => ({ ...entry, data: readJson(entry.file) })).filter((entry) => entry.data?.packages);
 const installedByPath = new Map();
 const absentOptional = [];
@@ -51,8 +52,13 @@ for (const lock of lockFiles) {
     const pkg = readJson(pkgFile) || {};
     const name = pkg.name || item.name || inferredName;
     const version = pkg.version || item.version || 'unknown';
+    const files = licenseText(dir);
+    if (!files.length && name === 'js-tiktoken' && version === '1.0.21') {
+      const upstream = path.join(root, 'benchmarks', 'mcp', 'notices', 'js-tiktoken-1.0.21.LICENSE');
+      if (fs.existsSync(upstream)) files.push({name: 'Upstream LICENSE (npm gitHead; omitted from package archive)', text: fs.readFileSync(upstream, 'utf8').trimEnd()});
+    }
     installedByPath.set(`${name}\0${version}\0${dir}`, {
-      name, version, license: formatLicense(pkg.license ?? item.license), files: licenseText(dir),
+      name, version, license: formatLicense(pkg.license ?? item.license), files,
     });
   }
 }

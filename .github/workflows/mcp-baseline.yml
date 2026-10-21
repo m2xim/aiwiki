@@ -1,0 +1,45 @@
+name: MCP baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: Measured repetitions (5 to 1000; use 20 for the baseline)
+        required: true
+        default: '20'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: benchmarks/mcp/package-lock.json
+      - name: Prepare dependencies outside measurement
+        run: |
+          go mod download
+          npm ci --prefix benchmarks/mcp
+      - name: Measure synthetic local MCP
+        env:
+          BENCH_REPETITIONS: ${{ inputs.repetitions }}
+        run: node benchmarks/mcp/run.mjs --repetitions "$BENCH_REPETITIONS"
+      - name: Retain summary and synthetic traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-baseline
+          path: |
+            .cache/mcp-bench-*/summary.json
+            .cache/mcp-bench-*/traces.jsonl
+          retention-days: 14

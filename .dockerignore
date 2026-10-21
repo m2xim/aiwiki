@@ -4,6 +4,7 @@
 data
 backups
 web/node_modules
+benchmarks
 web/dist
 qa-artifacts
 *.exe
