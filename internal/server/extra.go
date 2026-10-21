@@ -1,15 +1,18 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
 	"mime"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 func (s *Server) restore(w http.ResponseWriter, r *http.Request, aid string) {
@@ -58,10 +61,14 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request, aid string) {
 	a.Revision = cur.Revision + 1
 	a.CreatedAt = cur.CreatedAt
 	a.UpdatedAt = stamp()
-	a.Author = v.Author
+	a.Author = s.changeAuthor(v.Author)
 	// A content restore never changes lifecycle state. In particular, a historic
 	// deleted snapshot cannot be used to bypass the explicit undelete endpoint.
 	a.DeletedAt = cur.DeletedAt
+	if s.principal != nil && (cur.SpaceID != a.SpaceID || cur.ParentID != a.ParentID || cur.ProjectID != a.ProjectID) {
+		apiErr(w, 400, "corporate restore cannot change article container or parent")
+		return
+	}
 	if e = requiredArticle(a); e != nil {
 		apiErr(w, 500, "invalid revision")
 		return
@@ -75,7 +82,7 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request, aid string) {
 		return
 	}
 
-	_, e = tx.Exec("UPDATE articles SET space_id=?,parent_id=?,title=?,summary=?,body=?,kind=?,status=?,pinned=?,tags=?,properties=?,revision=?,updated_at=?,author=? WHERE id=? AND revision=?", a.SpaceID, a.ParentID, a.Title, a.Summary, a.Body, a.Kind, a.Status, boolInt(a.Pinned), encode(a.Tags), encode(a.Properties), a.Revision, a.UpdatedAt, a.Author, aid, v.BaseRevision)
+	_, e = tx.Exec("UPDATE articles SET space_id=?,parent_id=?,project_id=?,title=?,summary=?,body=?,kind=?,status=?,pinned=?,tags=?,properties=?,revision=?,updated_at=?,author=? WHERE id=? AND revision=?", a.SpaceID, a.ParentID, a.ProjectID, a.Title, a.Summary, a.Body, a.Kind, a.Status, boolInt(a.Pinned), encode(a.Tags), encode(a.Properties), a.Revision, a.UpdatedAt, a.Author, aid, v.BaseRevision)
 	if e != nil {
 		apiErr(w, 500, "database error")
 		return
@@ -135,7 +142,7 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request, aid string) 
 	if v.Author == "" {
 		v.Author = "human"
 	}
-	c := Comment{ID: newID(), ArticleID: aid, Anchor: v.Anchor, Body: v.Body, Author: v.Author, CreatedAt: stamp()}
+	c := Comment{ID: newID(), ArticleID: aid, Anchor: v.Anchor, Body: v.Body, Author: s.changeAuthor(v.Author), CreatedAt: stamp()}
 	_, e := s.DB.Exec("INSERT INTO comments(id,article_id,anchor,body,author,created_at,resolved) VALUES(?,?,?,?,?,?,0)", c.ID, c.ArticleID, c.Anchor, c.Body, c.Author, c.CreatedAt)
 	if e != nil {
 		apiErr(w, 404, "article not found")
@@ -179,6 +186,15 @@ func (s *Server) commentRoute(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "database error")
 		return
 	}
+	if s.principal != nil {
+		var role int
+		var writable bool
+		e = tx.QueryRow("SELECT corporate_role_rank(corporate_effective_role(?,space_id,project_id)),corporate_container_writable(space_id,project_id) FROM articles WHERE id=?", s.principal.ID, c.ArticleID).Scan(&role, &writable)
+		if e != nil || !writable || role < 2 || (role < 3 && c.Author != s.principal.ID) {
+			apiErr(w, 403, "comment modification is not permitted")
+			return
+		}
+	}
 	c.Resolved = rv != 0
 	sets := []string{}
 	args := []any{}
@@ -198,8 +214,13 @@ func (s *Server) commentRoute(w http.ResponseWriter, r *http.Request) {
 		c.Resolved = *v.Resolved
 	}
 	args = append(args, cid)
-	if _, e = tx.Exec("UPDATE comments SET "+strings.Join(sets, ",")+" WHERE id=?", args...); e != nil {
+	result, e := tx.Exec("UPDATE comments SET "+strings.Join(sets, ",")+" WHERE id=?", args...)
+	if e != nil {
 		apiErr(w, 500, "database error")
+		return
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		apiErr(w, 403, "comment modification is not permitted")
 		return
 	}
 	if e = tx.Commit(); e != nil {
@@ -239,51 +260,89 @@ func (s *Server) deleteAttachment(w http.ResponseWriter, aid, fid string) {
 		apiErr(w, 404, "attachment not found")
 		return
 	}
-	if _, err := s.DB.Exec("UPDATE attachments SET deleted_at=COALESCE(deleted_at, ?) WHERE id=? AND article_id=?", stamp(), fid, aid); err != nil {
+	result, err := s.DB.Exec("UPDATE attachments SET deleted_at=COALESCE(deleted_at, ?) WHERE id=? AND article_id=?", stamp(), fid, aid)
+	if err != nil {
 		apiErr(w, 500, "database error")
+		return
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		apiErr(w, 403, "attachment modification is not permitted")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) addAttachment(w http.ResponseWriter, r *http.Request, aid string) {
-	if _, e := s.articleByID(s.DB, aid); e != nil {
+	art, e := s.articleByID(s.DB, aid)
+	if e != nil {
 		apiErr(w, 404, "article not found")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 25<<20)
+	if s.DB.pg && art.DeletedAt != "" {
+		apiErr(w, 403, "cannot upload to a deleted article")
+		return
+	}
+	// Corporate writes need editor rights on a writable container before any byte is stored.
+	if s.principal != nil {
+		role, e := s.effectiveRole(art.SpaceID, art.ProjectID)
+		if e != nil || role < 3 {
+			apiErr(w, 403, "editor access required")
+			return
+		}
+		var writable bool
+		if e = s.DB.QueryRow("SELECT corporate_container_writable(?,?)", art.SpaceID, art.ProjectID).Scan(&writable); e != nil || !writable {
+			apiErr(w, 403, "container is not writable")
+			return
+		}
+	}
+	store, e := s.objectStorage()
+	if e != nil {
+		apiErr(w, 503, "object storage unavailable")
+		return
+	}
+	s.DB.releaseForTransfer()
+	r.Body = http.MaxBytesReader(w, r.Body, (25<<20)+(64<<10))
 	if e := r.ParseMultipartForm(25 << 20); e != nil {
 		apiErr(w, 400, "upload max 25 MB")
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 	f, h, e := r.FormFile("file")
 	if e != nil {
 		apiErr(w, 400, "file field required")
 		return
 	}
 	defer f.Close()
-	stored := newID() + filepath.Ext(filepath.Base(h.Filename))
-	path := filepath.Join(s.DataDir, "files", stored)
-	out, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if e != nil {
-		apiErr(w, 500, "could not store file")
-		return
-	}
-	size, e := io.Copy(out, io.LimitReader(f, (25<<20)+1))
-	ce := out.Close()
-	if e != nil || ce != nil || size > 25<<20 {
-		_ = os.Remove(path)
+	size, e := f.Seek(0, io.SeekEnd)
+	if e != nil || size > 25<<20 {
 		apiErr(w, 413, "file exceeds 25 MB")
 		return
 	}
-	fid := strings.TrimSuffix(stored, filepath.Ext(stored))
-	buf := make([]byte, 512)
-	_, _ = f.Seek(0, io.SeekStart)
-	n, _ := f.Read(buf)
-	typ := http.DetectContentType(buf[:n])
-	a := Attachment{ID: fid, ArticleID: aid, Name: filepath.Base(h.Filename), MIME: typ, Size: size, URL: "/files/" + fid, CreatedAt: stamp()}
-	_, e = s.DB.Exec("INSERT INTO attachments(id,article_id,name,mime,size,stored_name,created_at) VALUES(?,?,?,?,?,?,?)", a.ID, aid, a.Name, a.MIME, a.Size, stored, a.CreatedAt)
+	typ, e := sniffMIME(f)
 	if e != nil {
-		_ = os.Remove(path)
+		apiErr(w, 400, "could not read file")
+		return
+	}
+	fid := newID()
+	stored := fid
+	if e = store.Put(r.Context(), stored, f, size, typ); e != nil {
+		log.Printf("attachment upload failed")
+		apiErr(w, 500, "could not store file")
+		return
+	}
+	a := Attachment{ID: fid, ArticleID: aid, Name: filepath.Base(h.Filename), MIME: typ, Size: size, URL: "/files/" + fid, CreatedAt: stamp()}
+	metadata, done, resumeErr := s.DB.resumeAfterTransfer(r.Context())
+	if resumeErr != nil {
+		e = resumeErr
+	} else {
+		defer done()
+		_, e = metadata.Exec("INSERT INTO attachments(id,article_id,name,mime,size,stored_name,created_at) VALUES(?,?,?,?,?,?,?)", a.ID, aid, a.Name, a.MIME, a.Size, stored, a.CreatedAt)
+	}
+	if e != nil {
+		cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if store.Delete(cctx, stored) != nil {
+			log.Printf("attachment cleanup failed")
+		}
 		apiErr(w, 500, "database error")
 		return
 	}
@@ -300,16 +359,29 @@ func (s *Server) fileRoute(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 404, "file not found")
 		return
 	}
-	f, e := os.Open(filepath.Join(s.DataDir, "files", filepath.Base(stored)))
+	store, e := s.objectStorage()
 	if e != nil {
+		apiErr(w, 503, "object storage unavailable")
+		return
+	}
+	s.DB.releaseForTransfer()
+	f, e := store.Get(r.Context(), stored)
+	if errors.Is(e, errObjectNotFound) {
 		apiErr(w, 404, "file not found")
+		return
+	}
+	if e != nil {
+		apiErr(w, 502, "could not read file")
 		return
 	}
 	defer f.Close()
 	safe := typ == "image/png" || typ == "image/jpeg" || typ == "image/gif" || typ == "image/webp"
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if s.principal != nil {
+		w.Header().Set("Cache-Control", "private, no-store")
+	}
 	if !safe {
 		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
-		w.Header().Set("X-Content-Type-Options", "nosniff")
 	} else {
 		w.Header().Set("Content-Disposition", "inline")
 	}

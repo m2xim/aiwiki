@@ -54,3 +54,35 @@ jobs:
         run: |
           node --check benchmarks/mcp/section-search-eval.mjs
           node --check benchmarks/mcp/section-queries-v2.mjs
+
+  corporate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15-alpine
+        env:
+          POSTGRES_PASSWORD: isolated-ci-only
+          POSTGRES_DB: aiwiki_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AIWIKI_TEST_POSTGRES_OWNER: postgres://aiwiki_owner:owner-ci-only@127.0.0.1:5432/aiwiki_ci?sslmode=disable
+      AIWIKI_TEST_POSTGRES: postgres://aiwiki_app:app-ci-only@127.0.0.1:5432/aiwiki_ci?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Create separate migration and runtime roles
+        run: >-
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d aiwiki_ci -v ON_ERROR_STOP=1 -c
+          "CREATE ROLE aiwiki_owner LOGIN PASSWORD 'owner-ci-only' NOSUPERUSER NOBYPASSRLS;
+          CREATE ROLE aiwiki_app LOGIN PASSWORD 'app-ci-only' NOSUPERUSER NOBYPASSRLS;
+          ALTER DATABASE aiwiki_ci OWNER TO aiwiki_owner;
+          GRANT ALL ON SCHEMA public TO aiwiki_owner;"
+      - name: Corporate PostgreSQL, signed OIDC and object storage checks
+        run: go test ./internal/server -run 'TestCorporate|TestAuth|TestStorage|TestS3' -count=1 -v

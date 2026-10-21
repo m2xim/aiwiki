@@ -1,10 +1,8 @@
 package server
 
-import "database/sql"
-
 // moveDescendants moves the current subtree, including deleted articles, in the
 // root's transaction. UNION visits each ID once even if stored data has a cycle.
-func moveDescendants(tx *sql.Tx, root Article) error {
+func moveDescendants(tx *transaction, root Article) error {
 	rows, err := tx.Query(`WITH RECURSIVE subtree(id) AS (
 		SELECT id FROM articles WHERE id=?
 		UNION

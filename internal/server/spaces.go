@@ -9,6 +9,10 @@ import (
 
 func (s *Server) spaces(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
+		if s.principal != nil {
+			s.corporateSpaceCreate(w, r)
+			return
+		}
 		var in struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
@@ -27,6 +31,15 @@ func (s *Server) spaces(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodGet {
 		apiErr(w, 405, "method not allowed")
+		return
+	}
+	if s.DB.pg {
+		spaces, err := s.corporateVisibleSpaces(r.URL.Query().Get("include_archived") == "true")
+		if err != nil {
+			apiErr(w, 500, "database error")
+			return
+		}
+		writeJSON(w, 200, spaces)
 		return
 	}
 	query := "SELECT id,name,description,archived_at FROM spaces"
@@ -97,6 +110,14 @@ func (s *Server) space(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "database error")
 		return
 	}
+	if s.principal != nil {
+		var role int
+		if err = tx.QueryRow("SELECT corporate_role_rank(corporate_effective_role(?,?,''))", s.principal.ID, x.ID).Scan(&role); err != nil || role < 4 {
+			apiErr(w, 403, "space management is not permitted")
+			return
+		}
+	}
+	original := x
 	if in.Name != nil {
 		x.Name = strings.TrimSpace(*in.Name)
 	}
@@ -111,9 +132,20 @@ func (s *Server) space(w http.ResponseWriter, r *http.Request) {
 			x.ArchivedAt = ""
 		}
 	}
-	if _, err := tx.Exec("UPDATE spaces SET name=?,description=?,archived_at=? WHERE id=?", x.Name, x.Description, nullString(x.ArchivedAt), x.ID); err != nil {
+	result, err := tx.Exec("UPDATE spaces SET name=?,description=?,archived_at=? WHERE id=?", x.Name, x.Description, nullString(x.ArchivedAt), x.ID)
+	if err != nil {
 		apiErr(w, 500, "database error")
 		return
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		apiErr(w, 403, "space management is not permitted")
+		return
+	}
+	if s.principal != nil {
+		if err = corporateAudit(tx, s.principal.ID, "space.update", "space", x.ID, map[string]any{"renamed": original.Name != x.Name, "description_changed": original.Description != x.Description, "archived": x.ArchivedAt != ""}); err != nil {
+			apiErr(w, 500, "database error")
+			return
+		}
 	}
 	if tx.Commit() != nil {
 		apiErr(w, 500, "database error")

@@ -53,7 +53,7 @@ func (s *Server) spaceAudit(w http.ResponseWriter, r *http.Request) {
 		       p.snapshot
 		FROM revisions r
 		LEFT JOIN revisions p ON p.article_id=r.article_id AND p.revision=r.revision-1
-		WHERE (json_extract(r.snapshot,'$.space_id')=? OR json_extract(p.snapshot,'$.space_id')=?)
+		WHERE (`+s.DB.jsonFieldSQL("r.snapshot", "space_id")+`=? OR `+s.DB.jsonFieldSQL("p.snapshot", "space_id")+`=?)
 		  AND (?=0 OR r.author=?)
 		ORDER BY r.id DESC LIMIT ? OFFSET ?`, spaceID, spaceID, boolInt(hasAuthor), author, limit, offset)
 	if err != nil {

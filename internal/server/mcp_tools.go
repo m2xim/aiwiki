@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"math"
@@ -37,6 +36,7 @@ type compactArticle struct {
 	ID        string   `json:"id"`
 	Title     string   `json:"title"`
 	SpaceID   string   `json:"space_id"`
+	ProjectID string   `json:"project_id,omitempty"`
 	Kind      string   `json:"kind,omitempty"`
 	Status    string   `json:"status,omitempty"`
 	Summary   string   `json:"summary,omitempty"`
@@ -45,7 +45,7 @@ type compactArticle struct {
 }
 
 func compact(a Article) compactArticle {
-	return compactArticle{a.ID, a.Title, a.SpaceID, a.Kind, a.Status, a.Summary, a.Tags, a.UpdatedAt}
+	return compactArticle{ID: a.ID, Title: a.Title, SpaceID: a.SpaceID, ProjectID: a.ProjectID, Kind: a.Kind, Status: a.Status, Summary: a.Summary, Tags: a.Tags, UpdatedAt: a.UpdatedAt}
 }
 func compactAll(in []Article) []compactArticle {
 	out := make([]compactArticle, 0, len(in))
@@ -64,6 +64,7 @@ func mcpToolList() []map[string]any {
 	idDesc := "Article id (letters, digits, underscore, hyphen)."
 	article := objectSchema(map[string]any{
 		"space_id":      prop("string", "Space the article belongs to (e.g. general). Required for create."),
+		"project_id":    prop("string", "Project within the space; empty for a direct space document."),
 		"parent_id":     prop("string", "Id of the parent article (tree structure), empty for top level."),
 		"title":         prop("string", "Article title, at most 300 characters. Required for create."),
 		"summary":       prop("string", "Short plain-text description (1-2 sentences) of what the article contains; it is shown in search results and indexed for search, so make it informative."),
@@ -81,24 +82,26 @@ func mcpToolList() []map[string]any {
 	return []map[string]any{
 		{"name": "wiki_bootstrap", "description": "Start of every session. Without space_id: returns full pinned instructions of the general space, compact other_pinned (pinned articles of other spaces without bodies), spaces and recent changes. Call it again with the space_id of your project to get that space's pinned rules in full.", "inputSchema": objectSchema(map[string]any{"space_id": prop("string", "Project space id; when given, pinned articles of general and this space are returned in full.")})},
 		{"name": "wiki_search", "description": "Ranked full-text search over title, summary, tags, properties and body with Russian and English morphology (word forms match). All words must match (AND); if no article matches all words, the best partial matches are returned and mode is \"any\". Results are compact (no body) with score, snippet and matched_in; most relevant first. Filters narrow the result. Paging: if next_offset is present, call again with offset=next_offset.", "inputSchema": objectSchema(map[string]any{
-			"q":        prop("string", "Search words, whitespace separated. Omit to list by recent update."),
-			"space_id": prop("string", "Only articles of this space."),
-			"tag":      strArrProp("Only articles having all of these tags (exact match)."),
-			"property": strArrProp("Only articles having all of these properties, each as key:value (exact match)."),
-			"kind":     prop("string", "Only this kind: article, instruction, research, plan or source."),
-			"pinned":   prop("boolean", "true: only pinned articles."),
-			"limit":    prop("integer", "Page size, default 20, maximum 100."),
-			"offset":   prop("integer", "Number of results to skip (use next_offset from the previous response)."),
+			"q":          prop("string", "Search words, whitespace separated. Omit to list by recent update."),
+			"space_id":   prop("string", "Only articles of this space."),
+			"project_id": prop("string", "Only articles directly in this project."),
+			"tag":        strArrProp("Only articles having all of these tags (exact match)."),
+			"property":   strArrProp("Only articles having all of these properties, each as key:value (exact match)."),
+			"kind":       prop("string", "Only this kind: article, instruction, research, plan or source."),
+			"pinned":     prop("boolean", "true: only pinned articles."),
+			"limit":      prop("integer", "Page size, default 20, maximum 100."),
+			"offset":     prop("integer", "Number of results to skip (use next_offset from the previous response)."),
 		})},
 		{"name": "wiki_search_sections", "description": "Search sections using their own heading/text, weaker ancestor headings and article identity (title, summary, tags, property values). Common function words are ignored when other terms remain; rare terms and local evidence rank higher. mode all covers effective terms, otherwise partial fallback any. matched_in separates local fields from article context; context-only hits may have empty snippet and need verification. Use revision-pinned read_args directly in wiki_read. Global search excludes archived spaces unless explicitly scoped. Pages reflect current data, not a snapshot.", "inputSchema": objectSchema(map[string]any{
-			"q":        prop("string", "Required nonempty search words; Russian and English morphology."),
-			"space_id": prop("string", "Only this space; omit for global search."),
-			"kind":     prop("string", "Only this article kind."),
-			"pinned":   prop("boolean", "true: only pinned articles."),
-			"tag":      strArrProp("Require all exact tags."),
-			"property": strArrProp("Require all exact key:value properties."),
-			"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Page size, default 5, maximum 20."},
-			"offset":   map[string]any{"type": "integer", "minimum": 0, "description": "Skip this many results; use next_offset when present."},
+			"q":          prop("string", "Required nonempty search words; Russian and English morphology."),
+			"space_id":   prop("string", "Only this space; omit for global search."),
+			"project_id": prop("string", "Only this project; omit for all accessible projects."),
+			"kind":       prop("string", "Only this article kind."),
+			"pinned":     prop("boolean", "true: only pinned articles."),
+			"tag":        strArrProp("Require all exact tags."),
+			"property":   strArrProp("Require all exact key:value properties."),
+			"limit":      map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Page size, default 5, maximum 20."},
+			"offset":     map[string]any{"type": "integer", "minimum": 0, "description": "Skip this many results; use next_offset when present."},
 		}, "q")},
 		{"name": "wiki_read", "description": "Read an article or anchor section (heading to next peer). For bounded text use max_chars=4000; returns text, offset, total_chars, has_more and next_read. Follow next_read verbatim to preserve revision after edits. Without max_chars/offset legacy full body or section is returned. outline=true returns headings without body and cannot combine with bounded mode. revision selects a saved snapshot. Use wiki_comments for discussion.", "inputSchema": objectSchema(map[string]any{
 			"id":        prop("string", idDesc),
@@ -295,7 +298,7 @@ type searchItem struct {
 
 func (s *Server) toolSearch(args map[string]json.RawMessage) any {
 	ar := newArgs(args)
-	p := SearchParams{Q: ar.str("q"), SpaceID: ar.str("space_id"), Kind: ar.str("kind"), Pinned: ar.boolean("pinned"), Limit: 20, AllowAny: true}
+	p := SearchParams{ProjectID: ar.str("project_id"), Q: ar.str("q"), SpaceID: ar.str("space_id"), Kind: ar.str("kind"), Pinned: ar.boolean("pinned"), Limit: 20, AllowAny: true}
 	limit, offset := ar.integer("limit"), ar.integer("offset")
 	p.Tags = ar.strings("tag")
 	p.Properties = ar.strings("property")
@@ -311,7 +314,7 @@ func (s *Server) toolSearch(args map[string]json.RawMessage) any {
 	if offset > 0 {
 		p.Offset = offset
 	}
-	res, _, err := s.searchArticles(context.Background(), p)
+	res, _, err := s.searchArticles(s.DB.context(), p)
 	if err != nil {
 		return toolErr(err.Error())
 	}
@@ -581,6 +584,9 @@ func (s *Server) toolBootstrap(args map[string]json.RawMessage) any {
 	}
 	rows.Close()
 	live := "deleted_at IS NULL AND status<>'archived' AND space_id IN (SELECT id FROM spaces WHERE archived_at IS NULL)"
+	if s.DB.pg {
+		live = "deleted_at IS NULL AND status<>'archived' AND corporate_container_writable(space_id,project_id)"
+	}
 	out := map[string]any{"spaces": spaces}
 	var instructions []Article
 	recentWhere, recentArgs := live, []any{}

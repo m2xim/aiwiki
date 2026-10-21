@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"math"
 	"sort"
@@ -85,10 +84,21 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 	where := []string{"a.deleted_at IS NULL"}
 	queryArgs := []any{}
 	if spaceID == "" {
-		where = append(where, "a.space_id IN (SELECT id FROM spaces WHERE archived_at IS NULL)")
+		if s.DB.pg {
+			where = append(where, "corporate_container_writable(a.space_id,a.project_id)")
+		} else {
+			where = append(where, "a.space_id IN (SELECT id FROM spaces WHERE archived_at IS NULL)")
+		}
 	} else {
 		where = append(where, "a.space_id=?")
 		queryArgs = append(queryArgs, spaceID)
+	}
+	if projectID := ar.str("project_id"); projectID != "" {
+		where = append(where, "a.project_id=?")
+		queryArgs = append(queryArgs, projectID)
+	}
+	if bad := ar.fail(); bad != nil {
+		return bad
 	}
 	if kind != "" {
 		where = append(where, "a.kind=?")
@@ -99,7 +109,7 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 	}
 	for _, tag := range tags {
 		if tag != "" {
-			where = append(where, "EXISTS(SELECT 1 FROM json_each(a.tags) WHERE value=?)")
+			where = append(where, s.DB.jsonArrayHasSQL("a.tags"))
 			queryArgs = append(queryArgs, tag)
 		}
 	}
@@ -111,11 +121,11 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 		if len(kv) != 2 {
 			return toolErr("property must be key:value")
 		}
-		where = append(where, "EXISTS(SELECT 1 FROM json_each(a.properties) p WHERE p.key=? AND p.value=?)")
+		where = append(where, s.DB.jsonObjectHasSQL("a.properties"))
 		queryArgs = append(queryArgs, kv[0], kv[1])
 	}
 	query := "SELECT " + articleColumns + " FROM articles a WHERE " + strings.Join(where, " AND ") + " ORDER BY a.updated_at DESC,a.id"
-	rows, err := s.DB.QueryContext(context.Background(), query, queryArgs...)
+	rows, err := s.DB.QueryContext(s.DB.context(), query, queryArgs...)
 	if err != nil {
 		return toolErr("invalid search or filter")
 	}

@@ -1,6 +1,13 @@
-export type Space = { id: string; name: string; description: string; archived_at?: string };
+export type Space = { limited?: boolean; id: string; name: string; description: string; archived_at?: string; personal?: boolean; article_count?: number; project_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
+export type Project = { id: string; name: string; description: string; space_id: string; parent_id: string; archived_at?: string; inherit_acl: boolean; article_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
+export type Team = { id: string; name: string; description: string; archived_at?: string };
+export type TeamMember = { id: string; name: string };
+export type AccessGrant = { subject_type: 'user' | 'team'; subject_id: string; role: 'owner' | 'manager' | 'editor' | 'commenter' | 'reader' };
+export type CatalogSpace = Space & { projects: Project[]; article_count: number };
+export type AuthUser = { id: string; name: string; admin: boolean };
+export type AuthSession = { mode: 'trusted' } | { mode: 'corporate'; user: AuthUser; csrf_token: string };
 export type Article = {
-  id: string; space_id: string; parent_id: string; title: string; summary: string; body: string;
+  id: string; space_id: string; project_id?: string; parent_id: string; title: string; summary: string; body: string;
   kind: string; status: string; pinned: boolean; tags: string[]; properties: Record<string, string>;
   revision: number; created_at: string; updated_at: string; author: string;
   deleted_at?: string;
@@ -14,24 +21,53 @@ export type SearchMatch = 'title' | 'tags' | 'summary' | 'properties' | 'body';
 export type SearchHit = { id: string; title: string; space_id: string; parent_id: string; kind: string; status: string; summary: string; tags: string[]; updated_at: string; pinned?: boolean; score?: number; snippet?: string; matched_in?: string[] };
 export type SearchResponse = { total: number; offset: number; mode?: 'all' | 'any'; next_offset?: number; results: SearchHit[] };
 export type Bootstrap = { instructions: Article[]; spaces: Space[]; recent: Article[]; guide: string };
+let corporateSession = false;
+export const setCorporateSession = (value: boolean) => { corporateSession = value; };
 
+let csrfToken = '';
+export const setCsrfToken = (token: string) => { csrfToken = token; };
+let authExpiredHandler: (() => void) | null = null;
+export const setAuthExpiredHandler = (handler: (() => void) | null) => { authExpiredHandler = handler; };
 const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(url, init);
+  const method = (init?.method || 'GET').toUpperCase();
+  const headers = new Headers(init?.headers);
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && csrfToken) headers.set('X-CSRF-Token', csrfToken);
+  const response = await fetch(url, { ...init, headers });
   if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
-    try { message = (await response.json()).error || message; } catch { /* response is not JSON */ }
+    if (response.status === 401 && !location.pathname.startsWith('/auth/')) {
+      if (authExpiredHandler) authExpiredHandler(); else location.assign('/auth/login');
+    }
+    let message = response.status === 403 ? 'Недостаточно прав для этого действия.' : `${response.status} ${response.statusText}`;
+    try { const body = await response.json(); if (body.error && body.error !== 'forbidden') message = body.error; } catch { /* response is not JSON */ }
     throw new Error(message);
   }
   if (response.status === 204) return undefined as T;
   const type = response.headers.get('content-type') || '';
   return (type.includes('application/json') ? response.json() : response.text()) as Promise<T>;
 };
+const api204 = async (url: string, init: RequestInit) => {
+  const method = (init.method || 'GET').toUpperCase();
+  const headers = new Headers(init.headers);
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && csrfToken) headers.set('X-CSRF-Token', csrfToken);
+  const response = await fetch(url, { ...init, headers });
+  if (!response.ok) {
+    let message = response.status === 403 ? 'Недостаточно прав для выхода из системы.' : `${response.status} ${response.statusText}`;
+    try { const body = await response.json(); if (body.error && body.error !== 'forbidden') message = body.error; } catch { /* response is not JSON */ }
+    if (response.status === 401 && authExpiredHandler) authExpiredHandler();
+    throw new Error(message);
+  }
+  if (response.status !== 204) throw new Error('Сервер не подтвердил завершение сеанса.');
+};
 const json = (method: string, data: unknown): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 export const client = {
+  me: () => api<AuthSession>('/api/me'),
+  logout: () => api204('/auth/logout', { method: 'POST' }),
   spaces: (includeArchived = false) => api<Space[]>(`/api/spaces${includeArchived ? '?include_archived=true' : ''}`),
   updateSpace: (id: string, data: { name?: string; description?: string; archived?: boolean }) => api<Space>(`/api/spaces/${encodeURIComponent(id)}`, json('PATCH', data)),
   tags: (spaceId: string) => api<string[]>(`/api/tags?space_id=${encodeURIComponent(spaceId)}`),
-  createSpace: (name: string, description: string) => api<Space>('/api/spaces', json('POST', { name, description })),
+  createSpace: (name: string, description: string) => corporateSession
+    ? api<Space>('/api/corporate/spaces', json('POST', { name, description, personal: true }))
+    : api<Space>('/api/spaces', json('POST', { name, description })),
   articles: (params: Record<string, string>) => api<Article[]>(`/api/articles?${new URLSearchParams(params)}`),
   favorites: () => api<Favorite[]>('/api/favorites'),
   addFavorite: (id: string) => api<void>(`/api/favorites/${encodeURIComponent(id)}`, { method: 'PUT' }),
@@ -54,4 +90,24 @@ export const client = {
   attachments: (id: string) => api<Attachment[]>(`/api/articles/${encodeURIComponent(id)}/attachments`),
   deleteAttachment: (articleId: string, fileId: string) => api<void>(`/api/articles/${encodeURIComponent(articleId)}/attachments/${encodeURIComponent(fileId)}`, { method: 'DELETE' }),
   upload: (id: string, file: File) => { const data = new FormData(); data.append('file', file); return api<Attachment>(`/api/articles/${encodeURIComponent(id)}/attachments`, { method: 'POST', body: data }); },
+  catalog: () => api<CatalogSpace[]>('/api/catalog'),
+  teams: () => api<Team[]>('/api/teams'),
+  createTeam: (name: string) => api<Team>('/api/teams', json('POST', { name, description: '' })),
+  teamMembers: (teamId: string) => api<TeamMember[]>(`/api/teams/${encodeURIComponent(teamId)}/members`),
+  setTeamMember: (teamId: string, userId: string) => api<void>(`/api/teams/${encodeURIComponent(teamId)}/members`, json('PUT', { user_id: userId })),
+  removeTeamMember: (teamId: string, userId: string) => api<void>(`/api/teams/${encodeURIComponent(teamId)}/members`, json('DELETE', { user_id: userId })),
+  adminUsers: () => api<{ id: string; name: string; disabled: boolean; admin: boolean }[]>('/api/admin/users'),
+  setUserDisabled: (userId: string, disabled: boolean) => api<void>(`/api/admin/users/${encodeURIComponent(userId)}`, json('PATCH', { disabled })),
+  createSpaceFor: (data: { name: string; description: string; personal: boolean }) => api<Space>('/api/corporate/spaces', json('POST', data)),
+  projects: (spaceId = '') => api<Project[]>(`/api/projects${spaceId ? `?space_id=${encodeURIComponent(spaceId)}` : ''}`),
+  createProject: (data: { name: string; description: string; space_id: string; parent_id?: string; inherit_acl?: boolean }) => api<Project>('/api/projects', json('POST', data)),
+  updateProject: (id: string, data: Partial<Pick<Project, 'name' | 'description' | 'archived_at' | 'inherit_acl'>> & { archived?: boolean }) => {
+    const { archived_at, ...fields } = data;
+    return api<Project>(`/api/projects/${encodeURIComponent(id)}`, json('PATCH', { ...fields, ...(archived_at !== undefined ? { archived: Boolean(archived_at) } : {}) }));
+  },
+  users: (resourceType: 'space' | 'project', resourceId: string) => api<TeamMember[]>(`/api/users?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId })}`),
+  access: async (resourceType: 'space' | 'project', resourceId: string) => (await api<{ grants: AccessGrant[] }>(`/api/access?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId })}`)).grants,
+  effectiveAccess: (resourceType: 'space' | 'project', resourceId: string, userId: string) => api<{ role: AccessGrant['role'] | null; sources: unknown[] }>(`/api/access/effective?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId, user_id: userId })}`),
+  setAccess: (resourceType: 'space' | 'project', resourceId: string, grant: AccessGrant) => api<AccessGrant>('/api/access?' + new URLSearchParams({ resource_type: resourceType, resource_id: resourceId }), json('PUT', { grant })),
+  removeAccess: (resourceType: 'space' | 'project', resourceId: string, grant: Pick<AccessGrant, 'subject_type' | 'subject_id'>) => api<void>('/api/access?' + new URLSearchParams({ resource_type: resourceType, resource_id: resourceId, ...grant }), { method: 'DELETE' }),
 };

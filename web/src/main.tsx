@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Activity, Archive, ArrowDownToLine, ArrowLeft, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleHelp, Clock3, Code2, Columns2, FileImage, FolderPlus, FolderTree, History, ImagePlus, Link2, List, ListFilter, MessageCircle, Moon, Pencil, Pin, Plus, Search, Settings2, ShieldCheck, Sparkles, Star, Sun, Tag, Trash2, Upload, X } from 'lucide-react';
-import { Article, Attachment, Bootstrap, Favorite, Revision, SearchHit, SearchResponse, Space, client } from './api';
+import { Article, Attachment, AuthSession, Bootstrap, Favorite, Project, Revision, SearchHit, SearchResponse, Space, client, setAuthExpiredHandler, setCorporateSession, setCsrfToken } from './api';
 import { headings, Markdown, scrollToFirstHighlight, smoothBehavior } from './markdown';
 import { Toc } from './Toc';
 import { SpacesManager } from './SpacesManager';
@@ -16,7 +16,9 @@ import { lastUrlRef, SIDEBAR_MAX, SIDEBAR_MIN, UNSAVED_MESSAGE, articleUrl, curr
 import type { MarkdownEditorHandle } from './MarkdownEditor';
 import { ParentPicker } from './ParentPicker';
 import { EditorConflict } from './EditorConflict';
-import { DraftFields, StoredDraft, draftKey, formatDraftTime, loadDraft, loadParkedList, popParked, pushParked, removeDraft, sameFields, saveDraft } from './draftStore';
+import { clearCorporateDrafts, DraftFields, setDraftIdentity, StoredDraft, draftKey, formatDraftTime, loadDraft, loadParkedList, popParked, pushParked, removeDraft, sameFields, saveDraft } from './draftStore';
+import { AdminPanel, adminUrl, readAdminTab } from './AdminPanel';
+import './auth-gate.css';
 import './styles.css';
 import './editor-wave2.css';
 
@@ -35,7 +37,7 @@ const isNarrow = () => window.matchMedia?.('(max-width: 850px)').matches ?? fals
 
 /** Fields whose change counts as «unsaved» in the editor. */
 type DraftSnapshot = DraftFields;
-const snapshotOf = (d: Article, tags: string, properties: string): DraftSnapshot => ({ title: d.title, summary: d.summary, body: d.body, kind: d.kind, status: d.status, pinned: d.pinned, space_id: d.space_id, parent_id: d.parent_id, tags, properties });
+const snapshotOf = (d: Article, tags: string, properties: string): DraftSnapshot => ({ title: d.title, summary: d.summary, body: d.body, kind: d.kind, status: d.status, pinned: d.pinned, space_id: d.space_id, project_id: d.project_id || '', parent_id: d.parent_id, tags, properties });
 const sameSnapshot = (a: DraftSnapshot, b: DraftSnapshot) => (Object.keys(a) as (keyof DraftSnapshot)[]).every(key => a[key] === b[key]);
 
 /** «key=value» lines; a non-empty line without a key (no «=», or nothing before it) cannot be stored and is reported back. */
@@ -58,12 +60,12 @@ function useDebounced<T>(value: T, ms: number) {
 
 const initialRoute = readRoute();
 
-function App() {
+function App({ session, onLogout, logoutError }: { session: AuthSession; onLogout: () => void; logoutError: string }) {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   const [spaceManager, setSpaceManager] = useState(false);
   // With ?article=ID the space is unknown until the article arrives, so nothing is loaded for a guessed space first.
   const [booting, setBooting] = useState(Boolean(initialRoute.article));
-  const [spaces, setSpaces] = useState<Space[]>([]); const [spaceId, setSpaceId] = useState(initialRoute.article ? '' : initialRoute.space || 'general'); const [tagOptions, setTagOptions] = useState<string[]>([]);
+  const [spaces, setSpaces] = useState<Space[]>([]); const [spaceId, setSpaceId] = useState(initialRoute.article ? '' : initialRoute.space || (session.mode === 'corporate' ? '' : 'general')); const [tagOptions, setTagOptions] = useState<string[]>([]);
   const [articles, setArticles] = useState<Article[]>([]); const [parentOptions, setParentOptions] = useState<Article[]>([]); const [selected, setSelected] = useState<Article | null>(null);
   const [articleLoading, setArticleLoading] = useState(Boolean(initialRoute.article)); const [loadingId, setLoadingId] = useState(initialRoute.article);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null); const [busy, setBusy] = useState(true); const [error, setError] = useState('');
@@ -83,13 +85,18 @@ function App() {
   const [historyView, setHistoryView] = useState(initialRoute.view === 'history' && Boolean(initialRoute.article)); const [historyArticleId, setHistoryArticleId] = useState(''); const [historyLoading, setHistoryLoading] = useState(false); const [historyError, setHistoryError] = useState(''); const [historyReload, setHistoryReload] = useState(0); const [restoring, setRestoring] = useState(false); const historyEntry = useRef(false);
   const [auditView, setAuditView] = useState(initialRoute.view === 'audit' && !initialRoute.article);
   const [spaceForm, setSpaceForm] = useState(false); const [spaceName, setSpaceName] = useState(''); const [spaceDescription, setSpaceDescription] = useState(''); const [notice, setNotice] = useState(''); const [pendingAnchor, setPendingAnchor] = useState('');
+  const [adminOpen, setAdminOpen] = useState(session.mode === 'corporate' && initialRoute.view === 'admin');
+  const [adminTab, setAdminTab] = useState(readAdminTab);
+  const adminReturnUrl = useRef<string>(history.state?.aiwikiAdminReturn || spaceUrl(initialRoute.space));
+  const [projects, setProjects] = useState<Project[]>([]);
   const [openNodes, setOpenNodes] = useState<Record<string, boolean>>({}); const [mobileNav, setMobileNav] = useState(false);
   const uploadRef = useRef<HTMLInputElement>(null); const bodyRef = useRef<MarkdownEditorHandle>(null); const commentsRef = useRef<ArticleCommentsHandle>(null); const deleteDialogRef = useRef<HTMLDivElement>(null); const deleteCancelRef = useRef<HTMLButtonElement>(null); const previousFocusRef = useRef<HTMLElement | null>(null); const searchInputRef = useRef<HTMLInputElement>(null);
   const articleRequest = useRef(0); const indexRequest = useRef(0); const searchRequest = useRef(0); const parentRequest = useRef(0); const tagRequest = useRef(0); const attachmentDeleteRequest = useRef(0);
   const selectedRef = useRef<Article | null>(null); const selectedIdRef = useRef(''); const spaceIdRef = useRef(spaceId); const editorOpenRef = useRef(false); const searchAllRef = useRef(searchAll); const baselineRef = useRef<DraftSnapshot | null>(null); const dirtyRef = useRef(false); const modalOpenRef = useRef(false); const overlayRef = useRef({ nav: false, panel: false });
   selectedRef.current = selected; selectedIdRef.current = selected?.id || ''; spaceIdRef.current = spaceId; editorOpenRef.current = editor; searchAllRef.current = searchAll;
-  modalOpenRef.current = Boolean(pendingDelete || pendingDeleteArticle || spaceManager); overlayRef.current = { nav: mobileNav, panel: panel !== null };
-  const sidebar = useSidebarWidth();
+  modalOpenRef.current = Boolean(pendingDelete || pendingDeleteArticle || spaceManager || adminOpen); overlayRef.current = { nav: mobileNav, panel: panel !== null };
+  const sidebar = useSidebarWidth(!adminOpen);
+  useEffect(() => { if (session.mode === 'corporate') { setAuthor(session.user.name); void client.projects().then(setProjects).catch(() => setProjects([])); } }, [session]);
 
   // ---- URL helpers: every URL write goes through here so the last known URL can be restored when a Back step is refused.
   const urlPush = useCallback((url: string) => { if (url === currentUrl()) { lastUrlRef.current = url; return; } history.pushState(null, '', url); lastUrlRef.current = url; }, []);
@@ -186,9 +193,9 @@ function App() {
       if (request !== articleRequest.current) return;
       setError((e as Error).message); setArticleLoading(false);
       if (view === 'history') setHistoryView(false);
-      if (opts.boot || spaceIdRef.current === '') { setBooting(false); setSpaceId(initialRoute.space || 'general'); }
+      if (opts.boot || spaceIdRef.current === '') { setBooting(false); setSpaceId(initialRoute.space || (session.mode === 'corporate' ? '' : 'general')); }
     }
-  }, [resetFilters, urlPush, urlReplace]);
+  }, [resetFilters, urlPush, urlReplace, session]);
 
   useEffect(() => {
     if (booting) return;
@@ -207,7 +214,7 @@ function App() {
   useEffect(() => {
     if (booting || articleLoading || selected || !spaceId) return;
     const route = readRoute();
-    if (route.article || route.space === spaceId) return;
+    if (route.view === 'admin' || route.article || route.space === spaceId) return;
     urlReplace(spaceUrl(spaceId, route.view === 'audit' ? 'audit' : ''));
   }, [booting, articleLoading, selected, spaceId, auditView]);
 
@@ -218,6 +225,13 @@ function App() {
     const route = readRoute();
     const previousPath = lastUrlRef.current.split('#')[0];
     lastUrlRef.current = currentUrl();
+    if (route.view === 'admin' && session.mode === 'corporate') {
+      if (!adminOpen) adminReturnUrl.current = history.state?.aiwikiAdminReturn || previousPath;
+      articleRequest.current++; setArticleLoading(false);
+      leaveEditing(); setPanel(null); setMobileNav(false);
+      setAdminTab(readAdminTab()); setAdminOpen(true); return;
+    }
+    setAdminOpen(false);
     if (location.pathname + location.search === previousPath && selectedRef.current && route.article === selectedRef.current.id) { setPendingAnchor(route.anchor); return; } // hash-only change
     setEditor(false); setDraft(null); setPanel(null); setMobileNav(false); historyEntry.current = false;
     attachmentDeleteRequest.current++; setPendingDelete(null); setDeletingAttachmentId('');
@@ -228,7 +242,7 @@ function App() {
     } else {
       articleRequest.current++; setArticleLoading(false); setSelected(null); setHistoryView(false); setAuditView(route.view === 'audit'); setBooting(false);
       if (route.space && route.space !== spaceIdRef.current) { resetFilters(); setSpaceId(route.space); }
-      else if (!spaceIdRef.current) setSpaceId('general');
+      else if (!spaceIdRef.current && session.mode !== 'corporate') setSpaceId('general');
     }
   };
   useEffect(() => {
@@ -337,8 +351,8 @@ function App() {
   // document.title
   useEffect(() => {
     const spaceTitle = spaces.find(s => s.id === spaceId)?.name;
-    document.title = selected && !editor && !auditView ? `${selected.title || "Без названия"} — AI Wiki` : spaceTitle ? `${spaceTitle} — AI Wiki` : "AI Wiki";
-  }, [selected?.id, selected?.title, editor, auditView, spaces, spaceId]);
+    document.title = adminOpen ? 'Команды и доступ — AI Wiki' : selected && !editor && !auditView ? `${selected.title || "Без названия"} — AI Wiki` : spaceTitle ? `${spaceTitle} — AI Wiki` : "AI Wiki";
+  }, [selected?.id, selected?.title, editor, auditView, spaces, spaceId, adminOpen]);
 
   // Hotkeys: «/» and Ctrl/Cmd+K focus the search; Escape closes the slide-out panels.
   useEffect(() => {
@@ -409,7 +423,7 @@ function App() {
     if (!spaces.some(s => s.id === spaceId && !s.archived_at)) { setSpaceManager(true); return; }
     if (editor && !confirmLeave()) return;
     articleRequest.current++; setArticleLoading(false); setHistoryView(false); setAuditView(false); historyEntry.current = false; setParentOptions(articles); setMobileNav(false);
-    const value = { id: '', space_id: spaceId, parent_id: parent, title: '', summary: '', body: '', kind: 'article', status: 'draft', pinned: false, tags: [], properties: {}, revision: 0, created_at: '', updated_at: '', author } as Article;
+    const value = { id: '', space_id: spaceId, project_id: (parent ? articles.find(a=>a.id===parent)?.project_id : '') || (spaces.find(s=>s.id===spaceId)?.limited ? projects.find(p=>p.space_id===spaceId&&!p.archived_at)?.id : '') || '', parent_id: parent, title: '', summary: '', body: '', kind: 'article', status: 'draft', pinned: false, tags: [], properties: {}, revision: 0, created_at: '', updated_at: '', author } as Article;
     baselineRef.current = snapshotOf(value, '', ''); startDraftSession(draftKey('', spaceId), baselineRef.current, 0); setTagsText(''); setPropertiesText(''); setDraft(value); setSelected(null); setEditor(true); setPreview(false); setPanel(null); urlPush(spaceUrl(spaceId));
   };
   const beginEdit = () => {
@@ -421,14 +435,14 @@ function App() {
     }
   };
   const setField = <K extends keyof Article>(key: K, value: Article[K]) => setDraft(d => d ? ({ ...d, [key]: value }) : d);
-  const FIELD_NAMES: Record<keyof DraftFields, string> = { title: 'заголовок', summary: 'описание', body: 'текст', kind: 'тип', status: 'статус', pinned: 'закрепление', space_id: 'пространство', parent_id: 'родитель', tags: 'теги', properties: 'свойства' };
+  const FIELD_NAMES: Record<keyof DraftFields, string> = { title: 'заголовок', summary: 'описание', body: 'текст', kind: 'тип', status: 'статус', pinned: 'закрепление', space_id: 'пространство', project_id: 'проект', parent_id: 'родитель', tags: 'теги', properties: 'свойства' };
   const fieldKeys = Object.keys(FIELD_NAMES) as (keyof DraftFields)[];
   const saveArticle = async (opts: { base?: number; skipInvalid?: boolean; notice?: string } = {}) => { if (!draft || !draft.title.trim() || saving) return;
     const { properties, invalid } = parseProperties(propertiesText);
     if (invalid.length && !opts.skipInvalid) { setPropsAttempt(true); const area = document.getElementById('editor-properties'); area?.scrollIntoView({ block: 'center' }); area?.focus(); return; }
     lastSkipRef.current = Boolean(opts.skipInvalid);
     const tags = tagsText.split(',').map(t => t.trim()).filter(Boolean);
-    const full: Record<string, unknown> = { space_id: draft.space_id, parent_id: draft.parent_id, title: draft.title.trim(), summary: draft.summary, body: draft.body, kind: draft.kind, status: draft.status, pinned: draft.pinned, tags, properties };
+    const full: Record<string, unknown> = { space_id: draft.space_id, project_id: draft.project_id || '', parent_id: draft.parent_id, title: draft.title.trim(), summary: draft.summary, body: draft.body, kind: draft.kind, status: draft.status, pinned: draft.pinned, tags, properties };
     // An existing article gets only the fields the user changed since the editor was opened (the server merges by present fields),
     // so concurrent edits of other fields are not overwritten.
     const base = baselineRef.current; let fields = full;
@@ -438,7 +452,7 @@ function App() {
       if (!Object.keys(fields).length) { discardDraft(); leaveEditing(); setNotice('Изменений нет'); return; }
     }
     setSaving(true); setError('');
-    try { storeAuthor(author); const data = { ...fields, author: author.trim() || 'human', ...(draft.id ? { base_revision: opts.base ?? draftBase, message: 'Изменения из редактора' } : {}) };
+    try { if (session.mode !== 'corporate') storeAuthor(author); const data = { ...fields, author: session.mode === 'corporate' ? session.user.name : author.trim() || 'human', ...(draft.id ? { base_revision: opts.base ?? draftBase, message: 'Изменения из редактора' } : {}) };
       const saved = draft.id ? await client.updateArticle(draft.id, data) : await client.createArticle(data); latestDraftRef.current = null; removeDraft(draftKeyRef.current); articleRequest.current++; setHistoryView(false); historyEntry.current = false; baselineRef.current = null; setSpaceId(saved.space_id); setSelected(saved); setDraft(null); setEditor(false); setConflict(null); setOffer(null); setParkedList([]); setPropsAttempt(false); setNotice(opts.notice || 'Изменения сохранены'); urlReplace(articleUrl(saved.id)); await loadIndex(saved.space_id); await loadTags(saved.space_id); setSelected(saved); void loadFavorites();
     } catch (e) {
       const message = (e as Error).message;
@@ -451,7 +465,7 @@ function App() {
   const currentFields = (): DraftFields => snapshotOf(draft as Article, tagsText, propertiesText);
   const applyStored = (stored: StoredDraft) => {
     if (!draft) return; const f = stored.fields;
-    setDraft({ ...draft, title: f.title, summary: f.summary, body: f.body, kind: f.kind, status: f.status, pinned: f.pinned, space_id: f.space_id, parent_id: f.parent_id });
+    setDraft({ ...draft, title: f.title, summary: f.summary, body: f.body, kind: f.kind, status: f.status, pinned: f.pinned, space_id: f.space_id, project_id: f.project_id || '', parent_id: f.parent_id });
     setTagsText(f.tags); setPropertiesText(f.properties); setDraftBase(stored.base_revision);
     if (f.space_id !== draft.space_id) void loadParentOptions(f.space_id);
   };
@@ -508,12 +522,12 @@ function App() {
     finally { if (request === attachmentDeleteRequest.current) setDeletingAttachmentId(''); }
   };
   const deleteArticle = async () => { if (!selected || selected.deleted_at || deletingArticle) return; const articleId = selected.id; setDeletingArticle(true); setError('');
-    try { storeAuthor(author); const deleted = await client.deleteArticle(articleId, { base_revision: selected.revision, author: author.trim() || 'human' }); if (selectedIdRef.current !== articleId) return; setSelected(deleted); setPendingDeleteArticle(null); await loadIndex(deleted.space_id); void loadFavorites(); }
+    try { if (session.mode !== 'corporate') storeAuthor(author); const deleted = await client.deleteArticle(articleId, { base_revision: selected.revision, author: session.mode === 'corporate' ? session.user.name : author.trim() || 'human' }); if (selectedIdRef.current !== articleId) return; setSelected(deleted); setPendingDeleteArticle(null); await loadIndex(deleted.space_id); void loadFavorites(); }
     catch (e) { if (selectedIdRef.current === articleId) setError((e as Error).message); }
     finally { setDeletingArticle(false); }
   };
   const undeleteArticle = async () => { if (!selected?.deleted_at || undeletingArticle) return; const articleId = selected.id; setUndeletingArticle(true); setError('');
-    try { storeAuthor(author); const restored = await client.undeleteArticle(articleId, { base_revision: selected.revision, author: author.trim() || 'human' }); if (selectedIdRef.current !== articleId) return; setSelected(restored); await loadIndex(restored.space_id); void loadFavorites(); }
+    try { if (session.mode !== 'corporate') storeAuthor(author); const restored = await client.undeleteArticle(articleId, { base_revision: selected.revision, author: session.mode === 'corporate' ? session.user.name : author.trim() || 'human' }); if (selectedIdRef.current !== articleId) return; setSelected(restored); await loadIndex(restored.space_id); void loadFavorites(); }
     catch (e) { if (selectedIdRef.current === articleId) setError((e as Error).message); }
     finally { setUndeletingArticle(false); }
   };
@@ -582,8 +596,31 @@ function App() {
   const showArticleLoading = articleLoading && selected?.id !== loadingId;
   const tocPanelOpen = panel === 'toc';
 
+  const changeAdminTab = (tab: Parameters<typeof adminUrl>[0] = 'catalog') => {
+    urlPush(adminUrl(tab));
+    history.replaceState({ aiwikiAdminReturn: adminReturnUrl.current }, '', currentUrl());
+    setAdminTab(tab);
+  };
+  const openAdmin = () => {
+    if (!confirmLeave()) return;
+    adminReturnUrl.current = currentUrl();
+    articleRequest.current++; setArticleLoading(false);
+    leaveEditing(); setPanel(null); setMobileNav(false);
+    changeAdminTab(); setAdminOpen(true);
+  };
+  const closeAdmin = () => {
+    urlPush(adminReturnUrl.current);
+    popRef.current();
+    void loadIndex(spaceId);
+    void client.projects().then(setProjects).catch(() => setProjects([]));
+  };
+  if (adminOpen && session.mode === 'corporate') return <AdminPanel
+    isAdmin={session.user.admin} userId={session.user.id} activeTab={adminTab}
+    onTabChange={changeAdminTab} onClose={closeAdmin}/>;
+
   return <div className="app-shell">
-    <header className="topbar"><button className="mobile-menu icon-button" onClick={() => setMobileNav(!mobileNav)} aria-label="Меню" aria-expanded={mobileNav}><ListFilter size={19}/></button><a className="brand" href="/" onClick={e => { e.preventDefault(); goSpaceHome(spaceId); }}><span className="brand-mark"><BookOpen size={19}/></span><span>ai<span className="brand-accent">wiki</span></span></a><div className="topbar-divider"/><div className="crumbs"><span>{activeSpace?.name || 'Нет активного пространства'}</span></div><div className="top-actions"><label className="author-chip"><span>Автор</span><input value={author} onChange={e => { setAuthor(e.target.value); storeAuthor(e.target.value); }} placeholder="Ваше имя" aria-label="Имя автора"/></label><button className="button ghost small" onClick={exportWiki} title="Экспорт JSON"><ArrowDownToLine size={16}/>Экспорт</button><button className="icon-button theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="icon-button" onClick={() => setPanel(panel === 'ai' ? null : 'ai')} title="Подключить ИИ" aria-label="Подключить ИИ"><Bot size={19}/></button></div></header>
+    <header className="topbar"><button className="mobile-menu icon-button" onClick={() => setMobileNav(!mobileNav)} aria-label="Меню" aria-expanded={mobileNav}><ListFilter size={19}/></button><a className="brand" href="/" onClick={e => { e.preventDefault(); goSpaceHome(spaceId); }}><span className="brand-mark"><BookOpen size={19}/></span><span>ai<span className="brand-accent">wiki</span></span></a><div className="topbar-divider"/><div className="crumbs"><span>{activeSpace?.name || 'Нет активного пространства'}</span></div><div className="top-actions"><label className="author-chip"><span>Автор</span><input value={session.mode === 'corporate' ? session.user.name : author} readOnly={session.mode === 'corporate'} onChange={e => { setAuthor(e.target.value); storeAuthor(e.target.value); }} placeholder="Ваше имя" aria-label="Имя автора"/></label>{session.mode === 'corporate' && <><button className="icon-button" onClick={openAdmin} title="Команды и доступ" aria-label="Команды и доступ"><ShieldCheck size={18}/></button><button className="button ghost small" onClick={onLogout}>Выйти</button></>}<button className="button ghost small" onClick={exportWiki} title="Экспорт JSON"><ArrowDownToLine size={16}/>Экспорт</button><button className="icon-button theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="icon-button" onClick={() => setPanel(panel === 'ai' ? null : 'ai')} title="Подключить ИИ" aria-label="Подключить ИИ"><Bot size={19}/></button></div></header>
+    {logoutError && <div className="error-alert logout-error" role="alert">Не удалось завершить сеанс: {logoutError}</div>}
     <div ref={sidebar.workspaceRef} className={`workspace ${historyView ? 'history-workspace' : ''} ${auditView ? 'audit-workspace' : ''} ${sidebar.width !== null ? 'left-custom' : ''}`} style={sidebar.width !== null ? { '--left-w': `${sidebar.width}px` } as React.CSSProperties : undefined}>
       {mobileNav && <div className="drawer-backdrop for-nav" onClick={() => setMobileNav(false)} aria-hidden="true"/>}
       {panel && <div className="drawer-backdrop for-panel" onClick={() => setPanel(null)} aria-hidden="true"/>}
@@ -611,7 +648,7 @@ function App() {
           {offer && <div className="draft-banner info" role="status"><div>Найден несохранённый черновик от {formatDraftTime(offer.savedAt)}.{draft.id && offer.base_revision < draft.revision && <> Статья с тех пор менялась (черновик начат с версии {offer.base_revision}, сейчас {draft.revision}): при сохранении появится окно сравнения.</>}</div><div className="draft-banner-actions"><button type="button" className="button primary small" onClick={restoreOffer}>Восстановить</button><button type="button" className="button ghost small" onClick={deleteOffer}>Удалить</button></div></div>}
           {parked && <div className="draft-banner" role="status"><div>Ваш черновик от {formatDraftTime(parked.savedAt)} отложен (основан на версии {parked.base_revision}).{parkedList.length > 1 && <> Ещё отложенных: {parkedList.length - 1}.</>}</div><div className="draft-banner-actions"><button type="button" className="button small" onClick={restoreParked}>Вернуть отложенный</button><button type="button" className="button ghost small" onClick={deleteParked}>Удалить</button></div></div>}
           <div className="form-grid"><label className="field wide"><span>Заголовок <b>*</b></span><input maxLength={300} autoFocus value={draft.title} onChange={e => setField('title', e.target.value)} placeholder="Например, как устроен проект"/></label><label className="field wide"><span>Краткое описание</span><input value={draft.summary} onChange={e => setField('summary', e.target.value)} placeholder="Одно предложение для поиска и навигации"/></label>
-            <label className="field"><span>Пространство</span><select value={draft.space_id} onChange={e => { setField('space_id', e.target.value); setField('parent_id', ''); void loadParentOptions(e.target.value); }}>{!activeSpaces.some(s => s.id === draft.space_id) && <option value={draft.space_id} disabled>{spaces.find(s => s.id === draft.space_id)?.name || 'Пространство'} · В архиве</option>}{activeSpaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>{draft.id && draft.space_id !== selected?.space_id && <small className="move-space-hint">Вместе со статьёй перенесутся все дочерние материалы.</small>}</label><div className="field"><span>Родительская статья</span><ParentPicker options={parentOptions.filter(a => a.space_id === draft.space_id)} value={draft.parent_id} excludeId={draft.id} onChange={id => setField('parent_id', id)}/></div>
+            <label className="field"><span>Пространство</span><select value={draft.space_id} onChange={e => { setField('space_id', e.target.value); setField('project_id', ''); setField('parent_id', ''); void loadParentOptions(e.target.value); }}>{!activeSpaces.some(s => s.id === draft.space_id) && <option value={draft.space_id} disabled>{spaces.find(s => s.id === draft.space_id)?.name || 'Пространство'} · В архиве</option>}{activeSpaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>{draft.id && draft.space_id !== selected?.space_id && <small className="move-space-hint">Вместе со статьёй перенесутся все дочерние материалы.</small>}</label>{projects.length > 0 && <label className="field"><span>Проект</span><select value={draft.project_id || ''} onChange={e => { setField('project_id', e.target.value); setField('parent_id', ''); }}><option value="">Без проекта</option>{projects.filter(p => !p.archived_at && p.space_id === draft.space_id).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}<div className="field"><span>Родительская статья</span><ParentPicker options={parentOptions.filter(a => a.space_id === draft.space_id && (a.project_id || "") === (draft.project_id || ""))} value={draft.parent_id} excludeId={draft.id} onChange={id => setField('parent_id', id)}/></div>
             <label className="field"><span>Тип</span><select value={draft.kind} onChange={e => setField('kind', e.target.value)}>{kinds.map(k => <option key={k} value={k}>{kindNames[k]}</option>)}</select></label><label className="field"><span>Статус</span><select value={draft.status} onChange={e => setField('status', e.target.value)}>{statuses.map(s => <option key={s} value={s}>{statusNames[s]}</option>)}</select></label>
             <label className="field wide"><span>Теги <small>через запятую</small></span><input list="editor-tag-options" value={tagsText} onChange={e => setTagsText(e.target.value)} placeholder="исследование, архитектура"/><datalist id="editor-tag-options">{editorTagSuggestions.map(tag => <option key={tag} value={tag}/>)}</datalist></label><label className="field wide"><span>Свойства <small>ключ=значение, по одному на строку</small></span><textarea id="editor-properties" className={`properties-area${propsAttempt && propsInvalid.length ? ' invalid' : ''}`} value={propertiesText} onChange={e => setPropertiesText(e.target.value)} placeholder="owner=команда\nsource=https://example.org" rows={2}/>{propsInvalid.length > 0 && <div className="props-warning" role="alert"><b>Эти строки не будут сохранены: в них нет «ключ=значение».</b><ul>{propsInvalid.map((line, i) => <li key={i}>{line}</li>)}</ul><div className="props-warning-actions"><button type="button" className="button small" onClick={() => document.getElementById('editor-properties')?.focus()}>Исправить</button><button type="button" className="button ghost small" disabled={saving || !draft.title.trim()} onClick={() => void saveArticle({ skipInvalid: true })}>Сохранить без них</button></div></div>}</label>
             <label className="pin-check"><input type="checkbox" checked={draft.pinned} onChange={e => setField('pinned', e.target.checked)}/><Pin size={15}/>Закрепить материал в инструкциях для ИИ</label>
@@ -639,10 +676,48 @@ function App() {
         {panel === 'ai' ? <div className="right-panel"><div className="panel-head"><div><span className="eyebrow">ИНТЕГРАЦИЯ</span><h3>Подключить ИИ</h3></div><button className="icon-button" onClick={() => setPanel(null)} aria-label="Закрыть"><X size={17}/></button></div><div className="ai-intro"><span className="ai-graphic"><Bot size={22}/></span><p>Дайте ИИ-агенту доступ к базе знаний через MCP или обычный HTTP API.</p></div><div className="connection-status"><span className="connection-dot"/><div><strong>Сервер подключён</strong><small>База знаний доступна по текущему адресу</small></div></div><div className="code-card"><div><span>MCP endpoint</span><Code2 size={14}/></div><code>{location.origin}/mcp</code><p>Streamable HTTP · JSON-RPC</p></div><div className="code-card"><div><span>Bootstrap</span><Code2 size={14}/></div><code>GET /api/bootstrap?space_id={spaceId}</code><p>Инструкции, активное пространство и недавние материалы</p></div><div className="tool-list"><span className="eyebrow">ДОСТУПНЫЕ ИНСТРУМЕНТЫ</span>{['wiki_bootstrap', 'wiki_search', 'wiki_read', 'wiki_write', 'wiki_history', 'wiki_restore', 'wiki_comment'].map(t => <div key={t}><Code2 size={13}/><code>{t}</code><Check size={13}/></div>)}</div><div className="ai-footnote"><ShieldCheck size={15}/><span>База не отправляет данные во внешние сервисы. ИИ подключается по вашему выбору.</span></div></div>
           : <div className="toc-panel"><div className="toc-header"><span className="eyebrow">НА ЭТОЙ СТРАНИЦЕ</span><span className="toc-header-actions"><button className="icon-button tiny" onClick={() => { setPanel(null); document.querySelector('.attachments-section')?.scrollIntoView({ behavior: smoothBehavior() }); }} title="Файлы статьи"><FileImage size={15}/></button><button className="icon-button tiny panel-close" onClick={() => setPanel(null)} aria-label="Закрыть"><X size={15}/></button></span></div>{selected ? <>{!editor && !historyView && <Toc headings={toc} commentCounts={anchorCounts} onNavigate={id => { urlReplace(articleUrl(selected.id, { anchor: id })); if (panel === 'toc') setPanel(null); }}/>}{!selected.deleted_at && !editor && <button className="toc-comment" onClick={() => openComment('')}><MessageCircle size={14}/>Новый комментарий</button>}<div className="toc-separator"/><div className="article-info"><span className="eyebrow">СВЕДЕНИЯ</span><div><Clock3 size={14}/>Создано {prettyDate(selected.created_at)}</div><div><Activity size={14}/>Обновлено {prettyDate(selected.updated_at)}</div><div><History size={14}/>Ревизия {selected.revision}</div>{!editor && <button onClick={openHistory}>Открыть историю <ChevronRight size={13}/></button>}</div><div className="toc-separator"/><button className="markdown-download" onClick={() => { window.open(`/api/articles/${encodeURIComponent(selected.id)}/markdown`, '_blank'); }}><ArrowDownToLine size={15}/>Скачать Markdown</button></> : <div className="toc-empty"><span className="empty-art"><BookOpen size={21}/></span><strong>Всё начинается<br/>с одной заметки</strong><p>Структурируйте идеи, сохраняйте решения и делитесь контекстом с ИИ.</p><button className="button ghost small" onClick={() => beginCreate()}><Plus size={14}/>Новая статья</button></div>}<div className="right-bottom"><span>AI Wiki</span><span>Личная база знаний</span></div></div>}
       </aside>
-      {spaceManager && <SpacesManager spaces={spaces} draftSpaceIds={editor && draft ? [draft.space_id, selected?.space_id || ''] : []} onChange={updateSpace} onClose={() => setSpaceManager(false)}/>}
+      {spaceManager && <SpacesManager spaces={spaces.filter(s=>!s.limited)} draftSpaceIds={editor && draft ? [draft.space_id, selected?.space_id || ''] : []} onChange={updateSpace} onClose={() => setSpaceManager(false)}/>}
       {pendingDelete && pendingDelete.article_id === selected?.id && <div className="delete-dialog-backdrop"><div ref={deleteDialogRef} className="delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-attachment-title" aria-describedby="delete-attachment-description" tabIndex={-1}><h2 id="delete-attachment-title">Удалить вложение?</h2><p className="delete-dialog-filename">{pendingDelete.name}</p><p id="delete-attachment-description">Файл будет удалён из статьи, и ссылки на него перестанут работать. Оригинал останется на сервере.</p><div><button ref={deleteCancelRef} className="button ghost" onClick={() => setPendingDelete(null)} disabled={Boolean(deletingAttachmentId)}>Отмена</button><button className="button danger" onClick={() => void deleteAttachment()} disabled={Boolean(deletingAttachmentId)}>{deletingAttachmentId ? 'Удаляем…' : 'Удалить'}</button></div></div></div>}
       {pendingDeleteArticle && pendingDeleteArticle.id === selected?.id && <div className="delete-dialog-backdrop"><div ref={deleteDialogRef} className="delete-dialog article-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-article-title" aria-describedby="delete-article-description" tabIndex={-1}><h2 id="delete-article-title">Удалить статью «{pendingDeleteArticle.title}»?</h2><p id="delete-article-description">Статья будет скрыта из дерева и поиска. История, файлы и комментарии останутся сохранены. Перед удалением переместите дочерние статьи в другое место.</p><div><button ref={deleteCancelRef} className="button ghost" onClick={() => setPendingDeleteArticle(null)} disabled={deletingArticle}>Отмена</button><button className="button danger" onClick={() => void deleteArticle()} disabled={deletingArticle}>{deletingArticle ? 'Удаляем…' : 'Удалить статью'}</button></div></div></div>}
     </div>
   </div>;
 }
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+function AuthGate() {
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [error, setError] = useState('');
+  const [logoutError, setLogoutError] = useState('');
+  const [expired, setExpired] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const loadSession = async () => {
+    setLoading(true); setError('');
+    try {
+      const response = await fetch('/api/me', { credentials: 'same-origin' });
+      if (response.status === 401) { location.assign('/auth/login'); return; }
+      if (!response.ok) throw new Error(`Не удалось проверить вход (${response.status}).`);
+      const value = await response.json() as AuthSession;
+      if (value.mode !== 'trusted' && value.mode !== 'corporate') throw new Error('Сервер вернул неизвестный режим входа.');
+      setCsrfToken(value.mode === 'corporate' ? value.csrf_token : '');
+      setCorporateSession(value.mode === 'corporate');
+      setDraftIdentity(value.mode === 'corporate' ? value.user.id : '', value.mode === 'corporate');
+      setSession(value);
+    } catch (e) { setError((e as Error).message || 'Не удалось подключиться к серверу.'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => {
+    setAuthExpiredHandler(() => setExpired(true));
+    void loadSession();
+    return () => setAuthExpiredHandler(null);
+  }, []);
+  const logout = async () => {
+    if (session?.mode === 'corporate') {
+      setLogoutError('');
+      try { await client.logout(); } catch (e) { setLogoutError((e as Error).message || 'Сервер не подтвердил выход. Повторите попытку.'); return; }
+      clearCorporateDrafts(session.user.id);
+    }
+    setCsrfToken(''); setCorporateSession(false); location.reload();
+  };
+  if (expired) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>Сессия завершилась</h1><p>Черновики этой вкладки сохранены под вашей учётной записью.</p><button className="button primary" onClick={() => location.assign('/auth/login')}>Войти снова</button></div></main>;
+  if (!session) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>{loading ? 'Проверяем вход…' : 'Нет доступа к базе знаний'}</h1>{error && <p role="alert">{error}</p>}{!loading && <button className="button primary" onClick={() => void loadSession()}>Повторить</button>}</div></main>;
+  return <App session={session} logoutError={logoutError} onLogout={() => void logout()}/>;
+}
+createRoot(document.getElementById('root')!).render(<React.StrictMode><AuthGate/></React.StrictMode>);
