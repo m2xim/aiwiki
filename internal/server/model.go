@@ -316,11 +316,11 @@ func nullString(value string) any {
 	}
 	return value
 }
+
+// indexArticle replaces the search row by delete and insert in both databases.
+// In PostgreSQL an upsert would need UPDATE on article_fts, which the MCP scope
+// policies deny to write keys; they permit exactly insert and delete.
 func indexArticle(tx *transaction, a Article) error {
-	if tx.pg {
-		_, e := tx.Exec(`INSERT INTO article_fts(article_id,title,summary,body,tags) VALUES(?,?,?,?,?) ON CONFLICT (article_id) DO UPDATE SET title=EXCLUDED.title,summary=EXCLUDED.summary,body=EXCLUDED.body,tags=EXCLUDED.tags`, a.ID, a.Title, a.Summary, a.Body, join(a.Tags, " "))
-		return e
-	}
 	if _, e := tx.Exec(`DELETE FROM article_fts WHERE article_id=?`, a.ID); e != nil {
 		return e
 	}

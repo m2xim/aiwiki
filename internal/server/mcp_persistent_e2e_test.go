@@ -102,19 +102,29 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 		t.Fatalf("author=%q want=%q err=%v", author, account.ID, err)
 	}
 	done()
+	// Updating an existing article rewrites its search index row: a write key
+	// must be able to edit, not only create.
+	w = rpc("tools/call", map[string]any{"name": "wiki_edit", "arguments": map[string]any{"id": articleID, "base_revision": 1, "op": "append", "text": "\n\nAppended by key"}})
+	if w.Code != 200 || strings.Contains(w.Body.String(), `"isError":true`) || !strings.Contains(w.Body.String(), `\"revision\":2`) {
+		t.Fatalf("edit through write key failed: %d %s", w.Code, w.Body)
+	}
+	w = rpc("tools/call", map[string]any{"name": "wiki_search", "arguments": map[string]any{"q": "Appended"}})
+	if w.Code != 200 || !strings.Contains(w.Body.String(), articleID) {
+		t.Fatalf("edited text is not searchable: %d %s", w.Code, w.Body)
+	}
 	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Out of scope", "space_id": space.ID, "project_id": sibling.ID}}})
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"isError":true`) {
 		t.Fatalf("sibling write allowed: %d %s", w.Code, w.Body)
 	}
-	if checks-before != 3 {
-		t.Fatalf("admission called %d times, want3", checks-before)
+	if checks-before != 5 { // list, write, edit, search, sibling write
+		t.Fatalf("admission called %d times, want5", checks-before)
 	}
 	// Native secrets never authenticate browser APIs, even with an otherwise valid key.
 	if w = call("GET", "/api/mcp/credentials", "", "", issued.Token, nil); w.Code != 401 {
 		t.Fatalf("native credential authenticated browser path: %d", w.Code)
 	}
 	var actors int
-	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors != 3 {
+	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors != 5 {
 		t.Fatalf("audit actors=%d err=%v", actors, err)
 	}
 	admitted = false
