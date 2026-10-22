@@ -101,6 +101,8 @@ shown and raw values) and per-column filters sit above the table. Grouping shows
 aggregates, and a collapse toggle. Pagination: page size 10/25/50/100 (`pageSizes` to change), fine for 10 000 rows
 (only a page is rendered). Row highlight: `highlight: (row) => 'good' | 'warn' | 'bad' | 'accent' | true | false`;
 clicking a row selects it (`onRowClick(row)`). `onChange(rows)` fires after each recomputation.
+**CSV export is protected against formula injection**: a text cell (or header) that starts with `=`, `+`, `-`, `@`, a tab or a carriage return (also after leading spaces) is written with a leading apostrophe and quoted, so Excel and similar programs show it as text instead of running it. Real numbers (JS `number`, also negative ones) are written as numbers without a prefix; the string `"-5"` from the data is a text and gets the apostrophe. The same text appears in the "Показать CSV" dialog. The apostrophe is part of the exported text, which is the intended trade-off.
+
 Other options: `searchable`, `filters` (`false` hides the filter row), `exportable`, `csvName`, `csvDelimiter`
 (default `;` plus a BOM: opens correctly in Russian-locale Excel), `locale`, `emptyText`.
 

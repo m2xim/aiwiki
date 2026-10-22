@@ -61,10 +61,19 @@ export function parseCSV(input: string, delimiter?: string): ParsedTable {
   return { columns, rows };
 }
 
+const FORMULA_RE = /^\s*[=+\-@]|^[\t\r]/;
+
+/** CSV-injection guard: a text cell that a spreadsheet could read as a formula gets a leading apostrophe. Real numbers are left alone. */
+export function neutralizeFormula(s: string): string {
+  return FORMULA_RE.test(s) ? "'" + s : s;
+}
+
 function quote(v: unknown, d: string): string {
   if (v === null || v === undefined) return '';
-  const s = v instanceof Date ? v.toISOString() : String(v);
-  return /["\r\n]/.test(s) || s.includes(d) || /^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+  const raw = v instanceof Date ? v.toISOString() : String(v);
+  const s = neutralizeFormula(raw);
+  return s !== raw || /["\r\n]/.test(s) || s.includes(d) || /^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /** Matrix -> CSV text (CRLF line ends, no BOM; the caller adds it for Excel). */
