@@ -38,7 +38,7 @@ Therefore:
 
 ## Theme
 
-The frame cannot see the wiki's theme. The kit follows `prefers-color-scheme` of the document; override with
+The frame cannot see the wiki's theme, so the wiki opens it with `?theme=light` or `?theme=dark` in the URL of `index.html`; the kit applies it at start (like `AIWiki.setTheme`). Without the parameter the kit follows `prefers-color-scheme` of the document; an explicit
 `AIWiki.setTheme('light' | 'dark' | 'auto')`, read with `AIWiki.getTheme()`. Colours are CSS variables (`--aw-bg`, `--aw-fg`,
 `--aw-muted`, `--aw-border`, `--aw-surface`, `--aw-accent`, `--aw-good`, `--aw-warn`, `--aw-bad`) usable in your own CSS.
 Charts redraw on a theme change. The layout holds down to 360 px.
@@ -209,4 +209,4 @@ node ../scripts/qa-kit.mjs                        # logic tests and bundle check
 ```
 
 `serve.mjs` serves the examples in an iframe with the same `sandbox` attribute, CSP and resize handling as the wiki. With
-`KIT_NO_CSP=1` it omits the CSP header (for tools that cannot load sub-resources of a CSP-sandboxed document).
+`KIT_NO_CSP=1` it omits the CSP header (for tools that cannot load sub-resources of a CSP-sandboxed document). It serves `Cross-Origin-Resource-Policy: cross-origin`: with `same-origin` a sandboxed frame (origin null) cannot load its own scripts and styles, so the server that serves frames and `/artifact-runtime/` must send `cross-origin` (ARTIFACTS.md says `same-origin`; it needs correcting).

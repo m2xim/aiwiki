@@ -11,6 +11,7 @@ import { parseCSV, parseCSVMatrix, parseData, toCSV, detectDelimiter } from '../
 import {
   aggregate, cellValue, filterRows, groupRows, inferType, layoutPage, nextSort, normalizeColumns, sortRows, exportMatrix, displayText,
 } from '../web/artifact-kit/src/core/tablelogic.ts';
+import { parseThemeParam } from '../web/artifact-kit/src/core/themeparam.ts';
 import { effect, state } from '../web/artifact-kit/src/core/state.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -323,6 +324,15 @@ ok('displayText', () => {
   assert.equal(norm(displayText(data[0], byKey.население)), '12 600');
   assert.equal(displayText(data[3], byKey.население), '');
   assert.equal(displayText(data[5], byKey.население), 'n/a', 'an unparsable value in a number column is shown as-is');
+});
+
+ok('parseThemeParam', () => {
+  assert.equal(parseThemeParam('?theme=dark'), 'dark');
+  assert.equal(parseThemeParam('?a=1&theme=light'), 'light');
+  assert.equal(parseThemeParam('?theme=auto'), null);
+  assert.equal(parseThemeParam('?theme=DARK'), null);
+  assert.equal(parseThemeParam(''), null);
+  assert.equal(parseThemeParam('?theme='), null);
 });
 
 // ---- state / effect ----

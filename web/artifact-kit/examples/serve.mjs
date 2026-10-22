@@ -40,7 +40,9 @@ addEventListener('message', (e) => {
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   let p = decodeURIComponent(url.pathname);
-  if (p === '/') { res.writeHead(200, { 'content-type': types['.html'] }); res.end(hostPage); return; }
+  // ?slow=1 delays the load event (headless Firefox screenshots fire on load, before charts paint).
+  if (p === '/slow') { setTimeout(() => { res.writeHead(200, { 'content-type': 'image/gif' }); res.end(Buffer.from('R0lGODlhAQABAAAAACw=', 'base64')); }, 4000); return; }
+  if (p === '/') { res.writeHead(200, { 'content-type': types['.html'] }); res.end(url.searchParams.get('slow') ? hostPage.replace('</main>', '</main><img src="/slow" alt="">') : hostPage); return; }
   let file = null;
   if (p.startsWith('/artifact-runtime/')) file = path.join(runtime, p.slice('/artifact-runtime/'.length));
   else if (p.startsWith('/examples/')) file = path.join(here, p.slice('/examples/'.length));
@@ -51,7 +53,7 @@ http.createServer((req, res) => {
   res.writeHead(200, {
     'content-type': types[path.extname(file)] || 'application/octet-stream',
     ...(process.env.KIT_NO_CSP ? {} : { 'content-security-policy': CSP }), 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
-    'cross-origin-resource-policy': 'same-origin', 'cache-control': 'no-store',
+    'cross-origin-resource-policy': 'cross-origin', 'cache-control': 'no-store',
   });
   fs.createReadStream(file).pipe(res);
 }).listen(port, '127.0.0.1', () => console.log(`Kit test page: http://127.0.0.1:${port}/`));

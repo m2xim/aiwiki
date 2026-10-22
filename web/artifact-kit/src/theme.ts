@@ -1,5 +1,7 @@
 // Theme: follows prefers-color-scheme of the frame document (the iframe cannot see the parent's theme),
-// or a forced 'light' / 'dark' set by AIWiki.setTheme(). CSS reacts to the data-aiwiki-theme attribute.
+// the wiki's ?theme=light|dark frame parameter (applied once at start), or a forced 'light' / 'dark' set by AIWiki.setTheme(). CSS reacts to the data-aiwiki-theme attribute.
+
+import { parseThemeParam } from './core/themeparam.ts';
 
 export type ThemeMode = 'light' | 'dark' | 'auto';
 
@@ -30,4 +32,10 @@ mq?.addEventListener?.('change', () => { if (mode === 'auto') listeners.forEach(
 
 export function cssVar(name: string, fallback = ''): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+// Start-up: ?theme=light|dark from the frame URL; a later AIWiki.setTheme() by the author overrides it.
+if (typeof location !== 'undefined' && typeof document !== 'undefined') {
+  const initial = parseThemeParam(location.search);
+  if (initial) setTheme(initial);
 }
