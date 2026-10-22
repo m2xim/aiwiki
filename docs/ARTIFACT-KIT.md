@@ -46,6 +46,8 @@ Charts redraw on a theme change. The layout holds down to 360 px.
 Without the kit: the server sets `data-theme="light"|"dark"` on `<html>` from the same parameter before the first
 paint (it wins over a static `data-theme` in the markup), so style the dark theme with `:root[data-theme="dark"]` and keep
 `@media (prefers-color-scheme: dark)` under `:root:not([data-theme="light"])` for the frame opened on its own.
+In the wiki, `prefers-color-scheme` inside the frame also follows the wiki theme (the wiki sets `color-scheme` on the
+`<iframe>`), so an artifact styled only with that media query switches as well.
 
 ## State and binding
 

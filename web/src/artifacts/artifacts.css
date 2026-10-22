@@ -48,6 +48,9 @@
 .art-viewer{margin-top:14px}
 .art-frame-box{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
 .art-frame{display:block;width:100%;border:0;background:#fff;color-scheme:light}
+/* The frame's color-scheme becomes prefers-color-scheme inside it, so artifacts
+   styled only with that media query follow the wiki theme too, without a reload. */
+html[data-theme="dark"] .art-frame{background:#1d1b26;color-scheme:dark}
 .art-frame-box.fill{height:100%}
 .art-frame-box.fill .art-frame{height:100%}
 .art-frame-reload{position:absolute;top:6px;right:6px;opacity:.55;background:var(--panel)}

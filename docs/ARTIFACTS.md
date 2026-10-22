@@ -135,6 +135,11 @@ The artifact never runs on the application's origin with application privileges.
    without the kit follows the wiki theme with ordinary `:root[data-theme="dark"]`
    CSS. Both scripts are embedded and served with an ETag. A theme switch in the
    wiki reloads the frame, which discards the artifact's in-memory state.
+   The wiki also sets `color-scheme` on the `<iframe>` element to its theme; the
+   browser exposes it inside the frame as `prefers-color-scheme` (verified in
+   Chromium 155, applied without a reload), so artifacts styled only with that
+   media query follow the wiki too. A document that declares no color scheme keeps
+   an opaque light canvas, so artifacts without any theme stay readable.
 3. The application embeds it as `<iframe sandbox="allow-scripts allow-modals"
    referrerpolicy="no-referrer" src="<frame_url>">` (never `allow-same-origin`,
    `allow-top-navigation`, `allow-popups`, `allow-forms`). Verified on 2026-10-22
