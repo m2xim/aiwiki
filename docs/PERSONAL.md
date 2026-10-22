@@ -133,7 +133,7 @@ docker compose --env-file .env.personal -f compose.personal.yaml up -d --build
 * Services: `db` (PostgreSQL 16.15, roles `aiwiki_owner` and `aiwiki_app` created
   once by `scripts/personal-pg-init.sh`), `s3` (SeaweedFS 4.48, private bucket
   `wiki` created by `s3-init`), `wiki` (this repository's Dockerfile, personal
-  mode). `edge` only holds the network namespace and the single published port.
+  mode). Only the wiki port is published.
 * The role passwords are used once, when PostgreSQL initialises an empty
   `./personal-data/pg`. Changing them later in `.env.personal` does not change the
   roles: run `ALTER ROLE ... PASSWORD` in the database as well. The `db` service
@@ -146,9 +146,10 @@ docker compose --env-file .env.personal -f compose.personal.yaml up -d --build
 * To serve a home network or VPN set both `AIWIKI_BIND_ADDR` (this machine's
   address) and `AIWIKI_ALLOWED_ORIGIN` (the address browsers use). There is no
   login: do not expose the port outside a trusted network.
-* The wiki accepts a plain-HTTP S3 endpoint only on loopback, therefore `wiki`,
-  `s3` and `s3-init` share one network namespace and S3 is `127.0.0.1:8333`
-  there; it is not reachable from the host or the network.
+* `db` and `s3` are reachable only on the compose network. A plain-HTTP S3
+  endpoint is accepted for loopback with `AIWIKI_ALLOW_INSECURE_LOOPBACK=1` or for
+  a host name listed in `AIWIKI_S3_ALLOW_HTTP_HOSTS` (here `s3`); every other
+  endpoint must use HTTPS.
 * Import of an existing trusted-mode installation (the superuser password is
   used by this one-off service only):
   `docker compose --env-file .env.personal -f compose.personal.yaml --profile import run --rm import`

@@ -27,6 +27,7 @@ Environment variables:
 | `AIWIKI_OIDC_ACCESS_ROLE` | Admission role, default `aiwiki-access` |
 | `AIWIKI_OIDC_ADMIN_ROLE` | System administrator role, default `aiwiki-admin` |
 | `AIWIKI_ALLOW_INSECURE_LOOPBACK` | `1` permits HTTP only on loopback for local integration tests |
+| `AIWIKI_S3_ALLOW_HTTP_HOSTS` | comma-separated host names for which a plain-HTTP S3 endpoint is accepted (for example an S3 service on a private container network); exact match |
 | `AIWIKI_SPACE_QUOTA_BYTES` | Optional default storage limit per space in bytes; empty or `0` means unlimited, a negative or non-numeric value fails startup. A system administrator can override it per space, see [OPERATIONS.md](OPERATIONS.md) section 5 |
 
 Missing admission claims deny access, including for administrators. Identities use `(issuer, subject)`; email changes never merge accounts. Setting corporate configuration incompletely fails startup instead of opening an anonymous SQLite service. TLS terminates at the trusted deployment proxy; publish the application only behind that proxy and configure the exact browser origin.

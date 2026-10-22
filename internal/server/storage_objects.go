@@ -72,6 +72,16 @@ func validObjectKey(key string) bool {
 	return true
 }
 
+// httpHostAllowed reports whether host is one of the explicitly listed names.
+func httpHostAllowed(list []string, host string) bool {
+	for _, h := range list {
+		if h != "" && strings.EqualFold(h, host) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateS3Endpoint(cfg S3Config) (string, error) {
 	if cfg.Endpoint == "" {
 		return "", nil
@@ -83,8 +93,8 @@ func validateS3Endpoint(cfg S3Config) (string, error) {
 	switch strings.ToLower(u.Scheme) {
 	case "https":
 	case "http":
-		if !cfg.AllowInsecureLoopback || !isLoopbackHost(u.Hostname()) {
-			return "", errors.New("S3 endpoint must use HTTPS (plain HTTP only for loopback with explicit opt-in)")
+		if !(cfg.AllowInsecureLoopback && isLoopbackHost(u.Hostname())) && !httpHostAllowed(cfg.AllowHTTPHosts, u.Hostname()) {
+			return "", errors.New("S3 endpoint must use HTTPS (plain HTTP only for loopback or a host listed in AIWIKI_S3_ALLOW_HTTP_HOSTS)")
 		}
 	default:
 		return "", errors.New("invalid S3 endpoint scheme")

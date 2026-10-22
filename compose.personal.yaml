@@ -8,10 +8,9 @@
 # AIWIKI_BIND_ADDR. There is no login: expose it only on a trusted network or
 # VPN, and set AIWIKI_ALLOWED_ORIGIN to the address browsers use.
 #
-# The wiki accepts a plain-HTTP S3 endpoint only on loopback, so the wiki, the S3
-# service and the bucket initialiser share the network namespace of `edge`
-# (S3 is then 127.0.0.1:8333 for the wiki and is not reachable from anywhere
-# else); PostgreSQL stays on the compose network under the name `db`.
+# PostgreSQL (`db`) and SeaweedFS (`s3`) are reachable only on the compose
+# network. The wiki accepts the plain-HTTP S3 endpoint because its host name is
+# listed in AIWIKI_S3_ALLOW_HTTP_HOSTS; every other endpoint must use HTTPS.
 x-wiki-environment: &wiki-environment
   AIWIKI_MODE: personal
   AIWIKI_PERSONAL_NAME: ${AIWIKI_PERSONAL_NAME:-Владелец}
@@ -20,9 +19,9 @@ x-wiki-environment: &wiki-environment
   AIWIKI_DATABASE_ROLE: aiwiki_app
   AIWIKI_S3_BUCKET: wiki
   AIWIKI_S3_REGION: us-east-1
-  AIWIKI_S3_ENDPOINT: http://127.0.0.1:8333
+  AIWIKI_S3_ENDPOINT: http://s3:8333
   AIWIKI_S3_PATH_STYLE: "1"
-  AIWIKI_ALLOW_INSECURE_LOOPBACK: "1"
+  AIWIKI_S3_ALLOW_HTTP_HOSTS: s3
   AIWIKI_SPACE_QUOTA_BYTES: ${AIWIKI_SPACE_QUOTA_BYTES:-}
   AIWIKI_ARTIFACT_SECRET: ${AIWIKI_ARTIFACT_SECRET:?set AIWIKI_ARTIFACT_SECRET}
   AWS_ACCESS_KEY_ID: ${AIWIKI_S3_ACCESS_KEY:?set AIWIKI_S3_ACCESS_KEY}
@@ -46,18 +45,8 @@ services:
       retries: 30
     restart: unless-stopped
 
-  edge:
-    image: alpine:3.22
-    command: ["sleep", "2147483647"]
-    ports:
-      - "${AIWIKI_BIND_ADDR:-127.0.0.1}:${AIWIKI_PORT:-8090}:8090"
-    restart: unless-stopped
-
   s3:
     image: docker.io/chrislusf/seaweedfs:4.48
-    network_mode: "service:edge"
-    depends_on:
-      - edge
     environment:
       S3_ACCESS_KEY: ${AIWIKI_S3_ACCESS_KEY:?set AIWIKI_S3_ACCESS_KEY}
       S3_SECRET_KEY: ${AIWIKI_S3_SECRET_KEY:?set AIWIKI_S3_SECRET_KEY}
@@ -67,13 +56,12 @@ services:
     command:
       - |
         printf '{"identities":[{"name":"aiwiki","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json
-        exec weed server -ip=127.0.0.1 -ip.bind=127.0.0.1 -dir=/data -filer -s3 -s3.port=8333 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=1024 -master.telemetry=false
+        exec weed server -ip=s3 -ip.bind=0.0.0.0 -dir=/data -filer -s3 -s3.port=8333 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=1024 -master.telemetry=false
     restart: unless-stopped
 
   # Creates the private bucket once and exits; repeated starts find it present.
   s3-init:
     image: docker.io/chrislusf/seaweedfs:4.48
-    network_mode: "service:edge"
     depends_on:
       - s3
     entrypoint: ["/bin/sh", "-c"]
@@ -81,8 +69,8 @@ services:
       - |
         i=0
         while [ "$$i" -lt 90 ]; do
-          if printf 's3.bucket.list\nexit\n' | weed shell -master=127.0.0.1:9333 2>&1 | grep -qw wiki; then exit 0; fi
-          printf 's3.bucket.create -name wiki\nexit\n' | weed shell -master=127.0.0.1:9333 >/dev/null 2>&1
+          if printf 's3.bucket.list\nexit\n' | weed shell -master=s3:9333 2>&1 | grep -qw wiki; then exit 0; fi
+          printf 's3.bucket.create -name wiki\nexit\n' | weed shell -master=s3:9333 >/dev/null 2>&1
           i=$$((i+1)); sleep 2
         done
         echo "bucket wiki could not be created" >&2; exit 1
@@ -91,7 +79,8 @@ services:
   wiki:
     build: .
     image: aiwiki:personal
-    network_mode: "service:edge"
+    ports:
+      - "${AIWIKI_BIND_ADDR:-127.0.0.1}:${AIWIKI_PORT:-8090}:8090"
     depends_on:
       db:
         condition: service_healthy
@@ -109,7 +98,6 @@ services:
   import:
     profiles: ["import"]
     image: aiwiki:personal
-    network_mode: "service:edge"
     depends_on:
       db:
         condition: service_healthy

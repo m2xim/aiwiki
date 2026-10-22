@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 )
 
@@ -45,5 +46,5 @@ func runCheckStorage(args []string) int {
 }
 
 func s3ConfigFromEnv() server.S3Config {
-	return server.S3Config{Bucket: os.Getenv("AIWIKI_S3_BUCKET"), Region: os.Getenv("AIWIKI_S3_REGION"), Endpoint: os.Getenv("AIWIKI_S3_ENDPOINT"), Prefix: os.Getenv("AIWIKI_S3_PREFIX"), PathStyle: os.Getenv("AIWIKI_S3_PATH_STYLE") == "1", AllowInsecureLoopback: os.Getenv("AIWIKI_ALLOW_INSECURE_LOOPBACK") == "1"}
+	return server.S3Config{Bucket: os.Getenv("AIWIKI_S3_BUCKET"), Region: os.Getenv("AIWIKI_S3_REGION"), Endpoint: os.Getenv("AIWIKI_S3_ENDPOINT"), Prefix: os.Getenv("AIWIKI_S3_PREFIX"), PathStyle: os.Getenv("AIWIKI_S3_PATH_STYLE") == "1", AllowInsecureLoopback: os.Getenv("AIWIKI_ALLOW_INSECURE_LOOPBACK") == "1", AllowHTTPHosts: strings.FieldsFunc(os.Getenv("AIWIKI_S3_ALLOW_HTTP_HOSTS"), func(r rune) bool { return r == ',' || r == ' ' })}
 }
