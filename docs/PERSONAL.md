@@ -84,7 +84,28 @@ Exactly these rows, created idempotently at every start and by the import:
   revision snapshot, read back through the runtime role as the owner (so the
   check also proves that row-level security lets the owner see everything).
 * `-dry-run` performs everything in a transaction that is rolled back and
-  uploads nothing; it reports what would be copied.
+  uploads nothing; it reports what would be copied. The server migrations
+  (schema only) are applied in a dry run too, as the server would at start.
+
+Details of the import:
+
+* Stop the old server first. `wiki.db` (and a pending `wiki.db-wal`) is copied
+  byte for byte; if the files change while they are copied, the import refuses.
+* No trigger or policy is disabled. Articles are inserted parents first (the
+  insert guard requires a parent in the same space); a missing parent, a parent
+  in another space or a cycle is a refusal, as is any project reference (trusted
+  mode has none), a revision snapshot of an unknown space, or an attachment file
+  whose size differs from the database. Deleted attachments count: their files
+  must exist too. Search rows exist for live articles only, as in the server.
+* The revision ids are kept and the `revisions` sequence is advanced past the
+  largest id just before the commit (a sequence is not transactional, so a dry
+  run or an aborted run never moves it).
+* Artifacts get `owner_id='owner'` and links `created_by='owner'` (trusted mode
+  has no owner, and a private artifact or a link would otherwise be invisible);
+  everything else of an artifact is copied unchanged, blobs under `art-<sha256>`.
+  Embedding vectors are derived data and are not copied; the server rebuilds them.
+* Space usage is not charged against a quota while importing; it counts
+  afterwards like any other stored data.
 
 ## Deployment
 
