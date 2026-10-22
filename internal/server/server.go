@@ -30,6 +30,7 @@ type Server struct {
 	spaceQuotaDefault int64
 	accessLog         *slog.Logger
 	ready             *readiness
+	semantic          *semanticIndex
 }
 
 // SetAllowedOrigin enables one explicitly trusted, canonicalized browser origin.
@@ -107,6 +108,7 @@ func Open(dataDir, webDir string) (*Server, error) {
 	return s, nil
 }
 func (s *Server) Close() error {
+	s.semantic.close()
 	if s.authDB != nil {
 		_ = s.authDB.Close()
 	}

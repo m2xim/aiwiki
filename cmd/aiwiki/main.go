@@ -32,6 +32,10 @@ func run() error {
 	web := flag.String("web", "web/dist", "Built frontend directory")
 	allowedOrigin := flag.String("allowed-origin", "", "trusted browser origin and remote Host authority (for example http://192.0.2.10:8090)")
 	flag.Parse()
+	semantic, err := server.SemanticConfigFromEnv()
+	if err != nil {
+		return err
+	}
 	if *allowedOrigin != "" {
 		if err := server.ValidateAllowedOrigin(*allowedOrigin); err != nil {
 			return err
@@ -82,6 +86,12 @@ func run() error {
 		return err
 	}
 	defer s.Close()
+	if err := s.EnableSemantic(semantic); err != nil {
+		return err
+	}
+	if semantic.URL != "" {
+		log.Printf("semantic section search: model %s", semantic.Model)
+	}
 	if *allowedOrigin != "" {
 		if err := s.SetAllowedOrigin(*allowedOrigin); err != nil {
 			return err

@@ -81,5 +81,8 @@ func (d *database) validateRuntimeSchema() error {
 	if err := d.validateArtifactSchema(); err != nil {
 		return err
 	}
-	return d.validateStorageQuotaSchema()
+	if err := d.validateStorageQuotaSchema(); err != nil {
+		return err
+	}
+	return d.validateSemanticSchema()
 }
