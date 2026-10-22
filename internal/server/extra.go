@@ -324,6 +324,26 @@ func (s *Server) addAttachment(w http.ResponseWriter, r *http.Request, aid strin
 	}
 	fid := newID()
 	stored := fid
+	quotaItems := []quotaItem{attachmentQuotaItem(stored, size)}
+	if s.quotaApplies() {
+		// Early answer before the bytes go to the object store; the binding check
+		// is the one in the inserting transaction below.
+		early, doneEarly, resumeErr := s.DB.resumeAfterTransfer(r.Context())
+		if resumeErr != nil {
+			apiErr(w, 503, "database unavailable")
+			return
+		}
+		qerr := s.quotaPrecheck(early, art.SpaceID, art.ProjectID, quotaItems)
+		doneEarly()
+		if isQuotaError(qerr) {
+			apiErr(w, http.StatusRequestEntityTooLarge, spaceQuotaMessage)
+			return
+		}
+		if qerr != nil {
+			apiErr(w, 500, "database error")
+			return
+		}
+	}
 	if e = store.Put(r.Context(), stored, f, size, typ); e != nil {
 		log.Printf("attachment upload failed")
 		apiErr(w, 500, "could not store file")
@@ -335,7 +355,7 @@ func (s *Server) addAttachment(w http.ResponseWriter, r *http.Request, aid strin
 		e = resumeErr
 	} else {
 		defer done()
-		_, e = metadata.Exec("INSERT INTO attachments(id,article_id,name,mime,size,stored_name,created_at) VALUES(?,?,?,?,?,?,?)", a.ID, aid, a.Name, a.MIME, a.Size, stored, a.CreatedAt)
+		e = s.insertAttachment(metadata, a, stored, art, quotaItems)
 	}
 	if e != nil {
 		cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -343,10 +363,31 @@ func (s *Server) addAttachment(w http.ResponseWriter, r *http.Request, aid strin
 		if store.Delete(cctx, stored) != nil {
 			log.Printf("attachment cleanup failed")
 		}
+		if isQuotaError(e) {
+			apiErr(w, http.StatusRequestEntityTooLarge, spaceQuotaMessage)
+			return
+		}
 		apiErr(w, 500, "database error")
 		return
 	}
 	writeJSON(w, 201, a)
+}
+
+// insertAttachment records the attachment. In corporate mode the quota check and
+// the insert share one transaction (and the space's advisory lock).
+func (s *Server) insertAttachment(d *database, a Attachment, stored string, art Article, items []quotaItem) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.quotaAdmit(tx, art.SpaceID, art.ProjectID, items); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("INSERT INTO attachments(id,article_id,name,mime,size,stored_name,created_at) VALUES(?,?,?,?,?,?,?)", a.ID, a.ArticleID, a.Name, a.MIME, a.Size, stored, a.CreatedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Server) fileRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

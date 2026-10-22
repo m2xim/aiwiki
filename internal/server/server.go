@@ -25,8 +25,11 @@ type Server struct {
 	auth            *AuthService
 	principal       *Principal
 	art             *artifactState
-	accessLog       *slog.Logger
-	ready           *readiness
+	// spaceQuotaDefault is AIWIKI_SPACE_QUOTA_BYTES: the storage limit of a space
+	// without an override (0 = unlimited). Corporate mode only.
+	spaceQuotaDefault int64
+	accessLog         *slog.Logger
+	ready             *readiness
 }
 
 // SetAllowedOrigin enables one explicitly trusted, canonicalized browser origin.
@@ -143,6 +146,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/spaces", s.spaces)
 	mux.HandleFunc("/api/spaces/{id}", s.space)
 	mux.HandleFunc("GET /api/spaces/{id}/audit", s.spaceAudit)
+	mux.HandleFunc("GET /api/spaces/{id}/storage", s.spaceStorage)
 	mux.HandleFunc("GET /api/tags", s.tags)
 	mux.HandleFunc("/api/articles", s.articles)
 	mux.HandleFunc("/api/articles/", s.articleRoute)

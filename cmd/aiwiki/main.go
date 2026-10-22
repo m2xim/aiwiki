@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -53,6 +54,14 @@ func run() error {
 			corporate = true
 		}
 	}
+	var spaceQuota int64
+	if v := strings.TrimSpace(os.Getenv("AIWIKI_SPACE_QUOTA_BYTES")); v != "" {
+		parsed, perr := strconv.ParseInt(v, 10, 64)
+		if perr != nil || parsed < 0 {
+			return errors.New("AIWIKI_SPACE_QUOTA_BYTES must be a non-negative number of bytes")
+		}
+		spaceQuota = parsed
+	}
 	if corporate {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -64,6 +73,7 @@ func run() error {
 			IssuerURL: issuer, ClientID: os.Getenv("AIWIKI_OIDC_CLIENT_ID"), ClientSecret: os.Getenv("AIWIKI_OIDC_CLIENT_SECRET"), RedirectURL: os.Getenv("AIWIKI_OIDC_REDIRECT_URL"),
 			AccessRole: os.Getenv("AIWIKI_OIDC_ACCESS_ROLE"), AdminRole: os.Getenv("AIWIKI_OIDC_ADMIN_ROLE"), RolesClaim: os.Getenv("AIWIKI_OIDC_ROLES_CLAIM"),
 			AllowInsecureHTTP: os.Getenv("AIWIKI_ALLOW_INSECURE_LOOPBACK") == "1",
+			SpaceQuotaBytes:   spaceQuota,
 		}, *data, *web)
 	} else {
 		s, err = server.Open(*data, *web)

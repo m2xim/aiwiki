@@ -10,6 +10,10 @@ func (d *database) validateRuntimeSchema() error {
 	if err := d.QueryRow(`SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('spaces','articles','revisions','comments','attachments','favorites','article_fts')`).Scan(&count); err != nil || count != 7 {
 		return errors.New("corporate schema is not initialized")
 	}
+	var memberOf int
+	if err := d.QueryRow(`SELECT count(*) FROM pg_auth_members m WHERE m.member=(SELECT oid FROM pg_roles WHERE rolname=current_user)`).Scan(&memberOf); err != nil || memberOf != 0 {
+		return errors.New("runtime role must not be a member of any role")
+	}
 	var mcpReady bool
 	if err := d.QueryRow(`SELECT to_regprocedure('public.corporate_mcp_scope_active()') IS NOT NULL AND to_regprocedure('public.corporate_owner_effective_role(text,text,text)') IS NOT NULL`).Scan(&mcpReady); err != nil || !mcpReady {
 		return errors.New("MCP access schema migration is required")
@@ -74,5 +78,8 @@ func (d *database) validateRuntimeSchema() error {
 	if err := d.QueryRow(`SELECT has_schema_privilege(current_user,'public','CREATE') OR has_table_privilege(current_user,'security_audit','UPDATE,DELETE') OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') AND has_table_privilege(current_user,c.oid,'TRUNCATE,TRIGGER')) OR EXISTS(SELECT 1 FROM pg_roles WHERE rolname=current_user AND (rolsuper OR rolbypassrls OR rolcreaterole))`).Scan(&unsafe); err != nil || unsafe {
 		return errors.New("runtime role has unsafe schema, audit or role privileges")
 	}
-	return d.validateArtifactSchema()
+	if err := d.validateArtifactSchema(); err != nil {
+		return err
+	}
+	return d.validateStorageQuotaSchema()
 }

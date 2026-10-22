@@ -40,7 +40,10 @@ func (s *Server) migrateCorporate() error {
 	if err := s.migrateCorporateMoves(ctx); err != nil {
 		return err
 	}
-	return s.migrateArtifacts(ctx)
+	if err := s.migrateArtifacts(ctx); err != nil {
+		return err
+	}
+	return s.migrateStorageQuotas(ctx)
 }
 
 // splitCorporateSQL separates commands while preserving function bodies,
