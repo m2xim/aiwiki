@@ -33,6 +33,7 @@ export function SpacesDirectory({ trusted, currentSpaceId, onOpenSpace, onCreate
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  const flushRef = useRef<(() => void) | null>(null);
   const lastQ = useRef(state.q);
   useEffect(() => {
     const typed = lastQ.current !== state.q; lastQ.current = state.q;
@@ -43,11 +44,14 @@ export function SpacesDirectory({ trusted, currentSpaceId, onOpenSpace, onCreate
       const url = `${location.pathname}${query ? `?${query}` : ''}${location.hash}`;
       if (url !== `${location.pathname}${location.search}${location.hash}`) replaceUrl(url);
     };
-    if (!typed) { write(); return; }
-    const timer = window.setTimeout(write, 300);
+    if (!typed) { flushRef.current = null; write(); return; }
+    const timer = window.setTimeout(() => { flushRef.current = null; write(); }, 300);
+    flushRef.current = () => { window.clearTimeout(timer); flushRef.current = null; write(); };
     return () => window.clearTimeout(timer);
   }, [state]);
 
+  // A click inside the debounce window must still leave the typed filter in this history entry, so Back restores it.
+  const openSpace = useCallback((id: string) => { flushRef.current?.(); onOpenSpace(id); }, [onOpenSpace]);
   const update = useCallback((patch: Partial<SpacesQuery>) => setState(value => ({ ...value, ...patch })), []);
   const shown = useMemo(() => spaces ? filterSpaces(spaces, state) : [], [spaces, state]);
   const filtered = state.q.trim() !== '' || state.kind !== 'all' || state.access !== 'any';
@@ -69,7 +73,7 @@ export function SpacesDirectory({ trusted, currentSpaceId, onOpenSpace, onCreate
         </div>
         {error && <div className="spaces-dir-more-error" role="alert">Не удалось обновить список: {error} <button onClick={() => setReload(v => v + 1)}>Повторить</button></div>}
         {shown.length === 0 ? <div className="spaces-dir-state"><strong>Ничего не найдено</strong>{filtered && <button className="button ghost" onClick={() => setState(DEFAULT_SPACES_QUERY)}>Сбросить фильтры</button>}</div>
-          : <ul className="spaces-dir-list">{shown.map(space => <SpaceCard key={space.id} space={space} trusted={trusted} current={space.id === currentSpaceId} onOpen={onOpenSpace}/>)}</ul>}
+          : <ul className="spaces-dir-list">{shown.map(space => <SpaceCard key={space.id} space={space} trusted={trusted} current={space.id === currentSpaceId} onOpen={openSpace}/>)}</ul>}
       </>}
   </section>;
 }
