@@ -2,6 +2,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Article } from './api';
 import { Markdown, parseInternalLink } from './markdown';
+import type { PdfImage } from './articlePdf';
+import { buildPdfDocument, classifyImageUrl, collectImageUrls, loadPdfMake, parseMarkdown } from './articlePdf';
 import { EXPORT_CSS, MAX_EMBEDDED_BYTES, buildExportDocument, escapeHtml, exportFileName } from './articleExportCore';
 
 export { escapeHtml, exportFileName, buildExportDocument } from './articleExportCore';
@@ -105,18 +107,65 @@ export function downloadHtml(article: Article, html: string) {
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-export function printHtml(html: string) {
-  const frame = document.createElement('iframe');
-  frame.setAttribute('aria-hidden', 'true'); frame.tabIndex = -1;
-  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
-  let done = false; let timer = 0;
-  const cleanup = () => { if (done) return; done = true; clearTimeout(timer); frame.remove(); };
-  frame.addEventListener('load', () => {
-    const win = frame.contentWindow; if (!win) { cleanup(); return; }
-    win.addEventListener('afterprint', cleanup);
-    timer = window.setTimeout(cleanup, 60000);
-    try { win.focus(); win.print(); } catch { cleanup(); }
-  });
-  frame.srcdoc = html;
-  document.body.append(frame);
+const CONVERT_TYPES = new Set(['image/gif', 'image/webp']);
+
+async function blobToPdfImage(blob: Blob, type: string): Promise<PdfImage> {
+  const bitmap = await createImageBitmap(blob);
+  try {
+    if (!CONVERT_TYPES.has(type)) {
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(new Blob([blob], { type }));
+      });
+      return { dataUri, width: bitmap.width, height: bitmap.height };
+    }
+    // pdfmake takes PNG/JPEG only: GIF (first frame) and WebP go through a canvas.
+    const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const context = canvas.getContext('2d'); if (!context) return { error: 'ошибка преобразования' };
+    context.drawImage(bitmap, 0, 0);
+    return { dataUri: canvas.toDataURL('image/png'), width: bitmap.width, height: bitmap.height };
+  } finally { bitmap.close(); }
+}
+
+/** Fetches/decodes every image the PDF can embed (same-origin /files/<id> within the 15 MB budget, data: URIs). */
+export async function loadPdfImages(urls: string[]): Promise<Map<string, PdfImage>> {
+  const images = new Map<string, PdfImage>();
+  let total = 0;
+  for (const src of urls) {
+    const source = classifyImageUrl(src, location.origin);
+    if (source.kind === 'external') { images.set(src, { external: true }); continue; }
+    if (source.kind === 'invalid') { images.set(src, { error: source.url.startsWith('data:') ? 'неподдерживаемый тип' : 'недоступный адрес' }); continue; }
+    try {
+      const response = await fetch(source.url, { credentials: 'same-origin' });
+      if (!response.ok) { images.set(src, { error: `ответ сервера ${response.status}` }); continue; }
+      const blob = await response.blob();
+      const type = (blob.type || response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (!IMAGE_TYPES.has(type)) { images.set(src, { error: 'неподдерживаемый тип файла' }); continue; }
+      if (source.kind === 'file') {
+        if (total + blob.size > MAX_EMBEDDED_BYTES) { images.set(src, { error: 'превышен лимит 15 МБ' }); continue; }
+        total += blob.size;
+      }
+      images.set(src, await blobToPdfImage(blob, type));
+    } catch { images.set(src, { error: 'ошибка загрузки' }); }
+  }
+  return images;
+}
+
+/** Builds the article PDF in the browser (pdfmake is imported lazily) and returns it as a Blob. */
+export async function buildArticlePdf(article: Article, spaceName?: string): Promise<{ blob: Blob; warnings: string[] }> {
+  const body = article.body || '';
+  const images = await loadPdfImages(collectImageUrls(parseMarkdown(body)));
+  const { docDefinition, warnings } = buildPdfDocument({ ...article, body }, { origin: location.origin, images, spaceName });
+  try {
+    const pdfMake = await loadPdfMake();
+    return { blob: await pdfMake.createPdf(docDefinition).getBlob(), warnings };
+  } catch (e) {
+    throw new Error(`Не удалось сформировать PDF${e instanceof Error && e.message ? `: ${e.message}` : '.'}`);
+  }
+}
+
+export function downloadPdf(article: Article, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = exportFileName(article.title, article.revision, 'pdf'); a.style.display = 'none';
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
 }

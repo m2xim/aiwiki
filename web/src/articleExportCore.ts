@@ -7,10 +7,10 @@ export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-/** `<title>-r<revision>.html`: forbidden characters and control chars removed, title cut to 80 chars, empty -> `article`. */
-export function exportFileName(title: string, revision: number): string {
+/** `<title>-r<revision>.<ext>` (html by default): forbidden characters and control chars removed, title cut to 80 chars, empty -> `article`. */
+export function exportFileName(title: string, revision: number, ext = 'html'): string {
   const cleaned = [...title.replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim()].slice(0, 80).join('').trim();
-  return `${cleaned || 'article'}-r${revision}.html`;
+  return `${cleaned || 'article'}-r${revision}.${ext}`;
 }
 
 export const EXPORT_CSS = `
