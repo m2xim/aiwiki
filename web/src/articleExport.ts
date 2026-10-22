@@ -43,6 +43,7 @@ export async function processBody(rawHtml: string, warnings: string[]): Promise<
   doc.querySelectorAll('a').forEach(a => {
     const href = a.getAttribute('href');
     if (href === null || href.startsWith('#')) { a.removeAttribute('target'); return; }
+    if (!href.trim()) { a.removeAttribute('href'); return; } // react-markdown empties unsafe URLs
     const internal = parseInternalLink(href);
     if (internal) {
       a.setAttribute('href', `${location.origin}/?article=${encodeURIComponent(internal.id)}${internal.anchor ? '#' + encodeURIComponent(internal.anchor) : ''}`);
@@ -90,7 +91,8 @@ export async function buildArticleExport(article: Article, spaceName?: string): 
   const items = [`Ревизия ${article.revision}`, `Обновлено: ${fmtDate(article.updated_at)}`, article.author ? `Автор: ${article.author}` : '', spaceName ? `Пространство: ${spaceName}` : '']
     .filter(Boolean).map(x => `<span>${escapeHtml(x)}</span>`).join('');
   // Articles usually start with "# <title>"; do not print the title twice.
-  const first = new DOMParser().parseFromString(bodyHtml, 'text/html').body.firstElementChild;
+  const parsed = new DOMParser().parseFromString(bodyHtml, 'text/html').body;
+  const first = (parsed.querySelector(':scope > .markdown') || parsed).firstElementChild;
   const titled = first?.tagName === 'H1' && first.textContent?.trim() === article.title.trim();
   const metaHtml = `<header class="doc-head">${titled ? '' : `<h1 class="doc-title">${escapeHtml(article.title)}</h1>`}<p class="doc-meta">${items}<span>Оригинал: <a href="${escapeHtml(link)}">${escapeHtml(link)}</a></span></p></header>`;
   const footerHtml = `<footer class="doc-foot">Экспортировано ${escapeHtml(new Date().toLocaleString('ru-RU'))}. Это независимый снимок ревизии ${article.revision}: он не обновляется при изменении статьи в вики.</footer>`;
