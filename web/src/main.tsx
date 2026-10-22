@@ -692,7 +692,7 @@ const REAUTH_HINT = 'Если на странице входа уже подст
 function AuthGate() {
   const [loginError, setLoginError] = useState<string | null>(() => {
     const code = new URLSearchParams(location.search).get('login_error');
-    return code === null ? null : (code in LOGIN_ERRORS ? code : 'expired');
+    return code === null ? null : (Object.hasOwn(LOGIN_ERRORS, code) ? code : 'expired');
   });
   const [session, setSession] = useState<AuthSession | null>(null);
   const [error, setError] = useState('');
