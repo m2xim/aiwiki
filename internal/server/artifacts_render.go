@@ -399,6 +399,7 @@ func (s *Server) artifactFrame(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	st := s.artifacts()
 	if !st.limiter.allow("frame:"+st.clientIP(r), frameIPLimit, time.Minute) {
+		defaultMetrics.rateLimited("artifact_frame")
 		w.Header().Set("Retry-After", "60")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -620,6 +621,12 @@ func (s *Server) publicArtifact(w http.ResponseWriter, r *http.Request) {
 
 	tokenOK := st.limiter.allow("tok:"+hashShareToken(token), publicTokenLimit, time.Minute)
 	if !ipOK || !tokenOK {
+		if !ipOK {
+			defaultMetrics.rateLimited("artifact_public")
+		}
+		if !tokenOK {
+			defaultMetrics.rateLimited("artifact_token")
+		}
 		publicPageHeaders(w.Header())
 		w.Header().Set("Retry-After", "60")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -720,6 +727,7 @@ func (s *Server) withArtifactOrigin(app http.Handler) http.Handler {
 	trusted := newTrustedHost(origin)
 	mux := http.NewServeMux()
 	s.registerArtifactAssetRoutesFrameOnly(mux)
+	tracked := trackMux(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authority, ok := parseHostAuthority(r.Host); ok && trusted.matches(authority) {
 			if !isArtifactAssetRequest(r) {
@@ -730,7 +738,7 @@ func (s *Server) withArtifactOrigin(app http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 				w.Header().Set("Vary", "Origin")
 			}
-			mux.ServeHTTP(w, r)
+			tracked.ServeHTTP(w, r)
 			return
 		}
 		if isArtifactAssetPath(r.URL.Path) {

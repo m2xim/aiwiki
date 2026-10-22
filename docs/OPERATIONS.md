@@ -30,7 +30,7 @@ atomic counters.
 * A non-loopback address requires `AIWIKI_METRICS_TOKEN` of at least 32
   characters; the scrape must send `Authorization: Bearer <token>` (compared in
   constant time). A non-loopback address without the token is a startup error.
-  On loopback the token is optional and enforced when set.
+  On a literal loopback IP (127.0.0.0/8, ::1) the token is optional and enforced when set; the name `localhost` counts as non-loopback and needs the token.
 * No new Go dependency: the exposition is written by hand.
 * Labels never contain identifiers, titles, user names, e-mail addresses,
   search queries, tokens, paths with values, or any other unbounded value.
@@ -56,8 +56,10 @@ Metrics (names are part of the contract):
 Histogram buckets: 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, +Inf.
 
 **Route label.** `route` is the `net/http.ServeMux` pattern that served the
-request (for example `GET /api/spaces/{id}/audit`), or `other` when no pattern
-matched or the pattern is the static catch-all `/`, then `static`.
+request (for example `GET /api/spaces/{id}/audit`). The catch-all pattern `/`
+is labelled `static`, except for paths under `/api/`, `/files/` and `/mcp`,
+where it only produces a 404 or an authentication refusal and is labelled
+`other`. When no pattern matched, the label is `other`.
 `ServeMux.ServeHTTP` writes `Pattern` into the `*Request` it received
 (`net/http/server.go`, Go 1.26: `h, r.Pattern, r.pat, r.matches = mux.findHandler(r)`),
 and every `WithContext` in between makes a copy, so the outer middleware cannot
