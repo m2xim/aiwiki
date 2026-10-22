@@ -246,3 +246,8 @@ That manual bypass is closed for artifacts: the deferred constraint trigger
 that leaves an artifact in another space (the whole transaction is rolled back).
 The owner of a project therefore cannot strand its artifacts; articles still can be
 (see above).
+
+If a deferred artifact check fails at commit (for example an artifact was created in a
+moved project by a concurrent MCP session), `apply` answers `409`
+`{"error":"concurrent change, retry"}` and nothing is changed. The project subtree is
+walked to a depth of 64 levels in the server and in the database function alike.

@@ -214,6 +214,12 @@ func (s *Server) moveHandler(w http.ResponseWriter, r *http.Request, apply bool)
 		return
 	}
 	if err = tx.Commit(); err != nil {
+		// The deferred artifact checks run at commit: a concurrent change (for example an
+		// artifact created in a moved project meanwhile) rolls this move back.
+		if strings.Contains(err.Error(), "SQLSTATE 42501") {
+			apiErr(w, http.StatusConflict, "concurrent change, retry")
+			return
+		}
 		apiErr(w, 500, "database error")
 		return
 	}
@@ -392,7 +398,7 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 			rows, err := tx.Query(`WITH RECURSIVE sub(id,depth,path) AS (
 			SELECT id,0,ARRAY[id]::text[] FROM projects WHERE id=?
 			UNION ALL
-			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<64
+			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<63
 		) SELECT p.id,p.parent_id,p.space_id,coalesce(p.archived_at,'')<>'',corporate_role_rank(corporate_effective_role(?,p.space_id,p.id)) FROM sub JOIN projects p ON p.id=sub.id ORDER BY sub.depth,p.id LIMIT ?`+lockSuffix(lock, " FOR NO KEY UPDATE OF p"), req.ID, actor, moveMaxProjects+1)
 			if err != nil {
 				return nil, false, moveDBFail(err)
@@ -468,7 +474,7 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 		arows, err := tx.Query(`WITH RECURSIVE sub(id,depth,path) AS (
 			SELECT id,0,ARRAY[id]::text[] FROM projects WHERE id=?
 			UNION ALL
-			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<64
+			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<63
 		) SELECT a.id,a.revision,a.parent_id,coalesce(a.deleted_at,'')<>'' FROM articles a WHERE a.project_id IN (SELECT id FROM sub) AND a.space_id<>? ORDER BY a.id LIMIT ?`+lockSuffix(lock, " FOR NO KEY UPDATE OF a"), req.ID, t.SpaceID, moveMaxArticles+1)
 		if err != nil {
 			return nil, moveDBFail(err)
@@ -496,7 +502,7 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 			xrows, err := tx.Query(`WITH RECURSIVE sub(id,depth,path) AS (
 			SELECT id,0,ARRAY[id]::text[] FROM projects WHERE id=?
 			UNION ALL
-			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<64
+			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<63
 		) SELECT a.id,a.revision FROM artifacts a WHERE a.project_id IN (SELECT id FROM sub) ORDER BY a.id LIMIT ?`, req.ID, moveMaxArtifacts+1)
 			if err != nil {
 				return nil, moveDBFail(err)

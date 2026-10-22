@@ -344,3 +344,29 @@ person moving cannot see. Same-space moves change nothing for artifacts.
   revisions of the visible artifacts, so a change between preview and apply gives
   `409`. The `move.project` audit event carries `artifacts` (the real number moved,
   no ids).
+
+### Moving a project: races and manual bypasses (schema v4)
+
+There is no foreign key `artifacts.project_id -> projects`, so v4 adds database checks
+instead (all deferred constraint triggers, judged at commit; violation = `42501`):
+
+- `artifact_rows_container_check` on `artifacts` (insert, change of `space_id` or
+  `project_id`): the artifact must live in the space of its project. This closes the
+  race "an artifact is created in a project while the project moves": creation by
+  MCP sessions does not share-lock the project, so the second of the two transactions
+  to commit is rolled back (the move answers `409 concurrent change, retry`, a
+  creation fails). The ordinary API takes the share lock and is unaffected.
+- `artifact_projects_insert_check` (the same check after a project row is inserted)
+  and `artifact_projects_no_delete`: the runtime role cannot delete projects (the
+  application never does), so "delete and re-insert the project row with another
+  space" is not possible for it. The database owner role is trusted and is not
+  covered by these probes.
+- `artifact_guard` allows the container change only if the new space equals the space
+  of the artifact's project, in addition to the probe predicate and `app.move`.
+- Startup: `validateArtifactSchema` verifies trigger types, events, columns and
+  deferral, the expressions of `artifacts_probe_update`, key fragments of the guard,
+  and that the runtime role is not a member of any role (the probe predicate relies
+  on `current_user = session_user` for it). The server also logs a non-fatal warning
+  with the number of artifacts outside their project's space
+  (`artifact_stray_count()`).
+- The subtree walk is limited to 64 levels both in the server and in the SQL function.
