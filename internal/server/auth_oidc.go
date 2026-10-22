@@ -102,7 +102,44 @@ type authLogin struct {
 	binder   [32]byte
 	nonce    string
 	verifier string
+	returnTo string // validated in-app address to open after sign-in, "" means "/"
 	expires  time.Time
+}
+
+const authReturnMax = 2048
+
+// authReturnTarget validates the optional `return` parameter of /auth/login.
+// The shell is a single page, so only the path "/" with its own query and
+// fragment is accepted; anything else (other paths, absolute or
+// protocol-relative URLs, backslashes, control characters, encoded path
+// tricks such as /%2F%2Fevil) yields "" and the caller falls back to "/".
+// Bytes outside printable ASCII are percent-encoded so the Location header is
+// always plain ASCII.
+func authReturnTarget(raw string) string {
+	if raw == "" || len(raw) > authReturnMax || raw[0] != '/' {
+		return ""
+	}
+	if len(raw) > 1 && (raw[1] == '/' || raw[1] == '\\') {
+		return ""
+	}
+	for i := 0; i < len(raw); i++ {
+		if c := raw[i]; c < 0x20 || c == 0x7f || c == '\\' {
+			return ""
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" || u.Path != "/" {
+		return ""
+	}
+	var b strings.Builder
+	for i := 0; i < len(raw); i++ {
+		if c := raw[i]; c <= 0x20 || c >= 0x7f {
+			fmt.Fprintf(&b, "%%%02X", c)
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // authUsers is the persistence the auth slice needs from the users table.
@@ -778,6 +815,7 @@ func (a *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 		binder:   authHash(binder),
 		nonce:    nonce,
 		verifier: verifier,
+		returnTo: authReturnTarget(r.URL.Query().Get("return")),
 		expires:  now.Add(authLoginTTL),
 	}
 	a.mu.Unlock()
@@ -909,7 +947,11 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setCookie(w, a.sessionCookie, secret, int(expires.Sub(now).Seconds()))
-	http.Redirect(w, r, "/", http.StatusSeeOther) // never caller-controlled
+	dest := "/"
+	if lg.returnTo != "" {
+		dest = lg.returnTo // validated at login: in-app "/" only
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
 func (a *AuthService) handleMe(w http.ResponseWriter, r *http.Request) {

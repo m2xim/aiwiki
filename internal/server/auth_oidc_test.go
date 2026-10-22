@@ -883,3 +883,108 @@ func TestAuthCallbackErrorRedirects(t *testing.T) {
 	x.iss.down = false
 	x.iss.mu.Unlock()
 }
+
+// loginWithReturn runs the full flow starting at /auth/login?<query>.
+func (x *authHarness) loginWithReturn(query string, g authGrant) (loginLoc string, cb *httptest.ResponseRecorder) {
+	x.t.Helper()
+	rec := x.do("GET", "/auth/login?"+query, "", nil)
+	if rec.Code != http.StatusFound {
+		x.t.Fatalf("login status %d", rec.Code)
+	}
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		x.t.Fatal(err)
+	}
+	q := loc.Query()
+	g.nonce = q.Get("nonce")
+	code := x.iss.issueCode(q.Get("code_challenge"), g)
+	cb = x.do("GET", "/auth/callback?code="+code+"&state="+url.QueryEscape(q.Get("state")), "", nil, authCookie(rec, x.a.loginCookie))
+	return rec.Header().Get("Location"), cb
+}
+
+func TestAuthLoginReturnTarget(t *testing.T) {
+	x := newAuthHarness(t, nil)
+	accepted := []struct{ in, want string }{
+		{"/", "/"},
+		{"/?view=spaces", "/?view=spaces"},
+		{"/?article=ID#section", "/?article=ID#section"},
+		{"/?article=ID#раздел", "/?article=ID#%D1%80%D0%B0%D0%B7%D0%B4%D0%B5%D0%BB"},
+	}
+	for _, c := range accepted {
+		_, cb := x.loginWithReturn("return="+url.QueryEscape(c.in), authUserGrant("ret", "aiwiki-access"))
+		if cb.Code != http.StatusSeeOther || cb.Header().Get("Location") != c.want {
+			t.Errorf("return %q: want 303 %q, got %d %q", c.in, c.want, cb.Code, cb.Header().Get("Location"))
+		}
+	}
+	// reauth=1 keeps working together with return.
+	loginLoc, cb := x.loginWithReturn("reauth=1&return="+url.QueryEscape("/?view=spaces"), authUserGrant("ret", "aiwiki-access"))
+	if !strings.Contains(loginLoc, "prompt=login") || cb.Header().Get("Location") != "/?view=spaces" {
+		t.Errorf("reauth+return: %q -> %q", loginLoc, cb.Header().Get("Location"))
+	}
+
+	// Everything except "/" (with query/fragment) falls back to "/". The
+	// encoded "/%2F%2Fevil" is refused as well: its decoded path is not "/",
+	// and a browser may normalise it into a protocol-relative address.
+	rejected := []string{
+		"//evil.example", `/\evil`, "https://evil.example/", "/%2F%2Fevil", "javascript:alert(1)",
+		"", "/?a=\x01", "/?a=\r\nSet-Cookie: x=1", `/?a=\b`, "/other/path", "/auth/login", "evil",
+		"/?" + strings.Repeat("a", authReturnMax),
+	}
+	for _, in := range rejected {
+		_, cb := x.loginWithReturn("return="+url.QueryEscape(in), authUserGrant("ret", "aiwiki-access"))
+		if cb.Code != http.StatusSeeOther || cb.Header().Get("Location") != "/" {
+			t.Errorf("return %q must fall back to /, got %d %q", in, cb.Code, cb.Header().Get("Location"))
+		}
+	}
+	if got := authReturnTarget("/?" + strings.Repeat("a", authReturnMax-2)); got == "" {
+		t.Error("a return of exactly the limit must be accepted")
+	}
+}
+
+func TestAuthReturnNotLeakedIntoErrorsAndStateStaysSingleUse(t *testing.T) {
+	x := newAuthHarness(t, nil)
+	ret := url.QueryEscape("/?view=spaces")
+
+	// Provider-side failure: error redirect carries only the code.
+	rec := x.do("GET", "/auth/login?return="+ret, "", nil)
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	q := loc.Query()
+	lc := authCookie(rec, x.a.loginCookie)
+	r := x.do("GET", "/auth/callback?error=access_denied&state="+url.QueryEscape(q.Get("state")), "", nil, lc)
+	if !authLoginError(r, "failed") {
+		t.Fatalf("provider error: %d %q", r.Code, r.Header().Get("Location"))
+	}
+
+	// Denied user: same, no return.
+	rec = x.do("GET", "/auth/login?return="+ret, "", nil)
+	loc, _ = url.Parse(rec.Header().Get("Location"))
+	q = loc.Query()
+	g := authUserGrant("noroles")
+	g.nonce = q.Get("nonce")
+	code := x.iss.issueCode(q.Get("code_challenge"), g)
+	cb := "/auth/callback?code=" + code + "&state=" + url.QueryEscape(q.Get("state"))
+	lc = authCookie(rec, x.a.loginCookie)
+	if r := x.do("GET", cb, "", nil, lc); !authLoginError(r, "denied") {
+		t.Fatalf("denied: %d %q", r.Code, r.Header().Get("Location"))
+	}
+	// State is burnt: replay is expired.
+	if r := x.do("GET", cb, "", nil, lc); !authLoginError(r, "expired") {
+		t.Fatalf("replay: %d %q", r.Code, r.Header().Get("Location"))
+	}
+
+	// Successful login then replay: second use is expired and has no return.
+	rec = x.do("GET", "/auth/login?return="+ret, "", nil)
+	loc, _ = url.Parse(rec.Header().Get("Location"))
+	q = loc.Query()
+	g = authUserGrant("ret", "aiwiki-access")
+	g.nonce = q.Get("nonce")
+	code = x.iss.issueCode(q.Get("code_challenge"), g)
+	cb = "/auth/callback?code=" + code + "&state=" + url.QueryEscape(q.Get("state"))
+	lc = authCookie(rec, x.a.loginCookie)
+	if r := x.do("GET", cb, "", nil, lc); r.Header().Get("Location") != "/?view=spaces" {
+		t.Fatalf("success: %d %q", r.Code, r.Header().Get("Location"))
+	}
+	if r := x.do("GET", cb, "", nil, lc); !authLoginError(r, "expired") {
+		t.Fatalf("replay after success: %d %q", r.Code, r.Header().Get("Location"))
+	}
+}
