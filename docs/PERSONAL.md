@@ -141,8 +141,8 @@ docker compose --env-file .env.personal -f compose.personal.yaml up -d --build
   read them, as with every other secret of the compose file.
 * Passwords and keys go into URLs and a JSON file unescaped: use letters and
   digits only.
-* Data stays in `./personal-data/pg` and `./personal-data/s3`; back them up as
-  described in BACKUP.md (a database dump plus the bucket).
+* Data stays in `./personal-data/pg` and `./personal-data/s3`; back them up with
+  `scripts/personal-backup.sh` (see Backups below; BACKUP.md has the background).
 * To serve a home network or VPN set both `AIWIKI_BIND_ADDR` (this machine's
   address) and `AIWIKI_ALLOWED_ORIGIN` (the address browsers use). There is no
   login: do not expose the port outside a trusted network.
@@ -160,6 +160,61 @@ docker compose --env-file .env.personal -f compose.personal.yaml up -d --build
 * Without Docker: `AIWIKI_MODE=personal` with the same `AIWIKI_DATABASE_URL`,
   `AIWIKI_MIGRATION_DATABASE_URL`, `AIWIKI_DATABASE_ROLE` and `AIWIKI_S3_*`
   variables as corporate mode, and the usual `-allowed-origin` flag.
+
+## Backups
+
+What is backed up:
+
+* a PostgreSQL dump (`pg_dump -Fc`, taken as the `postgres` superuser inside the `db` container), one file per run in `<backup dir>/db/`;
+* the S3 objects (attachments and artifact files), copied to `<backup dir>/objects/`. Objects are immutable, so each run only adds the new ones and all dumps share the same copy; nothing is ever deleted or overwritten there (a size mismatch is reported as a conflict);
+* **not** included: `.env.personal` (passwords, S3 keys, `AIWIKI_ARTIFACT_SECRET`). Keep it in a secret store of your own; without the same values a restored system cannot sign artifact links.
+
+Run it on the host from the install directory:
+
+```sh
+sh scripts/personal-backup.sh
+```
+
+Settings: `AIWIKI_BACKUP_DIR` (default `./backups/personal`), `AIWIKI_BACKUP_KEEP` (newest dumps kept, default 14; older dumps are removed only after a successful run), `AIWIKI_ENV_FILE` (default `.env.personal`), `AIWIKI_COMPOSE_PROJECT` (compose project name, default empty) and `AIWIKI_BACKUP_UID` / `AIWIKI_BACKUP_GID` (the user the backup container writes as; default is the invoking user, so the copy is not root-owned). The script takes `AIWIKI_BACKUP_DIR`, `AIWIKI_BACKUP_KEEP` and `AIWIKI_COMPOSE_PROJECT` from the shell environment, or else from lines of the env file with exactly those names. It reads only those lines and never sources the file; the shell environment wins. A second run while one is active exits with status 2 (lock `<backup dir>/.lock`).
+
+The order is fixed: dump first, then objects (see [BACKUP.md](BACKUP.md)). The script checks that the dump is a complete archive (`pg_restore -f /dev/null` reads every data block), never leaves a half-written `.part` file, and then runs `aiwiki backup-objects`, which copies the missing objects (each is written to `objects/.incoming` and renamed into place once complete; `art-` objects are hash-checked on the way) and compares the copy with the database. The database references are read before the copy, so an upload during the run is not reported as missing. Exit status 1 means missing or damaged objects, 2 means the command could not run. Add `-verify-hashes` to the `backup` service command if you also want every artifact object re-read.
+
+Example schedule (cron, nightly at 03:15; not installed by anything):
+
+```cron
+15 3 * * * cd /opt/aiwiki && sh scripts/personal-backup.sh >>/var/log/aiwiki-backup.log 2>&1
+```
+
+A backup directory on the same disk as `personal-data` protects against mistakes (a bad deletion, a bad upgrade), not against the loss of the disk. Copy `<backup dir>` to another machine or medium as well; the files contain all content of the wiki, so protect and encrypt them like the database.
+
+### Restore
+
+**Use the same compose project name as the installation does.** The commands below show it as `-p "$AIWIKI_COMPOSE_PROJECT"`; leave the option out only if the installation never used one. A different project name on the same `./personal-data` starts a second PostgreSQL on the same data directory, which can corrupt it.
+
+On a fresh installation (empty `./personal-data`), with the same `.env.personal`:
+
+```sh
+# the backup container writes and reads as this user; it must own the backup files
+export AIWIKI_BACKUP_UID=$(id -u) AIWIKI_BACKUP_GID=$(id -g) AIWIKI_BACKUP_DIR=/path/to/backups/personal
+dc="docker compose -p $AIWIKI_COMPOSE_PROJECT --env-file .env.personal -f compose.personal.yaml"
+
+$dc up -d db s3 s3-init
+# wait until db is healthy; the init script has created the roles and an empty database "aiwiki"
+$dc exec -T db pg_restore -U postgres -d aiwiki --no-owner --role=aiwiki_owner --exit-on-error \
+  < "$AIWIKI_BACKUP_DIR/db/aiwiki-<timestamp>.dump"
+$dc --profile backup run --rm backup restore-objects -dir /backup/objects
+$dc up -d wiki
+```
+
+Why `pg_restore` looks like this: `scripts/personal-pg-init.sh` created the database owned by `aiwiki_owner`, which is the owner the server expects (it runs migrations as that role and grants the runtime role `aiwiki_app` its rights at every start). A plain superuser restore would make `postgres` the owner of every table. `--no-owner` ignores the owner recorded in the dump and `--role=aiwiki_owner` makes the restore run as `aiwiki_owner` after connecting, so all objects belong to it. The superuser is used because the roles themselves are not part of a dump and the content tables use FORCE ROW LEVEL SECURITY. `--exit-on-error` stops at the first problem instead of leaving a half-restored database. If it fails, drop and recreate the database (or empty `personal-data/pg`) and start again. This combination was written from the init script and the corporate drill; it has not been run against a personal-mode installation, so rehearse it once on a copy before you need it.
+
+Finally check the result by comparing database and bucket, reading every artifact object:
+
+```sh
+$dc --profile backup run --rm backup check-storage -verify-hashes
+```
+
+Expect `RESULT: OK`. The `backup` service is used because it already carries the superuser database URL that `check-storage` needs (`AIWIKI_BACKUP_DATABASE_URL`); its volume is not used by this command.
 
 ## How the owner rows are written
 

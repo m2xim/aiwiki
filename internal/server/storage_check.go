@@ -75,25 +75,11 @@ func CheckStorage(ctx context.Context, cfg StorageCheckConfig) (*StorageReport, 
 	if cfg.DeleteOrphans && !cfg.Yes {
 		fmt.Fprintln(cfg.Out, "note: -delete-orphans without -yes only reports; nothing is deleted")
 	}
-	pc, err := pgx.ParseConfig(cfg.DatabaseURL)
+	db, err := openBypassDB(ctx, cfg.DatabaseURL, "aiwiki-check-storage")
 	if err != nil {
-		return nil, errors.New("invalid PostgreSQL connection configuration")
+		return nil, err
 	}
-	pc.RuntimeParams["application_name"] = "aiwiki-check-storage"
-	pc.RuntimeParams["default_transaction_read_only"] = "on"
-	db := stdlib.OpenDB(*pc)
 	defer db.Close()
-	db.SetMaxOpenConns(2)
-	if err = db.PingContext(ctx); err != nil {
-		return nil, errors.New("PostgreSQL is not reachable; check the connection URL")
-	}
-	var bypass bool
-	if err = db.QueryRowContext(ctx, `SELECT coalesce(bool_or(rolsuper OR rolbypassrls),false) FROM pg_roles WHERE rolname=current_user`).Scan(&bypass); err != nil {
-		return nil, fmt.Errorf("cannot verify database role: %w", err)
-	}
-	if !bypass {
-		return nil, errors.New("the database role cannot read all rows: content tables use FORCE ROW LEVEL SECURITY, which hides rows even from the table owner; use a dedicated backup role with BYPASSRLS (see docs/BACKUP.md)")
-	}
 	store, err := newS3Store(ctx, cfg.S3)
 	if err != nil {
 		return nil, err
@@ -403,4 +389,35 @@ func (r *StorageReport) write(w io.Writer) {
 	} else {
 		fmt.Fprintln(w, "RESULT: OK")
 	}
+}
+
+// openBypassDB opens a read-only connection and refuses a role that cannot
+// read every row: content tables use FORCE ROW LEVEL SECURITY, so any other
+// role sees zero rows and every storage comparison would look healthy.
+func openBypassDB(ctx context.Context, url, application string) (*sql.DB, error) {
+	if url == "" {
+		return nil, errors.New("database URL required (AIWIKI_BACKUP_DATABASE_URL)")
+	}
+	pc, err := pgx.ParseConfig(url)
+	if err != nil {
+		return nil, errors.New("invalid PostgreSQL connection configuration")
+	}
+	pc.RuntimeParams["application_name"] = application
+	pc.RuntimeParams["default_transaction_read_only"] = "on"
+	db := stdlib.OpenDB(*pc)
+	db.SetMaxOpenConns(2)
+	if err = db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, errors.New("PostgreSQL is not reachable; check the connection URL")
+	}
+	var bypass bool
+	if err = db.QueryRowContext(ctx, `SELECT coalesce(bool_or(rolsuper OR rolbypassrls),false) FROM pg_roles WHERE rolname=current_user`).Scan(&bypass); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cannot verify database role: %w", err)
+	}
+	if !bypass {
+		db.Close()
+		return nil, errors.New("the database role cannot read all rows: content tables use FORCE ROW LEVEL SECURITY, which hides rows even from the table owner; use a dedicated backup role with BYPASSRLS (see docs/BACKUP.md)")
+	}
+	return db, nil
 }

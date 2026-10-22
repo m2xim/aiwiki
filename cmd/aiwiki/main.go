@@ -27,6 +27,9 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "check-storage" {
 		os.Exit(runCheckStorage(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && (os.Args[1] == "backup-objects" || os.Args[1] == "restore-objects") {
+		os.Exit(runBackupObjects(os.Args[1], os.Args[1] == "restore-objects", os.Args[2:]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "migrate-from-sqlite" {
 		os.Exit(runMigrateFromSQLite(os.Args[2:]))
 	}
