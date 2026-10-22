@@ -41,6 +41,9 @@ jobs:
       - name: Integration QA
         run: node scripts/qa.mjs
 
+      - name: Catalog query checks
+        run: node scripts/qa-catalog-query.mjs
+
       - name: History diff checks
         run: node scripts/qa-diff.mjs
 

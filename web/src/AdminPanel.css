@@ -251,3 +251,5 @@ html[data-theme=dark] .corp-admin-inline-error { background: #3a2220; color: #ff
   .corp-admin-page .corp-admin > header { gap: 12px; flex-wrap: wrap; }
   .corp-admin-page .corp-admin > header h1 { font-size: 22px; }
 }
+.corp-admin-empty-filter { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.corp-admin-empty-filter > p { margin: 0; }
