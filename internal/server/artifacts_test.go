@@ -55,7 +55,7 @@ type fileSpec struct {
 	Delete   bool   `json:"delete,omitempty"`
 }
 
-const exactFrameCSP = "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+const exactFrameCSP = "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'; frame-ancestors 'self'"
 
 // artCall performs a request through the full handler stack of s.
 func artCall(t *testing.T, s *Server, method, target string, body any) (int, http.Header, []byte) {
@@ -745,9 +745,29 @@ func TestArtifactSeparateOrigin(t *testing.T) {
 		return w.Code, w.Result().Header
 	}
 	code, h := do("frames.example.org", path)
-	if code != 200 || !strings.HasSuffix(h.Get("Content-Security-Policy"), "frame-ancestors 'self' https://wiki.example.org") {
+	if code != 200 || !strings.HasSuffix(h.Get("Content-Security-Policy"), "webrtc 'block'; frame-ancestors https://wiki.example.org") {
 		t.Errorf("frame host: %d %s", code, h.Get("Content-Security-Policy"))
 	}
+	// frames and the runtime exist on the frame host only
+	for _, p := range []string{path, strings.TrimSuffix(path, "index.html") + "app.js", "/artifact-runtime/resize.js"} {
+		if code, _ := do("wiki.example.org", p); code != 404 {
+			t.Errorf("%s on the application host: %d", p, code)
+		}
+		if code, _ := do("frames.example.org", p); code != 200 {
+			t.Errorf("%s on the frame host: %d", p, code)
+		}
+	}
+	for _, target := range []string{path, "/artifact-runtime/resize.js"} {
+		r := httptest.NewRequest("GET", target, nil)
+		r.Host = "frames.example.org"
+		r.Header.Set("Origin", "null")
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != 200 || w.Header().Get("Access-Control-Allow-Origin") != "*" {
+			t.Errorf("Origin null on the frame host %s: %d %v", target, w.Code, w.Header())
+		}
+	}
+
 	if code, _ := do("frames.example.org", "/api/artifacts"); code != 404 {
 		t.Errorf("API on the frame host: %d", code)
 	}

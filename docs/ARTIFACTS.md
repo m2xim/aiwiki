@@ -95,7 +95,8 @@ The artifact never runs on the application's origin with application privileges.
    base64url(HMAC-SHA256(secret, payload)), payload = artifact id, revision, expiry
    (≤ 15 minutes), kind (`user`|`public`); a `public` payload also carries the id of
    its link, so that revoking exactly that link ends the capability at once. Secret: `AIWIKI_ARTIFACT_SECRET`
-   (required for several instances) or a random per-process value. The frame
+   (at least 32 bytes, required for several instances; a shorter value stops the
+   start) or, when unset, a random per-process value. The frame
    path is the authorisation; cookies are neither needed nor used.
 2. `GET /artifact-frame/<cap>/<path>` verifies the HMAC and expiry, re-checks that
    the artifact is not deleted (and for `public` that the link is not revoked and
@@ -103,7 +104,7 @@ The artifact never runs on the application's origin with application privileges.
    `Content-Security-Policy: sandbox allow-scripts allow-modals; default-src 'none';
    script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src
    'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:;
-   connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'`,
+   connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'; frame-ancestors 'self'`,
    `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
    `Cross-Origin-Resource-Policy: cross-origin`, `Permissions-Policy` denying camera,
    microphone, geolocation, payment, usb and clipboard-read, and
@@ -138,7 +139,16 @@ The artifact never runs on the application's origin with application privileges.
 Residual risks, documented, not prevented: an artifact can navigate its own frame
 to an external URL (leaking what the author or viewer typed into it and the
 viewer's IP); it can consume CPU. It cannot read wiki data, cookies or the parent
-page, call the wiki API, or open windows.
+page, call the wiki API, or open windows. The `webrtc 'block'` directive keeps the
+frame from opening peer connections, but it is not supported by every browser; where
+it is not, an artifact could use WebRTC to reach other hosts (a data exfiltration
+channel besides navigation). Secrets travel in paths: `/s/<token>` and
+`/artifact-frame/<cap>/…` appear in reverse-proxy and server access logs, browser
+history and `Referer`-less navigations; mask or drop those path segments in logs
+(for example log `/s/*` and `/artifact-frame/*` without the secret part). A user
+capability is a bearer URL valid for 15 minutes: it is not revoked when the user's
+rights change before it expires (it is revoked at once by deleting the artifact).
+Public links are different: each request re-checks the link and its creator.
 
 The frame may ask its parent to resize: `parent.postMessage({type:
 "aiwiki:resize", height}, "*")`. The parent accepts it only from that iframe's
@@ -177,8 +187,8 @@ change visibility or delete.
 
 ## Implementation notes
 
-Code: `internal/server/artifacts*.go`, SQL in `artifacts.sql` (component `artifacts`
-v1, after `corporate_moves`), tests in `artifacts_test.go` (SQLite) and
+Code: `internal/server/artifacts*.go`, SQL in `artifacts.sql` and `artifacts_2.sql` (component `artifacts`
+v1 and v2, after `corporate_moves`), tests in `artifacts*_test.go` (SQLite) and
 `artifacts_postgres_test.go` (PostgreSQL).
 
 Additions to the tables above. `artifacts` also has `file_count`, `projection`
@@ -217,10 +227,26 @@ Rights, as enforced (RLS policies, a guard trigger, and the same rules in the AP
 - Soft deletion revokes all links in the same transaction (a trigger in PostgreSQL,
   so an editor who cannot manage links still revokes them); restore does not revive
   them. New links are refused (`409`) for deleted artifacts and while public links
-  are disabled; listing and revoking still work. The token appears only in the
+  are disabled; listing and revoking still work. A link works only while its creator
+  is an active user who still may share the artifact (private: the owner with read
+  access to the container; inherit: the owner with editor+, or manager+), checked
+  by `artifact_link_valid` on every `/s/` request and every public-capability
+  frame request, with the same `404` when false. Listing and revoking links
+  (`artifact_can_manage_links`) need no writable container: the owner while the
+  owner can read the container, and managers for inherit artifacts, also in an
+  archived container; creating a link still needs a writable container. Delete and
+  restore stay forbidden in an archived container (archive is read-only). The token appears only in the
   `201` response as `"url": "/s/<token>"` (relative); the UI composes the address.
-- `GET /api/artifacts/{id}` also returns deleted artifacts to those who may restore
-  them, and accepts `?revision=`. The list excludes deleted ones.
+- `GET /api/artifacts/{id}`, `/history` and `/files/…` of a deleted artifact are
+  answered only to those who may restore it (editor+ for inherit, the owner for
+  private); everybody else gets `404`, enforced by the row policy so also direct
+  SQL, revisions and links see nothing. `?revision=` is accepted. The list
+  excludes deleted ones.
+- Request bodies are examined after rights: `PUT` loads the artifact and checks
+  the right to edit before the body is read; `POST` reads the body, looks at
+  `space_id`/`project_id` only and checks the container before any file is parsed.
+  A caller without rights gets `403` (or `404`) without file validation.
+- `q` uses at most 10 terms of at most 100 characters; the rest is dropped.
 
 PostgreSQL: `artifacts`, `artifact_revisions`, `artifact_blobs`, `artifact_shares`,
 `app_settings` have ENABLE + FORCE RLS and no DELETE policy (hard deletes and
@@ -247,20 +273,34 @@ before. Trusted mode has no audit table.
 
 Rendering: the capability payload is JSON `{a, r, e, k[, s]}`; it is verified in
 constant time and must expire within 15 minutes (+30 s). `AIWIKI_ARTIFACT_SECRET`
-(at least 16 bytes) is read at start, otherwise a random per-process secret is used.
+(at least 32 bytes; shorter stops the start) is read at start, otherwise a random per-process secret is used; there is no built-in constant.
 The frame CSP comes from one function (`artifactFrameCSP`) and the whole string is
 tested. Every frame request re-checks deletion, link revocation and the global
 switch; the user capability does not depend on the switch. `/s/<token>` is a
 server-rendered page with a per-request CSP nonce, no cookies, `no-store`, `noindex`,
 and one identical `404` page for malformed, unknown, revoked, deleted and disabled
-cases. Rate limits are in memory per process: 300 requests/min per client address
-(`RemoteAddr`; behind a reverse proxy that is the proxy, so tune or add limits
-there) and 60/min per link, answered `429`. A public page open longer than 15
+cases. Rate limits are in memory per process and answered `429`: `/s/` 300
+requests/min per client address and 600/min per link; `/artifact-frame/` 1200/min
+per client address (public and user capabilities alike, a separate budget). The
+client address is `RemoteAddr`, so without configuration all clients behind a
+reverse proxy share one address and one limit. `AIWIKI_TRUSTED_PROXIES` (comma or
+space separated CIDRs or IPs) names proxies whose `X-Forwarded-For` is believed:
+only when `RemoteAddr` is in the list, the client is the rightmost
+`X-Forwarded-For` address that is not itself a trusted proxy (a malformed chain
+falls back to `RemoteAddr`). The tables are bounded (expired windows are dropped,
+then arbitrary ones are evicted). A public page open longer than 15
 minutes cannot load further sub-files of its frame (reload the page).
-`AIWIKI_ARTIFACT_ORIGIN` serves frames and the runtime from that origin only
-(other paths there answer `404`), `frame_url` becomes absolute, and the frame
-`frame-ancestors` also allows the application origin (set with `-allowed-origin`).
-Not covered by tests against a real second host.
+With `AIWIKI_ARTIFACT_ORIGIN`, `/artifact-frame/` and `/artifact-runtime/` are
+served on that host only (on the application host they answer `404`, and the frame
+host answers `404` to everything else), `Access-Control-Allow-Origin: *` is sent to
+`Origin: null` on `GET`/`HEAD` there, `frame_url` is absolute, and
+`frame-ancestors` is exactly the application origin (`-allowed-origin`; `'none'`
+until it is known). Tested with two `Host` values, not against a real second host.
+
+Known limitation: in trusted (SQLite, local files) mode the deduplication of file
+contents is observable by timing, since a file that already exists is not written
+again; with S3 every upload is written and there is no such difference.
+
 
 Settings: `GET|PUT /api/admin/settings` exist in corporate mode only and need a
 system administrator (the other users get `403`); trusted mode has no endpoint and

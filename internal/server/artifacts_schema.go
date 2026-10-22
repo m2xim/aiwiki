@@ -9,6 +9,9 @@ import (
 //go:embed artifacts.sql
 var artifactsSchemaSQL string
 
+//go:embed artifacts_2.sql
+var artifactsSchema2SQL string
+
 // migrateArtifacts adds the artifact tables, forced RLS and guards (component
 // "artifacts", append-only on top of corporate_acl, mcp_access, corporate_moves).
 func (s *Server) migrateArtifacts(ctx context.Context) error {
@@ -17,6 +20,8 @@ func (s *Server) migrateArtifacts(ctx context.Context) error {
 	}
 	return s.DB.runMigrations(ctx, "artifacts", []pgMigration{{
 		Version: 1, Name: "interactive artifacts, forced RLS and settings", Statements: splitCorporateSQL(artifactsSchemaSQL),
+	}, {
+		Version: 2, Name: "deleted visibility, link management and creator validity", Statements: splitCorporateSQL(artifactsSchema2SQL),
 	}})
 }
 
@@ -65,6 +70,14 @@ func (d *database) validateArtifactSchema() error {
  AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN (to_regprocedure('public.artifact_is_admin(text)'),to_regprocedure('public.artifact_role(text,text)'),to_regprocedure('public.artifact_can_read(text,text,text,text)'),to_regprocedure('public.artifact_can_write(text,text,text,text)'),to_regprocedure('public.artifact_can_share(text,text,text,text)'),to_regprocedure('public.artifact_guard()'),to_regprocedure('public.artifact_share_guard()'),to_regprocedure('public.artifact_revoke_shares()'),to_regprocedure('public.artifact_guard_project_move()')) AND a.grantee=0)
  AND has_function_privilege(current_user,'public.artifact_role(text,text)','EXECUTE')`).Scan(&ok); err != nil || !ok {
 		return errors.New("artifact functions are missing, not SECURITY DEFINER where required or executable by PUBLIC")
+	}
+	// v2: deleted artifacts only for restorers, link management without the
+	// writable-container test, link validity as a non-PUBLIC SECURITY DEFINER.
+	if err := d.QueryRow(`SELECT (SELECT count(*) FROM pg_policy p WHERE (p.polrelid='public.artifacts'::regclass AND p.polname='artifacts_read' AND pg_get_expr(p.polqual,p.polrelid) LIKE '%artifact_can_view%') OR (p.polrelid='public.artifact_shares'::regclass AND p.polname IN ('artifact_shares_read','artifact_shares_update') AND pg_get_expr(p.polqual,p.polrelid) LIKE '%artifact_can_manage_links%' AND pg_get_expr(p.polqual,p.polrelid) NOT LIKE '%writable%'))=3
+ AND EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.artifact_link_valid(text,text)') AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public'])
+ AND has_function_privilege(current_user,'public.artifact_link_valid(text,text)','EXECUTE')
+ AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN (to_regprocedure('public.artifact_link_valid(text,text)'),to_regprocedure('public.artifact_can_view(text,text,text,text,text)'),to_regprocedure('public.artifact_can_manage_links(text,text,text,text)')) AND a.grantee=0)`).Scan(&ok); err != nil || !ok {
+		return errors.New("artifact link and deletion policies (schema v2) are missing or executable by PUBLIC")
 	}
 	return nil
 }

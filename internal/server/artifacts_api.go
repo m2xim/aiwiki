@@ -364,7 +364,8 @@ func (s *Server) listArtifacts(space, project, query string, limit, offset int) 
 		where = append(where, "a.project_id=?")
 		args = append(args, project)
 	}
-	for _, term := range strings.Fields(strings.ToLower(query)) {
+	for _, term := range searchTerms(query) {
+
 		where = append(where, `a.search_text LIKE ? ESCAPE '\'`)
 		args = append(args, likeTerm(term))
 	}
@@ -423,8 +424,28 @@ type artifactCreateIn struct {
 }
 
 func (s *Server) artifactCreate(w http.ResponseWriter, r *http.Request) {
+	// The body is read, then only space_id and project_id are looked at; the
+	// container check (rights) comes before the files are parsed or validated.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, artifactMaxBody))
+	if err != nil {
+		apiErr(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	var head struct {
+		SpaceID   string `json:"space_id"`
+		ProjectID string `json:"project_id"`
+	}
+	if json.Unmarshal(raw, &head) != nil {
+		apiErr(w, http.StatusBadRequest, "invalid input")
+		return
+	}
+	if err := s.artifactCreateCheck(head.SpaceID, head.ProjectID); err != nil {
+		writeArtifactError(w, err)
+		return
+	}
 	var in artifactCreateIn
-	if !artifactDecode(w, r, &in) {
+	if err := decodeStrictJSON(raw, &in); err != nil {
+		apiErr(w, http.StatusBadRequest, "invalid input: "+clip(err.Error(), 200))
 		return
 	}
 	detail, err := s.createArtifact(r.Context(), in)
@@ -435,7 +456,30 @@ func (s *Server) artifactCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, detail)
 }
 
+// artifactCreateCheck is the cheap container check done before any file is
+// parsed or stored: the space or project must accept the caller's new artifact.
+func (s *Server) artifactCreateCheck(space, project string) error {
+	if !validPathID(space) || project != "" && !validPathID(project) {
+		return artErr(400, "space_id is required")
+	}
+	if s.principal == nil {
+		var archived sql.NullString
+		if e := s.DB.QueryRow(`SELECT archived_at FROM spaces WHERE id=?`, space).Scan(&archived); e != nil {
+			return artErr(404, "space not found")
+		}
+		if archived.Valid {
+			return artErr(409, "space is archived")
+		}
+	} else if role, writable := s.artifactRoleOf(s.DB, space, project); role < 3 || !writable {
+		return artErr(403, "editor access required")
+	}
+	return nil
+}
+
 func (s *Server) createArtifact(ctx context.Context, in artifactCreateIn) (artifactDetail, error) {
+	if err := s.artifactCreateCheck(in.SpaceID, in.ProjectID); err != nil {
+		return artifactDetail{}, err
+	}
 	title, desc, msg, err := cleanArtifactText(in.Title, in.Description, in.Message)
 	if err != nil {
 		return artifactDetail{}, err
@@ -445,9 +489,6 @@ func (s *Server) createArtifact(ctx context.Context, in artifactCreateIn) (artif
 	}
 	if !validArtifactVisibility(in.Visibility) {
 		return artifactDetail{}, artErr(400, "visibility must be inherit or private")
-	}
-	if !validPathID(in.SpaceID) || in.ProjectID != "" && !validPathID(in.ProjectID) {
-		return artifactDetail{}, artErr(400, "space_id is required")
 	}
 	if s.isMCPScoped() && in.Visibility != "inherit" {
 		return artifactDetail{}, artErr(403, "MCP cannot set artifact visibility")
@@ -459,18 +500,6 @@ func (s *Server) createArtifact(ctx context.Context, in artifactCreateIn) (artif
 	files, err := mergeArtifactFiles(nil, blobs, nil)
 	if err != nil {
 		return artifactDetail{}, err
-	}
-	// Cheap checks before any byte is stored.
-	if s.principal == nil {
-		var archived sql.NullString
-		if e := s.DB.QueryRow(`SELECT archived_at FROM spaces WHERE id=?`, in.SpaceID).Scan(&archived); e != nil {
-			return artifactDetail{}, artErr(404, "space not found")
-		}
-		if archived.Valid {
-			return artifactDetail{}, artErr(409, "space is archived")
-		}
-	} else if role, writable := s.artifactRoleOf(s.DB, in.SpaceID, in.ProjectID); role < 3 || !writable {
-		return artifactDetail{}, artErr(403, "editor access required")
 	}
 	rs, done, err := s.artifactStoreBlobs(ctx, blobs)
 	if err != nil {
@@ -685,6 +714,15 @@ type artifactUpdateIn struct {
 }
 
 func (s *Server) artifactUpdate(w http.ResponseWriter, r *http.Request) {
+	// Rights first: the body (up to 28 MB of files) is not even read for a caller
+	// who may not edit.
+	if cur, err := s.loadArtifact(s.DB, r.PathValue("id")); err != nil {
+		artifactMissing(w, err)
+		return
+	} else if !s.artifactPermsOf(s.DB, cur).CanEdit {
+		apiErr(w, http.StatusForbidden, "editing this artifact is not permitted")
+		return
+	}
 	var in artifactUpdateIn
 	if !artifactDecode(w, r, &in) {
 		return
@@ -700,6 +738,14 @@ func (s *Server) artifactUpdate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateArtifact(ctx context.Context, id string, in artifactUpdateIn) (artifactDetail, error) {
 	if in.BaseRevision < 1 {
 		return artifactDetail{}, artErr(400, "base_revision required")
+	}
+	if cur, err := s.loadArtifact(s.DB, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return artifactDetail{}, artErr(404, "artifact not found")
+		}
+		return artifactDetail{}, err
+	} else if !s.artifactPermsOf(s.DB, cur).CanEdit {
+		return artifactDetail{}, artErr(403, "editing this artifact is not permitted")
 	}
 	ch := artifactChange{base: in.BaseRevision, message: in.Message}
 	if utf8.RuneCountInString(in.Message) > artifactMaxMessage {
@@ -1002,13 +1048,21 @@ type artifactShareOut struct {
 	RevokedAt string `json:"revoked_at,omitempty"`
 }
 
-func (s *Server) artifactShareAccess(w http.ResponseWriter, id string) (artifactMeta, bool) {
+// artifactLinksAccess authorizes list/revoke (manage=true: no writable-container
+// test, so links stay manageable in an archived container) or creation.
+func (s *Server) artifactShareAccess(w http.ResponseWriter, id string, create bool) (artifactMeta, bool) {
 	a, err := s.loadArtifact(s.DB, id)
 	if err != nil {
 		artifactMissing(w, err)
 		return a, false
 	}
-	if !s.artifactPermsOf(s.DB, a).CanShare {
+	allowed := false
+	if create {
+		allowed = s.artifactPermsOf(s.DB, a).CanShare
+	} else {
+		allowed = s.artifactCanManageLinks(s.DB, a)
+	}
+	if !allowed {
 		apiErr(w, http.StatusForbidden, "only the owner or a container manager can manage public links")
 		return a, false
 	}
@@ -1017,7 +1071,7 @@ func (s *Server) artifactShareAccess(w http.ResponseWriter, id string) (artifact
 
 func (s *Server) artifactShares(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, ok := s.artifactShareAccess(w, id); !ok {
+	if _, ok := s.artifactShareAccess(w, id, false); !ok {
 		return
 	}
 	q := `SELECT id,revision,created_by,created_at,revoked_at FROM artifact_shares WHERE artifact_id=?`
@@ -1057,7 +1111,7 @@ func (s *Server) artifactShareCreate(w http.ResponseWriter, r *http.Request) {
 	if !artifactDecode(w, r, &in) {
 		return
 	}
-	a, ok := s.artifactShareAccess(w, id)
+	a, ok := s.artifactShareAccess(w, id, true)
 	if !ok {
 		return
 	}
@@ -1108,7 +1162,7 @@ func (s *Server) artifactShareCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) artifactShareRevoke(w http.ResponseWriter, r *http.Request) {
 	id, shareID := r.PathValue("id"), r.PathValue("share")
-	if _, ok := s.artifactShareAccess(w, id); !ok {
+	if _, ok := s.artifactShareAccess(w, id, false); !ok {
 		return
 	}
 	tx, err := s.DB.Begin()
@@ -1244,4 +1298,62 @@ func insertArtifactBlob(tx *transaction, b artifactBlob, ts string) error {
 	}
 	_, err := tx.Exec(`RELEASE SAVEPOINT artifact_blob`)
 	return err
+}
+
+// artifactCanManageLinks mirrors artifact_can_manage_links: the owner while the
+// owner can read the container, and managers for inherit artifacts. An archived
+// container does not matter. Scoped MCP principals never manage links.
+func (s *Server) artifactCanManageLinks(q queryer, a artifactMeta) bool {
+	if s.principal == nil {
+		return true
+	}
+	if s.isMCPScoped() {
+		return false
+	}
+	role, _ := s.artifactRoleOf(q, a.SpaceID, a.ProjectID)
+	return (a.OwnerID == s.principal.ID && role >= 1) || (a.Visibility == "inherit" && role >= 4)
+}
+
+// artifactLinkCreatorValid asks the database whether the creator of a link is
+// still an active user entitled to share the artifact. Trusted mode has no users.
+func (s *Server) artifactLinkCreatorValid(q queryer, artifactID, creator string) bool {
+	if !s.DB.pg {
+		return true
+	}
+	var ok bool
+	return q.QueryRow(`SELECT artifact_link_valid(?,?)`, artifactID, creator).Scan(&ok) == nil && ok
+}
+
+// decodeStrictJSON is artifactDecode for a body that is already in memory.
+func decodeStrictJSON(raw []byte, dst any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if e := dec.Decode(&extra); e != io.EOF {
+		return errors.New("unexpected data after the JSON value")
+	}
+	return nil
+}
+
+const (
+	maxSearchTerms  = 10
+	maxSearchLength = 100
+)
+
+// searchTerms lower-cases the query and keeps at most 10 words of at most 100
+// characters; the rest is dropped.
+func searchTerms(query string) []string {
+	words := strings.Fields(strings.ToLower(query))
+	if len(words) > maxSearchTerms {
+		words = words[:maxSearchTerms]
+	}
+	for i, w := range words {
+		if r := []rune(w); len(r) > maxSearchLength {
+			words[i] = string(r[:maxSearchLength])
+		}
+	}
+	return words
 }

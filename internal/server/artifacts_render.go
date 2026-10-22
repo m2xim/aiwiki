@@ -34,6 +34,34 @@ type artifactState struct {
 	secret  []byte
 	origin  string
 	limiter *rateLimiter
+	proxies []*net.IPNet // AIWIKI_TRUSTED_PROXIES: peers whose X-Forwarded-For is believed
+}
+
+// minArtifactSecret is the shortest accepted AIWIKI_ARTIFACT_SECRET.
+const minArtifactSecret = 32
+
+// parseTrustedProxies reads a comma or space separated list of CIDRs or IPs.
+func parseTrustedProxies(list string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, item := range strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
+		if !strings.Contains(item, "/") {
+			ip := net.ParseIP(item)
+			if ip == nil {
+				return nil, fmt.Errorf("invalid address %q", item)
+			}
+			bits := 128
+			if ip.To4() != nil {
+				bits = 32
+			}
+			item += "/" + strconv.Itoa(bits)
+		}
+		_, n, err := net.ParseCIDR(item)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CIDR %q", item)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // newArtifactState reads AIWIKI_ARTIFACT_SECRET (required for several
@@ -42,8 +70,8 @@ type artifactState struct {
 func newArtifactState() (*artifactState, error) {
 	st := &artifactState{limiter: newRateLimiter()}
 	if v := os.Getenv("AIWIKI_ARTIFACT_SECRET"); v != "" {
-		if len(v) < 16 {
-			return nil, errors.New("AIWIKI_ARTIFACT_SECRET must be at least 16 bytes")
+		if len(v) < minArtifactSecret {
+			return nil, fmt.Errorf("AIWIKI_ARTIFACT_SECRET must be at least %d bytes (or unset for a random per-process secret)", minArtifactSecret)
 		}
 		st.secret = []byte(v)
 	} else {
@@ -59,7 +87,24 @@ func newArtifactState() (*artifactState, error) {
 		}
 		st.origin = origin
 	}
+	if v := os.Getenv("AIWIKI_TRUSTED_PROXIES"); v != "" {
+		proxies, err := parseTrustedProxies(v)
+		if err != nil {
+			return nil, fmt.Errorf("AIWIKI_TRUSTED_PROXIES: %w", err)
+		}
+		st.proxies = proxies
+	}
 	return st, nil
+}
+
+// randomArtifactState is the state of servers assembled without Open (test
+// fixtures): a random secret, never a constant, and no environment.
+func randomArtifactState() *artifactState {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		panic("no randomness available: " + err.Error())
+	}
+	return &artifactState{secret: secret, limiter: newRateLimiter()}
 }
 
 var (
@@ -74,9 +119,10 @@ func (s *Server) artifacts() *artifactState {
 		return s.art
 	}
 	fallbackArtifactOnce.Do(func() {
-		fallbackArtifactState, _ = newArtifactState()
-		if fallbackArtifactState == nil {
-			fallbackArtifactState = &artifactState{secret: []byte("fallback-artifact-secret-0123456789"), limiter: newRateLimiter()}
+		if st, err := newArtifactState(); err == nil {
+			fallbackArtifactState = st
+		} else {
+			fallbackArtifactState = randomArtifactState()
 		}
 	})
 	return fallbackArtifactState
@@ -150,7 +196,7 @@ func (st *artifactState) verify(token string, now time.Time) (artifactCap, bool)
 // artifactFrameCSP is the one place that builds the frame Content-Security-
 // Policy. ancestors is the frame-ancestors source list ("'self'" by default).
 func artifactFrameCSP(ancestors string) string {
-	return "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors " + ancestors
+	return "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; webrtc 'block'; frame-ancestors " + ancestors
 }
 
 const artifactPermissionsPolicy = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), clipboard-read=()"
@@ -158,8 +204,13 @@ const artifactPermissionsPolicy = "camera=(), microphone=(), geolocation=(), pay
 // artifactFrameAncestors is 'self', plus the application origin when frames are
 // served from a separate origin (AIWIKI_ARTIFACT_ORIGIN).
 func (s *Server) artifactFrameAncestors() string {
-	if st := s.artifacts(); st.origin != "" && s.allowedOrigin != "" {
-		return "'self' " + s.allowedOrigin
+	if st := s.artifacts(); st.origin != "" {
+		// Served from a separate origin: 'self' would be the frame host itself, so
+		// only the application origin may embed it ('none' until it is known).
+		if s.allowedOrigin != "" {
+			return s.allowedOrigin
+		}
+		return "'none'"
 	}
 	return "'self'"
 }
@@ -220,9 +271,14 @@ func (l *rateLimiter) allow(key string, limit int, window time.Duration) bool {
 				delete(l.m, k)
 			}
 		}
-		if len(l.m) > 20000 {
-			l.m = map[string]*rateWindow{}
+		// Still too many live windows: evict arbitrary entries down to half.
+		for k := range l.m {
+			if len(l.m) <= 10000 {
+				break
+			}
+			delete(l.m, k)
 		}
+
 	}
 	w := l.m[key]
 	if w == nil || now.Sub(w.start) >= window {
@@ -234,14 +290,46 @@ func (l *rateLimiter) allow(key string, limit int, window time.Duration) bool {
 }
 
 const (
-	publicIPLimit    = 300 // requests per minute per client address
-	publicTokenLimit = 60  // requests per minute per link
+	publicIPLimit    = 300  // /s/ requests per minute per client address
+	publicTokenLimit = 600  // /s/ requests per minute per link
+	frameIPLimit     = 1200 // /artifact-frame/ requests per minute per client address
 )
 
-func clientIP(r *http.Request) string {
+func (st *artifactState) trustedProxy(ip net.IP) bool {
+	for _, n := range st.proxies {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP is the peer address, unless the peer is a configured trusted proxy:
+// then it is the last X-Forwarded-For address that is not itself a trusted
+// proxy (the rightmost entries are the ones a trusted hop appended; anything to
+// the left may be forged by the client). Without AIWIKI_TRUSTED_PROXIES every
+// client behind a reverse proxy shares the proxy's address and one limit.
+func (st *artifactState) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	if peer == nil || len(st.proxies) == 0 || !st.trustedProxy(peer) {
+		return host
+	}
+	var chain []string
+	for _, v := range r.Header.Values("X-Forwarded-For") {
+		chain = append(chain, strings.Split(v, ",")...)
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		ip := net.ParseIP(strings.TrimSpace(chain[i]))
+		if ip == nil {
+			return host // malformed chain: do not guess
+		}
+		if !st.trustedProxy(ip) {
+			return ip.String()
+		}
 	}
 	return host
 }
@@ -310,6 +398,13 @@ func (d *database) scopedView(ctx context.Context, settings map[string]string) (
 func (s *Server) artifactFrame(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	st := s.artifacts()
+	if !st.limiter.allow("frame:"+st.clientIP(r), frameIPLimit, time.Minute) {
+		w.Header().Set("Retry-After", "60")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, "Too many requests\n")
+		return
+	}
 	c, ok := st.verify(r.PathValue("cap"), now)
 	rel := r.PathValue("path")
 	if rel == "" {
@@ -389,15 +484,15 @@ func (s *Server) artifactFrameLookup(db *database, c artifactCap, rel string) (a
 			return artifactFile{}, false, nil
 		}
 		var revoked sql.NullString
-		var shareArtifact string
-		err := db.QueryRow(`SELECT artifact_id,revoked_at FROM artifact_shares WHERE id=?`, c.Share).Scan(&shareArtifact, &revoked)
+		var shareArtifact, creator string
+		err := db.QueryRow(`SELECT artifact_id,created_by,revoked_at FROM artifact_shares WHERE id=?`, c.Share).Scan(&shareArtifact, &creator, &revoked)
 		if errors.Is(err, sql.ErrNoRows) {
 			return artifactFile{}, false, nil
 		}
 		if err != nil {
 			return artifactFile{}, false, err
 		}
-		if revoked.Valid || shareArtifact != c.Artifact {
+		if revoked.Valid || shareArtifact != c.Artifact || !s.artifactLinkCreatorValid(db, c.Artifact, creator) {
 			return artifactFile{}, false, nil
 		}
 	}
@@ -521,7 +616,8 @@ func (s *Server) publicArtifact(w http.ResponseWriter, r *http.Request) {
 	st := s.artifacts()
 	// Both counters are charged on every request so a guesser cannot probe
 	// without being limited, and the limit answer does not depend on the token.
-	ipOK := st.limiter.allow("ip:"+clientIP(r), publicIPLimit, time.Minute)
+	ipOK := st.limiter.allow("ip:"+st.clientIP(r), publicIPLimit, time.Minute)
+
 	tokenOK := st.limiter.allow("tok:"+hashShareToken(token), publicTokenLimit, time.Minute)
 	if !ipOK || !tokenOK {
 		publicPageHeaders(w.Header())
@@ -541,10 +637,10 @@ func (s *Server) publicArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	var shareID, artifactID string
+	var shareID, artifactID, creator string
 	var pinned sql.NullInt64
 	var revoked sql.NullString
-	err = view.QueryRow(`SELECT id,artifact_id,revision,revoked_at FROM artifact_shares WHERE token_hash=?`, hash).Scan(&shareID, &artifactID, &pinned, &revoked)
+	err = view.QueryRow(`SELECT id,artifact_id,created_by,revision,revoked_at FROM artifact_shares WHERE token_hash=?`, hash).Scan(&shareID, &artifactID, &creator, &pinned, &revoked)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && revoked.Valid {
 		writeArtifactUnavailable(w)
 		return
@@ -564,7 +660,7 @@ func (s *Server) publicArtifact(w http.ResponseWriter, r *http.Request) {
 	var current int
 	var deleted sql.NullString
 	err = view.QueryRow(`SELECT title,revision,deleted_at FROM artifacts WHERE id=?`, artifactID).Scan(&title, &current, &deleted)
-	enabled := s.publicLinksEnabled(view)
+	enabled := s.publicLinksEnabled(view) && s.artifactLinkCreatorValid(view, artifactID, creator)
 	cleanup()
 	if errors.Is(err, sql.ErrNoRows) || err == nil && (deleted.Valid || !enabled) {
 		writeArtifactUnavailable(w)
@@ -630,10 +726,20 @@ func (s *Server) withArtifactOrigin(app http.Handler) http.Handler {
 				artifactNotFound(w)
 				return
 			}
+			if r.Header.Get("Origin") == "null" {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Vary", "Origin")
+			}
 			mux.ServeHTTP(w, r)
 			return
 		}
+		if isArtifactAssetPath(r.URL.Path) {
+			// Frames and the runtime exist only on their own origin.
+			artifactNotFound(w)
+			return
+		}
 		app.ServeHTTP(w, r)
+
 	})
 }
 
