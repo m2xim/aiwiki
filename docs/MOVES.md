@@ -66,8 +66,16 @@ Preview response `200`:
 changes (`before`/`after` = role or `null`; `users` = active members for a
 team). For project moves the comparison covers each project in the moved
 subtree and reports the strongest change per subject. `users_gaining` /
-`users_losing` count distinct active users after expanding teams. Names come
-only from containers the actor manages, which the rules above guarantee.
+`users_losing` count distinct active users after expanding teams. A user or team is listed by id and name only if the actor is manager+ on at
+least one space or project that carries a grant of that principal in the compared
+positions (the old or the new chain). Changes of all other principals are folded into
+rows `{"subject_type":"other","subject_id":"","name":"","before":…,"after":…,"users":N}`,
+one per (before, after) pair, where N is the number of distinct active users behind
+those hidden principals (the number of principals is not disclosed; pairs with N=0
+are omitted). Container names (`source`/`target`, space and project) are filled in
+only if the actor has at least reader on that very space or project, otherwise they
+are empty strings (the ids are always present). A single answer is used for every
+permission refusal of a project move.
 
 Apply recomputes the preview inside the move transaction, after taking the
 existing ACL advisory lock, and compares fingerprints. Mismatch → `409` with
@@ -178,9 +186,46 @@ Details fixed while implementing; the rules above are unchanged unless said so.
   DEFINER, fixed `search_path`, not executable by PUBLIC, executable by the runtime role)
   and that both triggers exist and are enabled.
 
+### Locking
+
+Apply takes the ACL advisory lock, then locks the moved rows before it recomputes the
+fingerprint: the article subtree (or the project subtree and the affected articles)
+with `FOR NO KEY UPDATE`, re-reading the subtree until it is stable, because a child
+creation that was already in flight may commit while the lock waits. Creating or
+reparenting a child article reads its parent `FOR SHARE` (not `FOR KEY SHARE`, which
+does not conflict with `FOR NO KEY UPDATE`), creating an article inside a project
+shares the project row (delegated MCP sessions cannot lock it, since they have no UPDATE policy on projects; for them the race with a concurrent project move is not closed by locks), and creating a sub-project shares the parent project row.
+So a child is either rejected after the move commits (parent in another container)
+or included in the move/rejected with 409. As a last line of defense the database
+checks that a parent article is in the same space and project on insert, on a
+parent change, and for the moved root (`corporate_check_article_parent`,
+`corporate_reject_article_move`), and that a parent project is in the same space on
+insert (`corporate_check_project_parent`) and on a move.
+
+### Fingerprint and hidden principals
+
+The fingerprint is computed over the visible form of the preview (the rows the actor
+sees, including the aggregate `other` rows and the user counts), not over the hidden
+grants. A hash of hidden data would let the actor test guessed grants offline; the
+visible form reveals nothing new. A change among hidden principals that leaves every
+visible row (including the aggregates) identical does not invalidate a preview, and
+the actor could not have taken it into account anyway. The self-lockout check uses the
+actor's minimum resulting role over every compared position (a separate `self` row of
+`corporate_move_impact`), not the strongest-change row; given the other rules it can
+only trigger on inconsistent data.
+
 ### Known limits
 
 A runtime connection that sets the markers itself and is manager+ on both containers
 can still move an article without a preview through direct SQL (the preview is
 enforced by the application, the roles by the database). That is the contract's
 intended trade-off; non-managers are stopped by the trigger.
+
+The owner of a project can set the markers by hand and update only the project row
+(`projects.space_id`). The articles of that project then keep the old `space_id`; the
+read policy sees no role for the mismatching pair, so they become invisible to every
+user until the database owner repairs them. At startup the server logs a non-fatal
+warning with the number of such articles (`corporate_move_mismatch_count()`, a
+SECURITY DEFINER count-only probe; the permissive policy
+`corporate_articles_mismatch_probe` lets only the table owner's context see such
+rows, so users cannot read them through it).

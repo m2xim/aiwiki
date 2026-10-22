@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Fixtures for the safe-move tests. They use the disposable PostgreSQL database
@@ -548,8 +549,9 @@ func TestMovesProjectRulesOwnerCycleAndLimits(t *testing.T) {
 	e.grant("project", top, "user", "editor", "manager")
 	e.grant("space", b, "user", "editor", "manager")
 	// Manager (not owner) of the project cannot move it.
-	if r := e.call("editor", "/api/moves/preview", projectMove(top, b, "")); r.Code != 403 {
-		t.Fatalf("manager %d %s", r.Code, r.Raw)
+	managerRefusal := e.call("editor", "/api/moves/preview", projectMove(top, b, ""))
+	if managerRefusal.Code != 403 {
+		t.Fatalf("manager %d %s", managerRefusal.Code, managerRefusal.Raw)
 	}
 	// Owner of the project but only editor on the target.
 	e.grant("project", top, "user", "u1", "owner")
@@ -575,8 +577,8 @@ func TestMovesProjectRulesOwnerCycleAndLimits(t *testing.T) {
 	}
 	// Owner role on the project is required even where the sub-project has an independent ACL.
 	locked := e.project(a, top, "Locked", false)
-	if r := e.call("alice", "/api/moves/preview", projectMove(top, b, "")); r.Code != 403 {
-		t.Fatalf("sub-project without access %d %s", r.Code, r.Raw)
+	if r := e.call("alice", "/api/moves/preview", projectMove(top, b, "")); r.Code != 403 || r.Raw != managerRefusal.Raw {
+		t.Fatalf("sub-project without access must give the generic refusal: %d %s", r.Code, r.Raw)
 	}
 	e.grant("project", locked, "user", "alice", "manager")
 	if r := e.call("alice", "/api/moves/preview", projectMove(top, b, "")); r.Code != 200 {
@@ -779,4 +781,176 @@ func TestMovesRouteNotRegisteredInTrustedMode(t *testing.T) {
 			t.Fatalf("%s served in trusted mode: %d", path, r.Code)
 		}
 	}
+}
+
+func TestMovesPreviewHidesGrantsOfUnmanagedAncestors(t *testing.T) {
+	e := newMovesEnv(t)
+	a, b := e.space("alice"), e.space("bob")
+	e.team("t1", "u2", "u5")
+	q := e.project(a, "", "Parent Q secret", true)
+	p := e.project(a, q, "P", true)
+	e.grant("project", q, "team", "t1", "reader")
+	e.grant("project", q, "user", "u3", "reader")
+	e.grant("space", a, "user", "u4", "reader")
+	e.grant("project", p, "user", "u1", "owner")
+	e.grant("space", b, "user", "u1", "manager")
+	e.grant("space", b, "user", "u5", "reader")
+
+	pv := e.call("u1", "/api/moves/preview", projectMove(p, b, ""))
+	if pv.Code != 200 {
+		t.Fatalf("preview %d %s", pv.Code, pv.Raw)
+	}
+	for _, secret := range []string{"Team t1", "User u3", "User u4", "Parent Q secret", "\"t1\"", "\"u3\"", "\"u4\"", "\"alice\""} {
+		if strings.Contains(pv.Raw, secret) {
+			t.Fatalf("preview leaks %s: %s", secret, pv.Raw)
+		}
+	}
+	pr := pv.preview(t)
+	if pr.Source.SpaceName != "" || pr.Source.ProjectName != "" {
+		t.Fatalf("names of unreadable containers leaked: %+v", pr.Source)
+	}
+	if pr.Target.SpaceName == "" {
+		t.Fatalf("target space is readable: %+v", pr.Target)
+	}
+	var hidden *moveAccess
+	for i := range pr.Access {
+		if pr.Access[i].SubjectType == "other" {
+			if pr.Access[i].SubjectID != "" || pr.Access[i].Name != "" {
+				t.Fatalf("other row carries identity: %+v", pr.Access[i])
+			}
+			if roleIs(pr.Access[i].Before, "reader") && roleIs(pr.Access[i].After, "") {
+				hidden = &pr.Access[i]
+			}
+		}
+	}
+	// t1 (u2, u5), u3 and u4 lose reader: four distinct active users, no principal count.
+	if hidden == nil || hidden.Users != 4 {
+		t.Fatalf("aggregate row %+v in %+v", hidden, pr.Access)
+	}
+	if row := e.accessRow(pr, "user", "bob"); row == nil || !roleIs(row.After, "owner") {
+		t.Fatalf("managed target grant must stay visible: %+v", row)
+	}
+	if row := e.accessRow(pr, "user", "u5"); row == nil || !roleIs(row.After, "reader") {
+		t.Fatalf("u5 %+v", row)
+	}
+	if pr.UsersLosing < 4 {
+		t.Fatalf("losing %d", pr.UsersLosing)
+	}
+	// The caller's minimum resulting role is reported by the function.
+	var self string
+	if err := e.as("u1").DB.QueryRow(`SELECT coalesce(r_after,'') FROM corporate_move_impact('project',?,?,'') WHERE r_kind='self'`, p, b).Scan(&self); err != nil || self != "owner" {
+		t.Fatalf("self row %q %v", self, err)
+	}
+	// The fingerprint is a hash of the visible form only; apply with it works.
+	if r := e.call("u1", "/api/moves/apply", withFingerprint(projectMove(p, b, ""), pr.Fingerprint)); r.Code != 200 {
+		t.Fatalf("apply %d %s", r.Code, r.Raw)
+	}
+}
+
+func TestMovesConcurrentChildCreationLeavesNoOrphan(t *testing.T) {
+	e := newMovesEnv(t)
+	a, b := e.twoSpaces()
+	root := e.article("alice", a, "", "", "Root")
+	req := articleMove(root.ID, 1, b, "", "")
+	p := e.call("alice", "/api/moves/preview", req).preview(t)
+
+	// A concurrent child creation: share lock on the parent (as parentOK takes it).
+	creator := corporateAs(t, e.root, "alice")
+	tx, err := creator.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var id string
+	if err = tx.QueryRow(`SELECT id FROM articles WHERE id=? FOR SHARE`, root.ID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan movesCall, 1)
+	go func() { done <- e.call("alice", "/api/moves/apply", withFingerprint(req, p.Fingerprint)) }()
+	select {
+	case r := <-done:
+		t.Fatalf("apply did not wait for the parent lock: %d %s", r.Code, r.Raw)
+	case <-time.After(700 * time.Millisecond):
+	}
+	if _, err = tx.Exec(`INSERT INTO articles(id,space_id,parent_id,project_id,title,kind,status,revision,created_at,updated_at,author)
+		VALUES('racechild',?,?,'','Late child','article','draft',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','alice')`, a, root.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	r := <-done
+	if r.Code != 200 && r.Code != 409 {
+		t.Fatalf("apply %d %s", r.Code, r.Raw)
+	}
+	child, c1 := e.get("alice", "racechild")
+	parent, c2 := e.get("alice", root.ID)
+	if c1 != 200 || c2 != 200 || child.SpaceID != parent.SpaceID {
+		t.Fatalf("orphan: child=%+v (%d) parent=%+v (%d), apply=%d", child, c1, parent, c2, r.Code)
+	}
+}
+
+func TestMovesDatabaseRejectsForeignOrMissingParent(t *testing.T) {
+	e := newMovesEnv(t)
+	a, b := e.twoSpaces()
+	inA := e.article("alice", a, "", "", "A")
+	inB := e.article("bob", b, "", "", "B")
+	alice := e.as("alice")
+	insert := func(parent string) error {
+		_, err := alice.DB.Exec(`INSERT INTO articles(id,space_id,parent_id,project_id,title,kind,status,revision,created_at,updated_at,author)
+			VALUES(?,?,?,'','X','article','draft',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','alice')`, newID(), a, parent)
+		return err
+	}
+	if insert(inB.ID) == nil || insert("missing-parent") == nil {
+		t.Fatal("insert under a foreign or missing parent accepted")
+	}
+	if err := insert(inA.ID); err != nil {
+		t.Fatalf("valid parent rejected: %v", err)
+	}
+	other := e.article("alice", a, "", "", "Other")
+	if _, err := alice.DB.Exec(`UPDATE articles SET parent_id=? WHERE id=?`, inB.ID, other.ID); err == nil {
+		t.Fatal("parent change to a foreign container accepted")
+	}
+	if _, err := alice.DB.Exec(`UPDATE articles SET parent_id=? WHERE id=?`, inA.ID, other.ID); err != nil {
+		t.Fatalf("parent change inside the container rejected: %v", err)
+	}
+	pa := e.project(a, "", "PA", true)
+	if _, err := e.owner.DB.Exec(`INSERT INTO projects(id,space_id,parent_id,name) VALUES(?,?,?,?)`, newID(), b, pa, "bad"); err == nil {
+		t.Fatal("project inserted under a parent of another space")
+	}
+}
+
+func TestMovesMismatchProbeCountsHiddenArticles(t *testing.T) {
+	e := newMovesEnv(t)
+	a, b := e.twoSpaces()
+	proj := e.project(a, "", "P", true)
+	e.article("alice", a, proj, "", "In project")
+	count := func() int {
+		var n int
+		if err := e.root.DB.QueryRow(`SELECT corporate_move_mismatch_count()`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if count() != 0 {
+		t.Fatal("unexpected mismatch")
+	}
+	// The documented manual bypass: owner of the project with a self-set marker moves only the project row.
+	tx, err := e.as("alice").DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v string
+	tx.QueryRow(`SELECT set_config('app.move','project',true)`).Scan(&v)
+	tx.QueryRow(`SELECT set_config('app.move_root',?,true)`, proj).Scan(&v)
+	if _, err = tx.Exec(`UPDATE projects SET space_id=? WHERE id=?`, b, proj); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatalf("mismatch count %d", count())
+	}
+	e.root.DB.warnMovedArticleMismatch()
 }

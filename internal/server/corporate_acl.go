@@ -905,6 +905,13 @@ func (s *Server) corporateProjects(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, 500, "database error")
 			return
 		}
+		if in.ParentID != "" {
+			var lockedSpace string
+			if err = tx.QueryRow(`SELECT space_id FROM projects WHERE id=? FOR SHARE`, in.ParentID).Scan(&lockedSpace); err != nil || lockedSpace != in.SpaceID {
+				apiErr(w, 400, "invalid parent")
+				return
+			}
+		}
 		parentKind, parentID := "space", in.SpaceID
 		if in.ParentID != "" {
 			parentKind, parentID = "project", in.ParentID
