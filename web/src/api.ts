@@ -30,8 +30,8 @@ export type MoveTarget = { space_id: string; project_id?: string; parent_id?: st
 export type MoveRequest = { kind: 'article' | 'project'; id: string; base_revision?: number; target: MoveTarget; fingerprint?: string };
 export type MovePlace = { space_id: string; space_name: string; project_id: string; project_name: string };
 export type MoveAccessChange = { subject_type: 'user' | 'team' | 'other'; subject_id: string; name: string; before: AccessGrant['role'] | null; after: AccessGrant['role'] | null; users?: number };
-export type MovePreview = { fingerprint: string; articles: number; projects: number; source: MovePlace; target: MovePlace; access: MoveAccessChange[]; users_gaining: number; users_losing: number; warnings: string[] };
-export type MoveApplyResult = { conflict: false; articles: number; projects: number; root: Article | Project } | { conflict: true; preview: MovePreview };
+export type MovePreview = { fingerprint: string; articles: number; projects: number; artifacts?: number; source: MovePlace; target: MovePlace; access: MoveAccessChange[]; users_gaining: number; users_losing: number; warnings: string[] };
+export type MoveApplyResult = { conflict: false; articles: number; projects: number; artifacts?: number; root: Article | Project } | { conflict: true; preview: MovePreview };
 export type ArtifactSummary = {
   id: string; space_id: string; project_id?: string; title: string; description: string; visibility: Visibility;
   owner_id?: string; owner_name?: string; author?: string; revision: number; created_at?: string; updated_at: string; file_count: number; deleted_at?: string | null;
@@ -86,7 +86,7 @@ const moveApply = async (request: MoveRequest): Promise<MoveApplyResult> => {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   if (csrfToken) headers.set('X-CSRF-Token', csrfToken);
   const response = await fetch('/api/moves/apply', { method: 'POST', headers, body: JSON.stringify(request) });
-  let body: { error?: string; preview?: MovePreview; articles?: number; projects?: number; root?: Article | Project } = {};
+  let body: { error?: string; preview?: MovePreview; articles?: number; projects?: number; artifacts?: number; root?: Article | Project } = {};
   try { body = await response.json(); } catch { /* response is not JSON */ }
   if (response.status === 409 && body.preview) return { conflict: true, preview: body.preview };
   if (!response.ok) {
@@ -95,7 +95,7 @@ const moveApply = async (request: MoveRequest): Promise<MoveApplyResult> => {
     }
     throw new Error(response.status === 403 ? 'Недостаточно прав для этого действия.' : body.error && body.error !== 'forbidden' ? body.error : `${response.status} ${response.statusText}`);
   }
-  return { conflict: false, articles: body.articles ?? 0, projects: body.projects ?? 0, root: body.root as Article | Project };
+  return { conflict: false, articles: body.articles ?? 0, projects: body.projects ?? 0, artifacts: body.artifacts ?? 0, root: body.root as Article | Project };
 };
 const json = (method: string, data: unknown): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 const listOf = <T,>(value: unknown, key: string): T[] => Array.isArray(value) ? value as T[] : Array.isArray((value as Record<string, unknown> | null)?.[key]) ? (value as Record<string, T[]>)[key] : [];

@@ -35,8 +35,8 @@ created_at)`, `artifact_shares(id, artifact_id, token_hash, revision, created_by
 created_at, revoked_at)`, `app_settings(key, value)` (corporate: admin-only
 writes). PostgreSQL uses FORCE RLS on artifacts, revisions and shares with the
 same `corporate_effective_role` chain as articles plus the visibility/owner rule;
-history checks the container current for the artifact (artifacts are not moved
-in this stage).
+history checks the container current for the artifact (artifacts move together
+with their project, see "Moving a project" below).
 
 ## Rights
 
@@ -187,8 +187,8 @@ change visibility or delete.
 
 ## Implementation notes
 
-Code: `internal/server/artifacts*.go`, SQL in `artifacts.sql` and `artifacts_2.sql` (component `artifacts`
-v1 and v2, after `corporate_moves`), tests in `artifacts*_test.go` (SQLite) and
+Code: `internal/server/artifacts*.go`, SQL in `artifacts.sql`, `artifacts_2.sql` and `artifacts_3.sql` (component `artifacts`
+v1, v2 and v3, after `corporate_moves`), tests in `artifacts*_test.go` (SQLite) and
 `artifacts_postgres_test.go` (PostgreSQL).
 
 Additions to the tables above. `artifacts` also has `file_count`, `projection`
@@ -220,10 +220,9 @@ Rights, as enforced (RLS policies, a guard trigger, and the same rules in the AP
   that cannot work with the "managers get no access" rule. `can_manage` equals
   "owner and editor+"; `can_share` = owner, or manager+ for `inherit` artifacts.
 - Creation needs editor+ on the container; the creator becomes the owner
-  (`owner_id`, in trusted mode the empty string). Container, owner and creation
-  time are immutable (guard trigger); a project that holds artifacts cannot be moved
-  to another space (the move is refused, private and deleted artifacts counted), as
-  artifacts do not move in this stage.
+  (`owner_id`, in trusted mode the empty string). Owner and creation
+  time are immutable, and so is the container, except for the project-move path
+  below (guard trigger).
 - Soft deletion revokes all links in the same transaction (a trigger in PostgreSQL,
   so an editor who cannot manage links still revokes them); restore does not revive
   them. New links are refused (`409`) for deleted artifacts and while public links
@@ -258,8 +257,8 @@ SECURITY DEFINER lookup of `users.admin`), on top of the API check. Unauthentica
 requests (frame, public page) run on a connection whose session carries
 `app.artifact_view` / `app.share_id` / `app.share_token_hash`, set only after the
 capability was verified or the token hashed; policies grant exactly that live
-artifact, link and its revisions. Two narrow SECURITY DEFINER triggers
-(`artifact_revoke_shares`, `artifact_guard_project_move`) read and update rows
+artifact, link and its revisions. Narrow SECURITY DEFINER functions
+(`artifact_revoke_shares`, `artifact_guard_project_move`, `artifact_follow_project_move`) read and update rows
 through a probe predicate (`current_user <> session_user` and
 `app.artifact_probe`), which only definer code can satisfy. Startup
 (`validateRuntimeSchema` → `validateArtifactSchema`) refuses to run when the tables
@@ -306,3 +305,68 @@ Settings: `GET|PUT /api/admin/settings` exist in corporate mode only and need a
 system administrator (the other users get `403`); trusted mode has no endpoint and
 links are always allowed. Not implemented: artifact content in `GET /api/export`,
 the `artifact` block rendering in articles (interface), object garbage collection.
+
+## Moving a project
+
+Moving a project (with its sub-projects) to another space (`/api/moves/apply`,
+see `MOVES.md`) moves **all** artifacts of the moved projects with it, in the same
+transaction: `inherit` and `private` ones, deleted ones too, including those the
+person moving cannot see. Same-space moves change nothing for artifacts.
+
+- Only `space_id` changes. Content, files, title, `revision`, `updated_at` and the
+  revision history stay as they are; no new artifact revision is created (nothing
+  of the artifact changed, and `artifact_revisions` does not depend on the space).
+  This is the one exception to "the revision advances by one on every change" and
+  is allowed by `artifact_guard` only inside the move function.
+- The container of an artifact can be changed by nothing but the SECURITY DEFINER
+  function `artifact_follow_project_move(root)` (v3). It runs only with the
+  transaction marker `app.move='project'` and `app.move_root=<root>` set by the
+  server, takes the target space from `projects.space_id` (the project rows are
+  already moved and checked by `corporate_projects_no_move`), builds the subtree
+  itself and updates artifacts through the probe predicate
+  (`current_user <> session_user AND app.artifact_probe='1'`) and the policy
+  `artifacts_probe_update`. A direct `UPDATE artifacts SET space_id` by the runtime
+  role (or by the table owner) is refused or affects no rows.
+- Bypass: v1 refused a move of a project with artifacts. v3 replaces that trigger
+  by the deferred constraint trigger `artifact_projects_follow_check` on
+  `projects(space_id)`: at commit, a project whose `space_id` changed must have no
+  artifact in another space, otherwise the transaction is rolled back. So a project
+  row updated by hand (markers set, roles satisfied) cannot leave artifacts behind.
+- Access after the move is ordinary: the `inherit` artifacts follow the roles of
+  the new container; a private artifact stays readable only by its owner and only
+  while the owner has at least reader access in the new place (it becomes
+  readable again when access is granted). A public link works while its creator is
+  still allowed to share the artifact in the new container (`artifact_link_valid`),
+  otherwise it answers 404 and works again if the right is restored.
+- The preview reports `artifacts` (only those visible to the person moving, so
+  private artifacts of others are not counted or revealed) and, for any move to
+  another space, the warning about artifacts. The fingerprint covers the ids and
+  revisions of the visible artifacts, so a change between preview and apply gives
+  `409`. The `move.project` audit event carries `artifacts` (the real number moved,
+  no ids).
+
+### Moving a project: races and manual bypasses (schema v4)
+
+There is no foreign key `artifacts.project_id -> projects`, so v4 adds database checks
+instead (all deferred constraint triggers, judged at commit; violation = `42501`):
+
+- `artifact_rows_container_check` on `artifacts` (insert, change of `space_id` or
+  `project_id`): the artifact must live in the space of its project. This closes the
+  race "an artifact is created in a project while the project moves": creation by
+  MCP sessions does not share-lock the project, so the second of the two transactions
+  to commit is rolled back (the move answers `409 concurrent change, retry`, a
+  creation fails). The ordinary API takes the share lock and is unaffected.
+- `artifact_projects_insert_check` (the same check after a project row is inserted)
+  and `artifact_projects_no_delete`: the runtime role cannot delete projects (the
+  application never does), so "delete and re-insert the project row with another
+  space" is not possible for it. The database owner role is trusted and is not
+  covered by these probes.
+- `artifact_guard` allows the container change only if the new space equals the space
+  of the artifact's project, in addition to the probe predicate and `app.move`.
+- Startup: `validateArtifactSchema` verifies trigger types, events, columns and
+  deferral, the expressions of `artifacts_probe_update`, key fragments of the guard,
+  and that the runtime role is not a member of any role (the probe predicate relies
+  on `current_user = session_user` for it). The server also logs a non-fatal warning
+  with the number of artifacts outside their project's space
+  (`artifact_stray_count()`).
+- The subtree walk is limited to 64 levels both in the server and in the SQL function.

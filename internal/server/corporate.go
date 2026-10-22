@@ -66,6 +66,7 @@ func OpenCorporate(ctx context.Context, cfg CorporateConfig, dataDir, webDir str
 		return fail(err)
 	}
 	db.warnMovedArticleMismatch()
+	db.warnStrayArtifacts()
 	s.objects, err = newS3Store(ctx, cfg.S3)
 	if err != nil {
 		return fail(err)

@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
-import { canEditRole, containerRole, countArticles, countUsersOf, countProjects, countUsers, describeAccessChange, eligibleTargets, isSameContainer, plural, projectSubtreeIds, roleLabel, summarizePreview } from '../web/src/moveCore.ts';
+import { canEditRole, containerRole, countArticles, countArtifacts, countUsersOf, countProjects, countUsers, describeAccessChange, eligibleTargets, isSameContainer, plural, projectSubtreeIds, roleLabel, summarizePreview } from '../web/src/moveCore.ts';
 
 // Plural forms, including the 11-14 exception and 21/101.
 const forms = n => plural(n, 'статья', 'статьи', 'статей');
 for (const [n, word] of [[0, 'статей'], [1, 'статья'], [2, 'статьи'], [4, 'статьи'], [5, 'статей'], [11, 'статей'], [12, 'статей'], [14, 'статей'], [21, 'статья'], [22, 'статьи'], [25, 'статей'], [101, 'статья'], [111, 'статей'], [112, 'статей']]) assert.equal(forms(n), word, `plural ${n}`);
 assert.equal(countArticles(21), '21 статья');
 assert.equal(countProjects(2), '2 проекта');
+assert.equal(countArtifacts(1), '1 артефакт');
+assert.equal(countArtifacts(3), '3 артефакта');
+assert.equal(countArtifacts(11), '11 артефактов');
+assert.equal(countArtifacts(21), '21 артефакт');
 assert.equal(countUsers(11), '11 пользователей');
 
 // Roles.
@@ -33,6 +37,9 @@ assert.equal(countUsersOf(11), '11 пользователей');
 assert.equal(countUsersOf(2), '2 пользователей');
 assert.equal(summarizePreview({ articles: 21, projects: 2, users_gaining: 1, users_losing: 0 })[0], 'Будет перемещено: 2 проекта, 21 статья');
 assert.deepEqual(summarizePreview({ articles: 3, projects: 1, users_gaining: 0, users_losing: 11 }).slice(1), ['Права сузятся или пропадут у: 11 пользователей']);
+assert.equal(summarizePreview({ articles: 21, projects: 2, artifacts: 3, users_gaining: 0, users_losing: 0 })[0], 'Будет перемещено: 2 проекта, 21 статья, 3 артефакта');
+assert.equal(summarizePreview({ articles: 0, projects: 1, artifacts: 5, users_gaining: 0, users_losing: 0 })[0], 'Будет перемещено: 1 проект, 0 статей, 5 артефактов');
+assert.equal(summarizePreview({ articles: 2, projects: 0, artifacts: 0, users_gaining: 0, users_losing: 0 })[0], 'Будет перемещено: 2 статьи');
 
 // Eligible targets.
 const project = (id, space_id, parent_id, effective_role = 'owner', extra = {}) => ({ id, name: id, description: '', space_id, parent_id, inherit_acl: true, effective_role, ...extra });

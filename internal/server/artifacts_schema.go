@@ -12,6 +12,12 @@ var artifactsSchemaSQL string
 //go:embed artifacts_2.sql
 var artifactsSchema2SQL string
 
+//go:embed artifacts_3.sql
+var artifactsSchema3SQL string
+
+//go:embed artifacts_4.sql
+var artifactsSchema4SQL string
+
 // migrateArtifacts adds the artifact tables, forced RLS and guards (component
 // "artifacts", append-only on top of corporate_acl, mcp_access, corporate_moves).
 func (s *Server) migrateArtifacts(ctx context.Context) error {
@@ -22,6 +28,10 @@ func (s *Server) migrateArtifacts(ctx context.Context) error {
 		Version: 1, Name: "interactive artifacts, forced RLS and settings", Statements: splitCorporateSQL(artifactsSchemaSQL),
 	}, {
 		Version: 2, Name: "deleted visibility, link management and creator validity", Statements: splitCorporateSQL(artifactsSchema2SQL),
+	}, {
+		Version: 3, Name: "artifacts follow their project to another space", Statements: splitCorporateSQL(artifactsSchema3SQL),
+	}, {
+		Version: 4, Name: "artifact container checks, project insert and delete guards", Statements: splitCorporateSQL(artifactsSchema4SQL),
 	}})
 }
 
@@ -62,7 +72,7 @@ func (d *database) validateArtifactSchema() error {
 	if err := d.QueryRow(`SELECT count(*) FROM pg_policy p WHERE p.polrelid='public.app_settings'::regclass AND p.polname IN ('app_settings_insert','app_settings_update') AND pg_get_expr(p.polwithcheck,p.polrelid) LIKE '%artifact_is_admin%' AND pg_get_expr(p.polwithcheck,p.polrelid) LIKE '%corporate_mcp_scope_active%'`).Scan(&count); err != nil || count != 2 {
 		return errors.New("application settings must be writable by administrators only")
 	}
-	if err := d.QueryRow(`SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled IN ('O','A') AND ((tgrelid='public.artifacts'::regclass AND tgname IN ('artifacts_guard','artifacts_revoke_shares')) OR (tgrelid='public.artifact_shares'::regclass AND tgname='artifact_shares_guard') OR (tgrelid='public.projects'::regclass AND tgname='artifact_projects_no_move'))`).Scan(&count); err != nil || count != 4 {
+	if err := d.QueryRow(`SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled IN ('O','A') AND ((tgrelid='public.artifacts'::regclass AND tgname IN ('artifacts_guard','artifacts_revoke_shares')) OR (tgrelid='public.artifact_shares'::regclass AND tgname='artifact_shares_guard') OR (tgrelid='public.projects'::regclass AND tgname='artifact_projects_follow_check'))`).Scan(&count); err != nil || count != 4 {
 		return errors.New("artifact guard triggers are missing or disabled")
 	}
 	var ok bool
@@ -78,6 +88,39 @@ func (d *database) validateArtifactSchema() error {
  AND has_function_privilege(current_user,'public.artifact_link_valid(text,text)','EXECUTE')
  AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN (to_regprocedure('public.artifact_link_valid(text,text)'),to_regprocedure('public.artifact_can_view(text,text,text,text,text)'),to_regprocedure('public.artifact_can_manage_links(text,text,text,text)')) AND a.grantee=0)`).Scan(&ok); err != nil || !ok {
 		return errors.New("artifact link and deletion policies (schema v2) are missing or executable by PUBLIC")
+	}
+	return d.validateArtifactMoveSchema()
+}
+
+// validateArtifactMoveSchema checks the objects of schema v3 and v4 (artifacts follow
+// their project): that the deferred triggers are really deferred row triggers on the
+// expected events and columns, that the probe policy and the guard keep their
+// restricting expressions, that the definer functions are fenced, and that the
+// runtime role is not a member of other roles (the probe predicate relies on
+// current_user = session_user for it).
+func (d *database) validateArtifactMoveSchema() error {
+	var ok bool
+	if err := d.QueryRow(`SELECT NOT EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member WHERE r.rolname=current_user)`).Scan(&ok); err != nil || !ok {
+		return errors.New("runtime role must not be a member of other roles (artifact probe predicate)")
+	}
+	const cols = `(SELECT array_agg(a.attname::text ORDER BY a.attname) FROM pg_attribute a WHERE a.attrelid=t.tgrelid AND a.attnum=ANY(t.tgattr))`
+	if err := d.QueryRow(`SELECT
+ EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid='public.projects'::regclass AND t.tgname='artifact_projects_follow_check' AND t.tgenabled IN ('O','A') AND t.tgdeferrable AND t.tginitdeferred AND t.tgconstraint<>0 AND t.tgtype=17 AND ` + cols + `=ARRAY['space_id'] AND t.tgfoid=to_regprocedure('public.artifact_guard_project_move()'))
+ AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid='public.projects'::regclass AND t.tgname='artifact_projects_insert_check' AND t.tgenabled IN ('O','A') AND t.tgdeferrable AND t.tginitdeferred AND t.tgconstraint<>0 AND t.tgtype=5 AND t.tgfoid=to_regprocedure('public.artifact_guard_project_move()'))
+ AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid='public.artifacts'::regclass AND t.tgname='artifact_rows_container_check' AND t.tgenabled IN ('O','A') AND t.tgdeferrable AND t.tginitdeferred AND t.tgconstraint<>0 AND t.tgtype=21 AND ` + cols + `=ARRAY['project_id','space_id'] AND t.tgfoid=to_regprocedure('public.artifact_check_container()'))
+ AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid='public.projects'::regclass AND t.tgname='artifact_projects_no_delete' AND t.tgenabled IN ('O','A') AND NOT t.tgdeferrable AND t.tgtype=11 AND t.tgfoid=to_regprocedure('public.artifact_reject_project_delete()'))
+ AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid='public.projects'::regclass AND t.tgname='artifact_projects_no_move')
+ AND EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid='public.artifacts'::regclass AND p.polname='artifacts_probe_update' AND p.polcmd='w' AND p.polpermissive
+     AND pg_get_expr(p.polqual,p.polrelid) ILIKE '%session_user%' AND pg_get_expr(p.polqual,p.polrelid) LIKE '%artifact_probe%'
+     AND pg_get_expr(p.polwithcheck,p.polrelid) ILIKE '%session_user%' AND pg_get_expr(p.polwithcheck,p.polrelid) LIKE '%artifact_probe%')
+ AND (SELECT count(*) FROM pg_proc p WHERE p.oid IN (to_regprocedure('public.artifact_follow_project_move(text)'),to_regprocedure('public.artifact_guard_project_move()'),to_regprocedure('public.artifact_check_container()'),to_regprocedure('public.artifact_stray_count()')) AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public'])=4
+ AND has_function_privilege(current_user,'public.artifact_follow_project_move(text)','EXECUTE')
+ AND has_function_privilege(current_user,'public.artifact_stray_count()','EXECUTE')
+ AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN (to_regprocedure('public.artifact_follow_project_move(text)'),to_regprocedure('public.artifact_check_container()'),to_regprocedure('public.artifact_reject_project_delete()'),to_regprocedure('public.artifact_stray_count()')) AND a.grantee=0)
+ AND EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.artifact_guard()') AND NOT p.prosecdef
+     AND p.prosrc LIKE '%artifact_probe%' AND p.prosrc LIKE '%session_user%' AND p.prosrc LIKE '%IS NOT DISTINCT FROM%' AND p.prosrc LIKE '%p.space_id%' AND p.prosrc LIKE '%app.move%')
+ AND EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.artifact_follow_project_move(text)') AND p.prosrc LIKE '%app.move_root%' AND p.prosrc LIKE '%projects%')`).Scan(&ok); err != nil || !ok {
+		return errors.New("artifact move objects (schema v3/v4) are missing, weakened, not SECURITY DEFINER or executable by PUBLIC")
 	}
 	return nil
 }

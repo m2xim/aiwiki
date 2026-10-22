@@ -50,6 +50,7 @@ Preview response `200`:
   "fingerprint": "sha256 hex",
   "articles": 12,
   "projects": 0,
+  "artifacts": 0,
   "source": { "space_id": "…", "space_name": "…", "project_id": "…", "project_name": "…" },
   "target": { "space_id": "…", "space_name": "…", "project_id": "…", "project_name": "…" },
   "access": [
@@ -95,8 +96,11 @@ the root gets the target parent; each moved article gets a new revision
 descendants), the search index is updated, comments and attachments stay with
 their articles. Project move: `parent_id`/`space_id` change for the project and
 `space_id` for its descendant projects; articles in those projects get the new
-space and a revision `Перенос вместе с проектом`. One `security_audit` event
-`move.article` / `move.project` per move with source, target, counts and the
+space and a revision `Перенос вместе с проектом`. Artifacts of those projects (inherit
+and private, deleted ones too) get the new `space_id` in the same transaction through the
+SECURITY DEFINER function `artifact_follow_project_move(root)`, without a new revision
+(content and history do not change); see `ARTIFACTS.md`, "Moving a project". One `security_audit` event
+`move.article` / `move.project` per move with source, target, counts (for a project also the number of moved artifacts, no ids) and the
 access diff summary (subject ids and roles, no content).
 
 ## Database safeguards
@@ -156,6 +160,13 @@ Details fixed while implementing; the rules above are unchanged unless said so.
   container (`project_id` is the parent project or empty for the space); `articles`
   counts only articles whose `space_id` changes (none for a move within one space).
   `warnings` are Russian, user-facing strings.
+- **Artifacts in a project move**: `artifacts` counts the artifacts of the moved subtree that
+  the actor can see (ordinary RLS; deleted ones only for restorers, private ones of other
+  users never), and is 0 for a move inside one space. For every move to another space
+  the preview carries the warning "Артефакты проекта переедут вместе с ним. …", whether or
+  not the actor sees any artifact, so the warning reveals nothing. The fingerprint includes
+  the visible artifacts (id, revision). Apply returns the same visible count in `artifacts`;
+  the audit event holds the real number moved. All artifacts move, visible or not.
 - **Same-container parent change** goes through the ordinary article `PUT`; changing
   `space_id` or `project_id` there is `400` with a hint to use `/api/moves/preview`.
   Restoring a revision still cannot change container or parent.
@@ -229,3 +240,14 @@ warning with the number of such articles (`corporate_move_mismatch_count()`, a
 SECURITY DEFINER count-only probe; the permissive policy
 `corporate_articles_mismatch_probe` lets only the table owner's context see such
 rows, so users cannot read them through it).
+
+That manual bypass is closed for artifacts: the deferred constraint trigger
+`artifact_projects_follow_check` refuses, at commit, a change of `projects.space_id`
+that leaves an artifact in another space (the whole transaction is rolled back).
+The owner of a project therefore cannot strand its artifacts; articles still can be
+(see above).
+
+If a deferred artifact check fails at commit (for example an artifact was created in a
+moved project by a concurrent MCP session), `apply` answers `409`
+`{"error":"concurrent change, retry"}` and nothing is changed. The project subtree is
+walked to a depth of 64 levels in the server and in the database function alike.
