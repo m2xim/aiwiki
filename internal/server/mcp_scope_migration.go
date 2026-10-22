@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-//go:embed mcp_scope.sql mcp_persistent.sql
+//go:embed mcp_scope.sql mcp_persistent.sql mcp_oauth_audit.sql
 var mcpScopeSchema embed.FS
 
 func (s *Server) migrateMCPScope(ctx context.Context) error {
@@ -22,9 +22,13 @@ func (s *Server) migrateMCPScope(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	oauthAudit, err := mcpScopeSchema.ReadFile("mcp_oauth_audit.sql")
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	return s.DB.runMigrations(ctx, "mcp_access", []pgMigration{{
 		Version: 1, Name: "exact MCP project read scope", Statements: splitCorporateSQL(string(schema)),
-	}, {Version: 2, Name: "persistent MCP credentials and bounded content writes", Statements: splitCorporateSQL(string(persistent))}})
+	}, {Version: 2, Name: "persistent MCP credentials and bounded content writes", Statements: splitCorporateSQL(string(persistent))}, {Version: 3, Name: "OAuth bearer request audit", Statements: splitCorporateSQL(string(oauthAudit))}})
 }

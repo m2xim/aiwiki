@@ -47,6 +47,11 @@ jobs:
       - name: History diff checks
         run: node scripts/qa-diff.mjs
 
+      - name: Export and Markdown import checks
+        run: |
+          node scripts/qa-export.mjs
+          node scripts/qa-import.mjs
+
       - name: Install benchmark development dependencies
         run: npm ci --prefix benchmarks/mcp
 
