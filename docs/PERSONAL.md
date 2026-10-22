@@ -66,7 +66,9 @@ Exactly these rows, created idempotently at every start and by the import:
   the PostgreSQL superuser). It is used only by the import, never by the server.
   The tool first runs the server's migrations (owner role), then imports.
 * **Refusals (exit code 2, nothing written):** the target already contains any
-  article, revision, comment or attachment row; the source has a schema the
+  space, article, revision, comment, attachment, favorite, search, artifact or
+  setting row, or a membership of someone other than the owner (the owner's
+  `users` row left by an earlier personal-mode start is accepted); the source has a schema the
   trusted migration cannot read; an attachment file listed in the database is
   missing in `files/`.
 * **Copied:** spaces (ids, names, descriptions, archive state), articles with
@@ -89,6 +91,11 @@ Exactly these rows, created idempotently at every start and by the import:
 
 Details of the import:
 
+* After the commit, `-verify-only` runs just the verification against an imported
+  target (for a commit whose outcome was unknown). If the import fails before the
+  commit, the files uploaded so far are deleted again; those that cannot be
+  deleted are listed (`check-storage -delete-orphans -yes -allow-empty-database`
+  removes orphans older than 24 hours). An open `wiki.db-journal` is a refusal.
 * Stop the old server first. `wiki.db` (and a pending `wiki.db-wal`) is copied
   byte for byte; if the files change while they are copied, the import refuses.
 * No trigger or policy is disabled. Articles are inserted parents first (the
@@ -127,6 +134,13 @@ docker compose --env-file .env.personal -f compose.personal.yaml up -d --build
   once by `scripts/personal-pg-init.sh`), `s3` (SeaweedFS 4.48, private bucket
   `wiki` created by `s3-init`), `wiki` (this repository's Dockerfile, personal
   mode). `edge` only holds the network namespace and the single published port.
+* The role passwords are used once, when PostgreSQL initialises an empty
+  `./personal-data/pg`. Changing them later in `.env.personal` does not change the
+  roles: run `ALTER ROLE ... PASSWORD` in the database as well. The `db` service
+  keeps them in its environment; whoever can run `docker inspect` on the host can
+  read them, as with every other secret of the compose file.
+* Passwords and keys go into URLs and a JSON file unescaped: use letters and
+  digits only.
 * Data stays in `./personal-data/pg` and `./personal-data/s3`; back them up as
   described in BACKUP.md (a database dump plus the bucket).
 * To serve a home network or VPN set both `AIWIKI_BIND_ADDR` (this machine's

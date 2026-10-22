@@ -97,10 +97,11 @@ func personalName(raw string) (string, error) {
 // ensurePersonalOwner creates the owner identity idempotently, in one
 // transaction on a connection scoped to the owner, using the RUNTIME role:
 //
-//   - users and memberships are protected by ENABLE (not FORCE) row-level
-//     security whose only policy is "no persistent MCP scope"; the runtime role
-//     is granted INSERT/UPDATE on them and this connection has no MCP scope, so
-//     the writes need no extra privilege and no SECURITY DEFINER function.
+//   - users and memberships have row-level security whose policies apply to the
+//     runtime role (it is not the table owner); their only policies are the
+//     permissive "no persistent MCP scope" ones, and this connection has no MCP
+//     scope, so the writes pass them. A restrictive policy added there later
+//     applies to this code too; nothing here is exempt from RLS.
 //   - spaces has FORCE RLS. The UPDATE of spaces.owner_id is allowed by the
 //     ordinary update policy (role >= manager) only because the owner membership
 //     was inserted first in the same transaction; no policy is bypassed.

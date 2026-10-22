@@ -412,3 +412,17 @@ func personalSpace(t *testing.T, h http.Handler, name string) string {
 	json.Unmarshal(rr.Body.Bytes(), &v)
 	return v.ID
 }
+
+func TestPersonalOwnerCannotBeDisabled(t *testing.T) {
+	cfg, _ := personalFixture(t)
+	h := openPersonalForTest(t, cfg).Handler()
+	rr := personalDo(h, "PATCH", "/api/admin/users/"+PersonalOwnerID, `{"disabled":true}`)
+	if rr.Code != 403 {
+		t.Fatalf("disable owner: %d %s", rr.Code, rr.Body.String())
+	}
+	// The instance still works and restarts.
+	if rr := personalDo(h, "GET", "/api/spaces", ""); rr.Code != 200 {
+		t.Fatalf("after refused disable: %d %s", rr.Code, rr.Body.String())
+	}
+	openPersonalForTest(t, cfg)
+}

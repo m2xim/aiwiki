@@ -239,6 +239,10 @@ func (r *importRun) verify(ctx context.Context, imp *sql.DB, store objectStore, 
 	_ = imp.QueryRowContext(ctx, `SELECT count(*) FROM corporate_space_state`).Scan(&states)
 	r.check(states >= len(src.Data.Spaces), "archive state rows", fmt.Sprintf("%d rows for %d spaces", states, len(src.Data.Spaces)))
 
+	var foreign int
+	err = imp.QueryRowContext(ctx, `SELECT count(*) FROM favorites WHERE user_id<>$1`, personalOwnerID).Scan(&foreign)
+	r.check(err == nil && foreign == 0, "favorites of other users", fmt.Sprintf("%d rows with user_id other than owner", foreign))
+
 	var seqOK bool
 	err = imp.QueryRowContext(ctx, `SELECT last_value >= (SELECT coalesce(max(id),0) FROM revisions) FROM revisions_id_seq`).Scan(&seqOK)
 	r.check(err == nil && seqOK, "revision id sequence", "next id is above every imported id")

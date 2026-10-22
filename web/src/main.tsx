@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Activity, Archive, Box, ArrowDownToLine, ArrowLeft, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleHelp, Clock3, Code2, FileImage, FolderInput, FolderPlus, FolderTree, History, ImagePlus, LayoutGrid, Link2, List, ListFilter, LogOut, MessageCircle, Moon, Pencil, Pin, Plus, Search, Settings2, ShieldCheck, Sparkles, Star, Sun, Tag, Trash2, Upload, UserRound, X } from 'lucide-react';
-import { Article, Attachment, AuthSession, Bootstrap, Favorite, Project, Revision, SearchHit, SearchResponse, Space, client, setAuthExpiredHandler, setCorporateSession, setCsrfToken } from './api';
+import { Article, Attachment, AuthSession, Bootstrap, Favorite, Project, Revision, SearchHit, SearchResponse, Space, client, setAuthExpiredHandler, setCorporateSession, setCsrfToken, setLoginAvailable } from './api';
 import { headings, Markdown, scrollToFirstHighlight, smoothBehavior } from './markdown';
 import { Toc } from './Toc';
 import { SpacesManager } from './SpacesManager';
@@ -772,7 +772,7 @@ function AuthGate() {
       const value = await response.json() as AuthSession;
       if (value.mode !== 'trusted' && value.mode !== 'corporate' && value.mode !== 'personal') throw new Error('Сервер вернул неизвестный режим входа.');
       setCsrfToken(value.mode === 'corporate' ? value.csrf_token : '');
-      setCorporateSession(value.mode !== 'trusted');
+      setCorporateSession(value.mode !== 'trusted'); setLoginAvailable(value.mode === 'corporate');
       setDraftIdentity(value.mode !== 'trusted' ? value.user.id : '', value.mode !== 'trusted');
       setSession(value);
       const params = new URLSearchParams(location.search);

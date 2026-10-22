@@ -498,17 +498,120 @@ func TestImportSQLiteUploadFailureAbortsTransaction(t *testing.T) {
 func TestImportSQLiteRefusesTargetWithContent(t *testing.T) {
 	dir := buildLegacyFixture(t)
 	f := newImportFixture(t, dir)
-	if rep, err := f.run(t); err != nil || rep.Failed() {
-		t.Fatalf("first import: %v", err)
+	ctx := context.Background()
+	prepare := func(t *testing.T, stmts ...string) {
+		t.Helper()
+		f = newImportFixture(t, dir)
+		if err := migrateAndGrant(ctx, f.owner, "aiwiki_app", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		pool, err := openImportPostgres(ctx, f.imp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pool.Close()
+		for _, s := range stmts {
+			if _, err = pool.Exec(s); err != nil {
+				t.Fatalf("%s: %v", s, err)
+			}
+		}
 	}
-	for _, tc := range []struct{ name, stmt string }{
-		{"comment", `DELETE FROM comments`},
-	} {
-		_ = tc
+	t.Run("already imported", func(t *testing.T) {
+		f = newImportFixture(t, dir)
+		if rep, err := f.run(t); err != nil || rep.Failed() {
+			t.Fatalf("first import: %v", err)
+		}
+		f.fake.objects = map[string][]byte{}
+		_, err := f.run(t)
+		mustRefuse(t, err, "already contains")
+		if len(f.fake.objects) != 0 {
+			t.Fatal("a refused import uploaded objects")
+		}
+	})
+	t.Run("pre-existing space", func(t *testing.T) {
+		prepare(t, `INSERT INTO spaces(id,name) VALUES('general','x')`)
+		_, err := f.run(t)
+		mustRefuse(t, err, "spaces rows")
+		if n := f.rawCount(t, "articles"); n != 0 {
+			t.Fatalf("articles %d", n)
+		}
+	})
+	t.Run("pre-existing setting", func(t *testing.T) {
+		prepare(t, `INSERT INTO app_settings(key,value) VALUES('public_artifact_links','false')`)
+		_, err := f.run(t)
+		mustRefuse(t, err, "app_settings rows")
+	})
+	t.Run("membership of someone else", func(t *testing.T) {
+		prepare(t, `INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('space','x','user','bob','reader')`)
+		_, err := f.run(t)
+		mustRefuse(t, err, "memberships")
+	})
+	t.Run("another identity named owner", func(t *testing.T) {
+		prepare(t, `INSERT INTO users(id,issuer,subject,name,admin) VALUES('owner','https://idp.example.org','owner','x',0)`)
+		_, err := f.run(t)
+		mustRefuse(t, err, "not the personal-mode owner")
+	})
+	t.Run("personal server started before", func(t *testing.T) {
+		prepare(t, `INSERT INTO users(id,issuer,subject,name,admin,disabled) VALUES('owner','aiwiki:personal','owner','Старое имя',1,0)`)
+		rep, err := f.run(t)
+		if err != nil || rep.Failed() {
+			t.Fatalf("import into a pre-started personal database: %v\n%s", err, f.out)
+		}
+		if n := f.count(t, `SELECT count(*) FROM users WHERE name='Тест Владелец'`); n != 1 {
+			t.Fatalf("owner name not updated: %d", n)
+		}
+	})
+}
+
+func TestImportVerifyOnly(t *testing.T) {
+	dir := buildLegacyFixture(t)
+	f := newImportFixture(t, dir)
+	f.cfg.VerifyOnly = true
+	rep, err := f.run(t) // nothing imported yet: the verification must fail
+	if err != nil {
+		t.Fatal(err)
 	}
-	f.fake.objects = map[string][]byte{}
-	_, err := f.run(t)
-	mustRefuse(t, err, "already contains")
+	if !rep.Failed() {
+		t.Fatalf("verify-only passed on an empty target:\n%s", f.out)
+	}
+	f.cfg.VerifyOnly = false
+	if rep, err = f.run(t); err != nil || rep.Failed() {
+		t.Fatalf("import: %v\n%s", err, f.out)
+	}
+	f.cfg.VerifyOnly = true
+	if rep, err = f.run(t); err != nil || rep.Failed() {
+		t.Fatalf("verify-only: %v\n%s", err, f.out)
+	}
+}
+
+func TestImportAbortDeletesUploadedObjects(t *testing.T) {
+	ms := newMemStore()
+	ctx := context.Background()
+	for _, k := range []string{"a", "b"} {
+		if err := ms.Put(ctx, k, strings.NewReader("x"), 1, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out bytes.Buffer
+	run := &importRun{out: &out, rep: &SQLiteImportReport{Orphans: []string{"a", "b"}}}
+	if _, err := run.abort(ms, errors.New("boom")); err == nil || err.Error() != "boom" {
+		t.Fatal(err)
+	}
+	if len(run.rep.Orphans) != 0 {
+		t.Fatalf("left %v", run.rep.Orphans)
+	}
+	if _, err := ms.Get(ctx, "a"); err == nil {
+		t.Fatal("object a was not deleted")
+	}
+}
+
+func TestImportRefusesHotJournal(t *testing.T) {
+	dir := buildLegacyFixture(t)
+	if err := os.WriteFile(filepath.Join(dir, "wiki.db-journal"), []byte("pending"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadImportSource(context.Background(), dir, t.TempDir())
+	mustRefuse(t, err, "journal")
 }
 
 // ---- no database needed ----

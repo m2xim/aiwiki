@@ -17,6 +17,7 @@ func runMigrateFromSQLite(args []string) int {
 	fs := flag.NewFlagSet("migrate-from-sqlite", flag.ContinueOnError)
 	from := fs.String("from", "", "trusted-mode data directory (contains wiki.db and files/)")
 	dry := fs.Bool("dry-run", false, "do everything in a transaction that is rolled back; upload nothing")
+	verifyOnly := fs.Bool("verify-only", false, "write nothing: only run the verification against a target that was imported earlier")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -29,6 +30,7 @@ func runMigrateFromSQLite(args []string) int {
 	rep, err := server.ImportSQLite(ctx, server.SQLiteImportConfig{
 		From:                 *from,
 		DryRun:               *dry,
+		VerifyOnly:           *verifyOnly,
 		S3:                   s3ConfigFromEnv(),
 		DatabaseURL:          os.Getenv("AIWIKI_DATABASE_URL"),
 		MigrationDatabaseURL: os.Getenv("AIWIKI_MIGRATION_DATABASE_URL"),

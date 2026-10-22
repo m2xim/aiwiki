@@ -231,7 +231,7 @@ type importSource struct {
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // copySourceDatabase copies wiki.db (and a pending -wal) into tmp. The source is
-// opened read-only and never written; a change during the copy is refused.
+// read with os.Open only (never opened for writing); a change during the copy is refused.
 func copySourceDatabase(from, tmp string) (string, error) {
 	db := filepath.Join(from, "wiki.db")
 	type stamp struct {
@@ -257,6 +257,11 @@ func copySourceDatabase(from, tmp string) (string, error) {
 	}
 	if !ok {
 		return "", refuse("no wiki.db in %s (-from must be a trusted-mode data directory)", from)
+	}
+	if j, hasJournal, jerr := stat(db + "-journal"); jerr != nil {
+		return "", refuse("cannot read the source database: %v", jerr)
+	} else if hasJournal && j.size > 0 {
+		return "", refuse("wiki.db-journal exists and is not empty: the old server stopped in the middle of a write. Start the old server once so SQLite recovers the database, stop it, and run the import again")
 	}
 	w0, hasWAL, err := stat(db + "-wal")
 	if err != nil {

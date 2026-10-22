@@ -50,6 +50,10 @@ export const setCorporateSession = (value: boolean) => { corporateSession = valu
 
 let csrfToken = '';
 export const setCsrfToken = (token: string) => { csrfToken = token; };
+// Personal mode has no login page: a 401 there is an ordinary error.
+let loginAvailable = true;
+export const setLoginAvailable = (value: boolean) => { loginAvailable = value; };
+const toLogin = () => { if (loginAvailable) location.assign('/auth/login'); };
 let authExpiredHandler: (() => void) | null = null;
 export const setAuthExpiredHandler = (handler: (() => void) | null) => { authExpiredHandler = handler; };
 const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
@@ -59,7 +63,7 @@ const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, { ...init, headers });
   if (!response.ok) {
     if (response.status === 401 && !location.pathname.startsWith('/auth/')) {
-      if (authExpiredHandler) authExpiredHandler(); else location.assign('/auth/login');
+      if (authExpiredHandler && loginAvailable) authExpiredHandler(); else toLogin();
     }
     let message = response.status === 403 ? 'Недостаточно прав для этого действия.' : `${response.status} ${response.statusText}`;
     try { const body = await response.json(); if (body.error && body.error !== 'forbidden') message = body.error; } catch { /* response is not JSON */ }
@@ -77,7 +81,7 @@ const api204 = async (url: string, init: RequestInit) => {
   if (!response.ok) {
     let message = response.status === 403 ? 'Недостаточно прав для выхода из системы.' : `${response.status} ${response.statusText}`;
     try { const body = await response.json(); if (body.error && body.error !== 'forbidden') message = body.error; } catch { /* response is not JSON */ }
-    if (response.status === 401 && authExpiredHandler) authExpiredHandler();
+    if (response.status === 401 && authExpiredHandler && loginAvailable) authExpiredHandler();
     throw new Error(message);
   }
   if (response.status !== 204) throw new Error('Сервер не подтвердил завершение сеанса.');
@@ -92,7 +96,7 @@ const moveApply = async (request: MoveRequest): Promise<MoveApplyResult> => {
   if (response.status === 409 && body.preview) return { conflict: true, preview: body.preview };
   if (!response.ok) {
     if (response.status === 401 && !location.pathname.startsWith('/auth/')) {
-      if (authExpiredHandler) authExpiredHandler(); else location.assign('/auth/login');
+      if (authExpiredHandler && loginAvailable) authExpiredHandler(); else toLogin();
     }
     throw new Error(response.status === 403 ? 'Недостаточно прав для этого действия.' : body.error && body.error !== 'forbidden' ? body.error : `${response.status} ${response.statusText}`);
   }
@@ -126,7 +130,7 @@ const artifactApi = {
   artifactFile: async (id: string, path: string, revision?: number): Promise<ArrayBuffer> => {
     const response = await fetch(`/api/artifacts/${enc(id)}/files/${encPath(path)}${revision ? `?revision=${revision}` : ''}`);
     if (!response.ok) {
-      if (response.status === 401 && !location.pathname.startsWith('/auth/')) { if (authExpiredHandler) authExpiredHandler(); else location.assign('/auth/login'); }
+      if (response.status === 401 && !location.pathname.startsWith('/auth/')) { if (authExpiredHandler && loginAvailable) authExpiredHandler(); else toLogin(); }
       throw new Error(response.status === 403 ? 'Недостаточно прав для этого действия.' : `${response.status} ${response.statusText}`);
     }
     return response.arrayBuffer();

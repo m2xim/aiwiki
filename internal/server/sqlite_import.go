@@ -18,18 +18,19 @@ import (
 // Identity of the single owner in personal mode (docs/PERSONAL.md, "Owner
 // identity"). The personal server creates exactly the same rows.
 const (
-	personalOwnerID      = "owner"
-	personalOwnerIssuer  = "aiwiki:personal"
-	personalOwnerSubject = "owner"
-	// DefaultPersonalName is the owner's display name without AIWIKI_PERSONAL_NAME.
-	DefaultPersonalName = "Владелец"
+	personalOwnerID      = PersonalOwnerID
+	personalOwnerIssuer  = PersonalIssuer
+	personalOwnerSubject = PersonalOwnerID
 )
 
 // SQLiteImportConfig configures ImportSQLite ("aiwiki migrate-from-sqlite").
 type SQLiteImportConfig struct {
 	From   string // trusted-mode data directory (wiki.db, files/)
 	DryRun bool
-	S3     S3Config
+	// VerifyOnly writes nothing: it runs the verification against a target that was
+	// imported earlier (for example after a commit whose outcome was unknown).
+	VerifyOnly bool
+	S3         S3Config
 	// DatabaseURL is the runtime role, MigrationDatabaseURL and RuntimeRole are
 	// the owner role and the runtime role name (as in corporate mode),
 	// ImportDatabaseURL a role that bypasses row-level security.
@@ -72,13 +73,6 @@ func (r *importRun) check(ok bool, name, detail string) {
 	r.printf("  %s %s %s", status, name, detail)
 }
 
-// grantRuntimeRole mirrors the grants OpenCorporate gives after its migrations.
-func grantRuntimeRole(db *database, role string) error {
-	r := `"` + role + `"`
-	_, err := db.Exec(`GRANT USAGE ON SCHEMA public TO ` + r + `; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ` + r + `; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ` + r + `; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ` + r + `; REVOKE TRUNCATE,TRIGGER,REFERENCES ON ALL TABLES IN SCHEMA public FROM ` + r + `; REVOKE UPDATE,DELETE ON security_audit FROM ` + r + `; REVOKE ALL ON schema_migrations FROM ` + r + `; REVOKE EXECUTE ON FUNCTION corporate_owner_effective_role(text,text,text) FROM ` + r)
-	return err
-}
-
 // openImportPostgres connects as the import role. Unlike openPostgres it
 // requires a role that bypasses row-level security: that is its purpose.
 func openImportPostgres(ctx context.Context, dsn string) (*sql.DB, error) {
@@ -116,6 +110,15 @@ func (cfg SQLiteImportConfig) validate() error {
 	if strings.TrimSpace(cfg.S3.Bucket) == "" {
 		return refuse("AIWIKI_S3_BUCKET is required")
 	}
+	if cfg.VerifyOnly {
+		if cfg.DryRun {
+			return refuse("-verify-only and -dry-run exclude each other")
+		}
+		if cfg.DatabaseURL == "" || cfg.ImportDatabaseURL == "" {
+			return refuse("AIWIKI_DATABASE_URL and AIWIKI_IMPORT_DATABASE_URL are required")
+		}
+		return nil
+	}
 	if cfg.DatabaseURL == "" || cfg.MigrationDatabaseURL == "" || cfg.ImportDatabaseURL == "" {
 		return refuse("AIWIKI_DATABASE_URL, AIWIKI_MIGRATION_DATABASE_URL and AIWIKI_IMPORT_DATABASE_URL are required")
 	}
@@ -135,7 +138,7 @@ func ImportSQLite(ctx context.Context, cfg SQLiteImportConfig) (*SQLiteImportRep
 		return nil, err
 	}
 	if strings.TrimSpace(cfg.OwnerName) == "" {
-		cfg.OwnerName = DefaultPersonalName
+		cfg.OwnerName = PersonalDefaultName
 	}
 	out := cfg.Out
 	if out == nil {
@@ -162,8 +165,21 @@ func ImportSQLite(ctx context.Context, cfg SQLiteImportConfig) (*SQLiteImportRep
 		return nil, err
 	}
 
+	if cfg.VerifyOnly {
+		imp, err := openImportPostgres(ctx, cfg.ImportDatabaseURL)
+		if err != nil {
+			return nil, err
+		}
+		defer imp.Close()
+		run.printf("Verification only (runtime role scoped as the owner)")
+		if err = run.verify(ctx, imp, store, src); err != nil {
+			run.check(false, "verification", "could not run: "+err.Error())
+		}
+		return run.rep, nil
+	}
+
 	run.printf("Preparing the target schema (server migrations as the owner role)")
-	if err = migrateTarget(ctx, cfg); err != nil {
+	if err = migrateAndGrant(ctx, cfg.MigrationDatabaseURL, cfg.RuntimeRole, "", ""); err != nil {
 		return nil, err
 	}
 	imp, err := openImportPostgres(ctx, cfg.ImportDatabaseURL)
@@ -209,21 +225,23 @@ func ImportSQLite(ctx context.Context, cfg SQLiteImportConfig) (*SQLiteImportRep
 	run.printf("Uploading %d files (%s)", len(src.Objects), humanBytes(totalBytes(src.Objects)))
 	for _, o := range src.Objects {
 		if err = putImportObject(ctx, store, o); err != nil {
-			return run.abort(err)
+			return run.abort(store, err)
 		}
 		run.rep.Orphans = append(run.rep.Orphans, o.Key)
 	}
 	if bad := verifyObjects(ctx, store, src.Objects); len(bad) > 0 {
-		return run.abort(fmt.Errorf("uploaded objects do not read back identically: %s", strings.Join(bad, "; ")))
+		return run.abort(store, fmt.Errorf("uploaded objects do not read back identically: %s", strings.Join(bad, "; ")))
 	}
 	// A sequence is not transactional: advance it last, right before the commit.
 	if len(d.Revisions) > 0 {
 		if _, err = tx.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence('revisions','id'),(SELECT max(id) FROM revisions))`); err != nil {
-			return run.abort(fmt.Errorf("revision sequence: %w", err))
+			return run.abort(store, fmt.Errorf("revision sequence: %w", err))
 		}
 	}
 	if err = tx.Commit(); err != nil {
-		return run.abort(fmt.Errorf("commit: %w", err))
+		// The outcome of a failed COMMIT is unknown (the connection may have died
+		// after the server applied it): never delete the uploaded objects here.
+		return nil, fmt.Errorf("commit failed and its outcome is unknown (%v); the uploaded files were left in the bucket. Check the target, then run \"aiwiki migrate-from-sqlite -from %s -verify-only\": if it passes the import is complete, otherwise the target is empty and the import can be run again", err, cfg.From)
 	}
 	run.rep.Orphans = nil
 	run.printf("Committed")
@@ -236,13 +254,29 @@ func ImportSQLite(ctx context.Context, cfg SQLiteImportConfig) (*SQLiteImportRep
 	return run.rep, nil
 }
 
-// abort ends a run before the commit: nothing in the database, objects already
-// uploaded are orphans for "check-storage -delete-orphans".
-func (r *importRun) abort(err error) (*SQLiteImportReport, error) {
-	if len(r.rep.Orphans) > 0 {
-		sort.Strings(r.rep.Orphans)
-		r.printf("The transaction was rolled back. %d objects were already uploaded and are orphans; remove them with: aiwiki check-storage -delete-orphans -yes", len(r.rep.Orphans))
+// abort ends a run before the commit: the transaction is rolled back (by the
+// caller's deferred Rollback) and the objects uploaded so far are deleted, best
+// effort; those that could not be deleted are listed.
+func (r *importRun) abort(store objectStore, err error) (*SQLiteImportReport, error) {
+	if len(r.rep.Orphans) == 0 {
+		return nil, err
 	}
+	dctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	var left []string
+	for _, k := range r.rep.Orphans {
+		if derr := store.Delete(dctx, k); derr != nil {
+			left = append(left, k)
+		}
+	}
+	r.rep.Orphans = left
+	sort.Strings(left)
+	if len(left) == 0 {
+		r.printf("The transaction was rolled back and the uploaded objects were deleted.")
+		return nil, err
+	}
+	r.printf("The transaction was rolled back. These %d uploaded objects could not be deleted and are orphans: %s", len(left), strings.Join(left, ", "))
+	r.printf("Delete them from the bucket by hand, or with \"aiwiki check-storage -delete-orphans -yes -allow-empty-database\" once they are older than 24 hours.")
 	return nil, err
 }
 
@@ -264,34 +298,15 @@ func humanBytes(n int64) string {
 	return fmt.Sprintf("%d bytes", n)
 }
 
-// migrateTarget runs the same migrations and grants as the server.
-func migrateTarget(ctx context.Context, cfg SQLiteImportConfig) error {
-	migration, err := openPostgres(ctx, cfg.MigrationDatabaseURL)
-	if err != nil {
-		return fmt.Errorf("migration role: %w", err)
-	}
-	defer migration.Close()
-	owner := &Server{DB: migration}
-	err = owner.migrate()
-	if err == nil {
-		err = owner.migrateCorporate()
-	}
-	if err == nil {
-		err = grantRuntimeRole(migration, cfg.RuntimeRole)
-	}
-	if err != nil {
-		return fmt.Errorf("migration failed: %w", err)
-	}
-	return nil
-}
-
 // lockAndCheckEmpty serialises against writers and refuses a target that holds
 // content. EXCLUSIVE keeps writers out and lets readers continue.
 func lockAndCheckEmpty(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, `LOCK TABLE spaces,articles,revisions,comments,attachments,favorites,article_fts,memberships,users IN EXCLUSIVE MODE`); err != nil {
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE spaces,articles,revisions,comments,attachments,favorites,article_fts,memberships,users,artifacts,artifact_revisions,artifact_shares,app_settings IN EXCLUSIVE MODE`); err != nil {
 		return fmt.Errorf("cannot lock the target tables (is a server writing to it?): %w", err)
 	}
-	for _, t := range []string{"articles", "revisions", "comments", "attachments"} {
+	// A server started earlier in personal mode leaves exactly the owner's users
+	// row (and audit entries): that is accepted. Every content table must be empty.
+	for _, t := range []string{"spaces", "articles", "revisions", "comments", "attachments", "favorites", "article_fts", "artifacts", "artifact_revisions", "artifact_shares", "app_settings"} {
 		var n int64
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM `+t).Scan(&n); err != nil {
 			return err
@@ -300,13 +315,21 @@ func lockAndCheckEmpty(ctx context.Context, tx *sql.Tx) error {
 			return refuse("the target already contains %d %s rows; import only into an empty personal-mode database", n, t)
 		}
 	}
+	var n int64
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM memberships WHERE NOT (subject_type='user' AND subject_id=$1)`, personalOwnerID).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return refuse("the target already contains %d memberships of other subjects; import only into an empty personal-mode database", n)
+	}
 	var issuer, subject string
-	err := tx.QueryRowContext(ctx, `SELECT issuer,subject FROM users WHERE id=$1`, personalOwnerID).Scan(&issuer, &subject)
+	var admin, disabled int
+	err := tx.QueryRowContext(ctx, `SELECT issuer,subject,admin,disabled FROM users WHERE id=$1`, personalOwnerID).Scan(&issuer, &subject, &admin, &disabled)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
 		return err
-	case issuer != personalOwnerIssuer || subject != personalOwnerSubject:
+	case issuer != personalOwnerIssuer || subject != personalOwnerSubject || admin != 1 || disabled != 0:
 		return refuse("the target has a user %q that is not the personal-mode owner; this is not a personal-mode database", personalOwnerID)
 	}
 	return nil
@@ -331,8 +354,7 @@ func (r *importRun) writeRows(ctx context.Context, tx *sql.Tx, src *importSource
 	// fires legitimately and records the archive state; the storage-quota guard
 	// passes because the quota stays NULL (server default).
 	for _, s := range d.Spaces {
-		if err := exec("space "+s.ID, `INSERT INTO spaces(id,name,description,archived_at,owner_id,personal) VALUES($1,$2,$3,$4,$5,0)
-ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,archived_at=EXCLUDED.archived_at,owner_id=EXCLUDED.owner_id`,
+		if err := exec("space "+s.ID, `INSERT INTO spaces(id,name,description,archived_at,owner_id,personal) VALUES($1,$2,$3,$4,$5,0)`,
 			s.ID, s.Name, s.Description, s.ArchivedAt, personalOwnerID); err != nil {
 			return err
 		}

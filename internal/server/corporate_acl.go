@@ -621,6 +621,12 @@ func (s *Server) corporateUserDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if s.personal && id == PersonalOwnerID {
+		// Disabling the only identity of a personal installation would lock
+		// everyone out and stop the next start.
+		apiErr(w, 403, "the owner of a personal installation cannot be disabled")
+		return
+	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		apiErr(w, 500, "database error")
