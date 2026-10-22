@@ -68,7 +68,7 @@ func TestMCPOAuthNormalizeDisabled(t *testing.T) {
 	for _, v := range []string{""} {
 		cfg := mcpOAuthTestConfig(v)
 		got, err := normalizeMCPOAuthConfig(cfg)
-		if err != nil || got != cfg {
+		if err != nil || !reflect.DeepEqual(got, cfg) {
 			t.Fatalf("%q: got %+v err %v", v, got, err)
 		}
 	}
@@ -106,7 +106,7 @@ func TestMCPOAuthNormalizeValid(t *testing.T) {
 				t.Fatalf("got %q want %q", got.MCPOAuth.ResourceURL, c.want)
 			}
 			got.MCPOAuth = orig.MCPOAuth
-			if got != orig {
+			if !reflect.DeepEqual(got, orig) {
 				t.Fatal("normalize changed unrelated config")
 			}
 		})

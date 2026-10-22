@@ -30,3 +30,7 @@ backups/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# personal mode: local data and the example env file
+personal-data/
+!.env.personal.example

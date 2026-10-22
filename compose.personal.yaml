@@ -1,0 +1,112 @@
+# Personal mode (docs/PERSONAL.md): PostgreSQL + SeaweedFS S3 + the wiki for one
+# owner, without an identity provider. Run with an env file that is not part of
+# the repository (see .env.personal.example):
+#
+#   docker compose --env-file .env.personal -f compose.personal.yaml up -d --build
+#
+# Data lives in ./personal-data/{pg,s3}. Only the wiki port is published, on
+# AIWIKI_BIND_ADDR. There is no login: expose it only on a trusted network or
+# VPN, and set AIWIKI_ALLOWED_ORIGIN to the address browsers use.
+#
+# PostgreSQL (`db`) and SeaweedFS (`s3`) are reachable only on the compose
+# network. The wiki accepts the plain-HTTP S3 endpoint because its host name is
+# listed in AIWIKI_S3_ALLOW_HTTP_HOSTS; every other endpoint must use HTTPS.
+x-wiki-environment: &wiki-environment
+  AIWIKI_MODE: personal
+  AIWIKI_PERSONAL_NAME: ${AIWIKI_PERSONAL_NAME:-Владелец}
+  AIWIKI_DATABASE_URL: postgres://aiwiki_app:${AIWIKI_APP_PASSWORD:?set AIWIKI_APP_PASSWORD}@db:5432/aiwiki?sslmode=disable
+  AIWIKI_MIGRATION_DATABASE_URL: postgres://aiwiki_owner:${AIWIKI_OWNER_PASSWORD:?set AIWIKI_OWNER_PASSWORD}@db:5432/aiwiki?sslmode=disable
+  AIWIKI_DATABASE_ROLE: aiwiki_app
+  AIWIKI_S3_BUCKET: wiki
+  AIWIKI_S3_REGION: us-east-1
+  AIWIKI_S3_ENDPOINT: http://s3:8333
+  AIWIKI_S3_PATH_STYLE: "1"
+  AIWIKI_S3_ALLOW_HTTP_HOSTS: s3
+  AIWIKI_SPACE_QUOTA_BYTES: ${AIWIKI_SPACE_QUOTA_BYTES:-}
+  AIWIKI_ARTIFACT_SECRET: ${AIWIKI_ARTIFACT_SECRET:?set AIWIKI_ARTIFACT_SECRET}
+  AWS_ACCESS_KEY_ID: ${AIWIKI_S3_ACCESS_KEY:?set AIWIKI_S3_ACCESS_KEY}
+  AWS_SECRET_ACCESS_KEY: ${AIWIKI_S3_SECRET_KEY:?set AIWIKI_S3_SECRET_KEY}
+
+services:
+  db:
+    image: postgres:16.15-alpine
+    environment:
+      POSTGRES_DB: aiwiki
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      AIWIKI_OWNER_PASSWORD: ${AIWIKI_OWNER_PASSWORD:?set AIWIKI_OWNER_PASSWORD}
+      AIWIKI_APP_PASSWORD: ${AIWIKI_APP_PASSWORD:?set AIWIKI_APP_PASSWORD}
+    volumes:
+      - ./personal-data/pg:/var/lib/postgresql/data
+      - ./scripts/personal-pg-init.sh:/docker-entrypoint-initdb.d/10-aiwiki-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aiwiki"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  s3:
+    image: docker.io/chrislusf/seaweedfs:4.48
+    environment:
+      S3_ACCESS_KEY: ${AIWIKI_S3_ACCESS_KEY:?set AIWIKI_S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${AIWIKI_S3_SECRET_KEY:?set AIWIKI_S3_SECRET_KEY}
+    volumes:
+      - ./personal-data/s3:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '{"identities":[{"name":"aiwiki","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json
+        exec weed server -ip=s3 -ip.bind=0.0.0.0 -dir=/data -filer -s3 -s3.port=8333 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=1024 -master.telemetry=false
+    restart: unless-stopped
+
+  # Creates the private bucket once and exits; repeated starts find it present.
+  s3-init:
+    image: docker.io/chrislusf/seaweedfs:4.48
+    depends_on:
+      - s3
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        i=0
+        while [ "$$i" -lt 90 ]; do
+          if printf 's3.bucket.list\nexit\n' | weed shell -master=s3:9333 2>&1 | grep -qw wiki; then exit 0; fi
+          printf 's3.bucket.create -name wiki\nexit\n' | weed shell -master=s3:9333 >/dev/null 2>&1
+          i=$$((i+1)); sleep 2
+        done
+        echo "bucket wiki could not be created" >&2; exit 1
+    restart: "no"
+
+  wiki:
+    build: .
+    image: aiwiki:personal
+    ports:
+      - "${AIWIKI_BIND_ADDR:-127.0.0.1}:${AIWIKI_PORT:-8090}:8090"
+    depends_on:
+      db:
+        condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+    environment: *wiki-environment
+    tmpfs:
+      - /app/data
+    command: ["-addr", "0.0.0.0:8090", "-data", "/app/data", "-web", "/app/web/dist", "-allowed-origin", "${AIWIKI_ALLOWED_ORIGIN:-http://127.0.0.1:8090}"]
+    restart: unless-stopped
+
+  # One-off import of a trusted-mode installation (docs/PERSONAL.md):
+  #   docker compose --env-file .env.personal -f compose.personal.yaml --profile import run --rm import
+  # It is the only place that sees the PostgreSQL superuser; the server never does.
+  import:
+    profiles: ["import"]
+    image: aiwiki:personal
+    depends_on:
+      db:
+        condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *wiki-environment
+      AIWIKI_IMPORT_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/aiwiki?sslmode=disable
+    volumes:
+      - ${AIWIKI_IMPORT_SOURCE:-./data}:/source:ro
+    command: ["migrate-from-sqlite", "-from", "/source"]
+    restart: "no"

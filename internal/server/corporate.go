@@ -27,27 +27,8 @@ func OpenCorporate(ctx context.Context, cfg CorporateConfig, dataDir, webDir str
 	if err := os.MkdirAll(filepath.Join(dataDir, "files"), 0755); err != nil {
 		return nil, err
 	}
-	if cfg.MigrationDatabaseURL != "" {
-		if !validPathID(cfg.RuntimeRole) {
-			return nil, errors.New("runtime database role is required for migration")
-		}
-		migration, err := openPostgres(ctx, cfg.MigrationDatabaseURL)
-		if err != nil {
-			return nil, err
-		}
-		owner := &Server{DB: migration, DataDir: dataDir, WebDir: webDir}
-		err = owner.migrate()
-		if err == nil {
-			err = owner.migrateCorporate()
-		}
-		if err == nil {
-			role := `"` + cfg.RuntimeRole + `"`
-			_, err = migration.Exec(`GRANT USAGE ON SCHEMA public TO ` + role + `; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ` + role + `; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ` + role + `; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ` + role + `; REVOKE TRUNCATE,TRIGGER,REFERENCES ON ALL TABLES IN SCHEMA public FROM ` + role + `; REVOKE UPDATE,DELETE ON security_audit FROM ` + role + `; REVOKE ALL ON schema_migrations FROM ` + role + `; REVOKE EXECUTE ON FUNCTION corporate_owner_effective_role(text,text,text) FROM ` + role)
-		}
-		migration.Close()
-		if err != nil {
-			return nil, fmt.Errorf("corporate migration failed: %w", err)
-		}
+	if err := migrateAndGrant(ctx, cfg.MigrationDatabaseURL, cfg.RuntimeRole, dataDir, webDir); err != nil {
+		return nil, err
 	}
 	db, err := openPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -146,4 +127,33 @@ func (s *Server) effectiveRole(space, project string) (int, error) {
 	var role int
 	err := s.DB.QueryRow(`SELECT corporate_role_rank(corporate_effective_role(?,?,?))`, s.principal.ID, space, project).Scan(&role)
 	return role, err
+}
+
+// migrateAndGrant runs the schema migrations on the owner connection and grants
+// the runtime role its minimal privileges. An empty migrationURL skips both.
+func migrateAndGrant(ctx context.Context, migrationURL, runtimeRole, dataDir, webDir string) error {
+	if migrationURL == "" {
+		return nil
+	}
+	if !validPathID(runtimeRole) {
+		return errors.New("runtime database role is required for migration")
+	}
+	migration, err := openPostgres(ctx, migrationURL)
+	if err != nil {
+		return err
+	}
+	owner := &Server{DB: migration, DataDir: dataDir, WebDir: webDir}
+	err = owner.migrate()
+	if err == nil {
+		err = owner.migrateCorporate()
+	}
+	if err == nil {
+		role := `"` + runtimeRole + `"`
+		_, err = migration.Exec(`GRANT USAGE ON SCHEMA public TO ` + role + `; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ` + role + `; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ` + role + `; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ` + role + `; REVOKE TRUNCATE,TRIGGER,REFERENCES ON ALL TABLES IN SCHEMA public FROM ` + role + `; REVOKE UPDATE,DELETE ON security_audit FROM ` + role + `; REVOKE ALL ON schema_migrations FROM ` + role + `; REVOKE EXECUTE ON FUNCTION corporate_owner_effective_role(text,text,text) FROM ` + role)
+	}
+	migration.Close()
+	if err != nil {
+		return fmt.Errorf("corporate migration failed: %w", err)
+	}
+	return nil
 }

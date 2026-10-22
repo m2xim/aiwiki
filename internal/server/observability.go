@@ -249,7 +249,9 @@ func (s *Server) MetricsHandler(token string) http.Handler {
 			ready = 1
 		}
 		src := metricsSource{mode: "trusted", pools: map[string]*sql.DB{}, ready: ready}
-		if s.auth != nil {
+		if s.personal {
+			src.mode = "personal"
+		} else if s.auth != nil {
 			src.mode = "corporate"
 		}
 		if s.DB != nil && s.DB.pool != nil {

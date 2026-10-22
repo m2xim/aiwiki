@@ -17,3 +17,4 @@ qa-artifacts
 .env.*
 *.pem
 *.key
+personal-data

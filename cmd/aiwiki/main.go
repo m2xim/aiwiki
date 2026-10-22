@@ -27,6 +27,9 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "check-storage" {
 		os.Exit(runCheckStorage(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "migrate-from-sqlite" {
+		os.Exit(runMigrateFromSQLite(os.Args[2:]))
+	}
 	addr := flag.String("addr", "127.0.0.1:8090", "HTTP listen address")
 	data := flag.String("data", "data", "SQLite and attachment directory")
 	web := flag.String("web", "web/dist", "Built frontend directory")
@@ -49,6 +52,10 @@ func run() error {
 	if err := server.ValidateMetricsConfig(metricsAddr, metricsToken); err != nil {
 		return err
 	}
+	mode, err := selectMode(os.Getenv("AIWIKI_MODE"), os.Environ())
+	if err != nil {
+		return err
+	}
 	var s *server.Server
 	databaseURL := os.Getenv("AIWIKI_DATABASE_URL")
 	issuer := os.Getenv("AIWIKI_OIDC_ISSUER")
@@ -66,7 +73,15 @@ func run() error {
 		}
 		spaceQuota = parsed
 	}
-	if corporate {
+	if mode == modePersonal {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		s, err = server.OpenPersonal(ctx, server.PersonalConfig{
+			S3:          s3ConfigFromEnv(),
+			DatabaseURL: databaseURL, MigrationDatabaseURL: os.Getenv("AIWIKI_MIGRATION_DATABASE_URL"), RuntimeRole: os.Getenv("AIWIKI_DATABASE_ROLE"),
+			Name: os.Getenv("AIWIKI_PERSONAL_NAME"), SpaceQuotaBytes: spaceQuota,
+		}, *data, *web)
+	} else if corporate {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		s, err = server.OpenCorporate(ctx, server.CorporateConfig{

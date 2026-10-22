@@ -32,4 +32,8 @@ type S3Config struct {
 	Prefix                string
 	PathStyle             bool
 	AllowInsecureLoopback bool
+	// AllowHTTPHosts lists host names (AIWIKI_S3_ALLOW_HTTP_HOSTS) for which a
+	// plain-HTTP endpoint is accepted, such as the name of an S3 service on a
+	// private container network. Matching is exact and case-insensitive.
+	AllowHTTPHosts []string
 }

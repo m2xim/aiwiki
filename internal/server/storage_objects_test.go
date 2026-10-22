@@ -336,3 +336,23 @@ func TestStorageSniffRewindsFromEnd(t *testing.T) {
 		t.Fatal("sniff did not rewind upload")
 	}
 }
+
+func TestS3EndpointAllowHTTPHosts(t *testing.T) {
+	for _, c := range []struct {
+		cfg S3Config
+		ok  bool
+	}{
+		{S3Config{Endpoint: "http://s3:8333"}, false},
+		{S3Config{Endpoint: "http://s3:8333", AllowHTTPHosts: []string{"s3"}}, true},
+		{S3Config{Endpoint: "http://S3:8333", AllowHTTPHosts: []string{"s3"}}, true},
+		{S3Config{Endpoint: "http://s3.example.com:8333", AllowHTTPHosts: []string{"s3"}}, false},
+		{S3Config{Endpoint: "http://other:8333", AllowHTTPHosts: []string{"s3", ""}}, false},
+		{S3Config{Endpoint: "http://127.0.0.1:8333", AllowHTTPHosts: []string{"s3"}}, false},
+		{S3Config{Endpoint: "http://127.0.0.1:8333", AllowInsecureLoopback: true}, true},
+		{S3Config{Endpoint: "https://s3.example.com"}, true},
+	} {
+		if _, err := validateS3Endpoint(c.cfg); (err == nil) != c.ok {
+			t.Errorf("%+v: err=%v", c.cfg, err)
+		}
+	}
+}
