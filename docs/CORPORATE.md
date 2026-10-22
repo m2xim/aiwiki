@@ -58,7 +58,7 @@ Creating a child requires management rights on its immediate parent (or the spac
 
 Search and section ranking operate only on rows PostgreSQL permits the current identity to read, before snippets, document-frequency scoring, counts or pagination. History also checks the historical container, so a move cannot expose an old snapshot merely because its current article became accessible. Authors come from the server identity. Favorites are keyed by user and article. Corporate drafts are isolated by user and browser session.
 
-The first core deliberately rejects article container/parent moves and project reparenting until complete subtree permission previews are implemented. It also disables the legacy whole-database export in corporate mode. Scoped Markdown/HTML/PDF import/export and interactive artifacts remain separate planned work.
+Moving between containers is done only through the access-impact preview (`POST /api/moves/preview`, `POST /api/moves/apply`): an article subtree needs manager+ on the source and the target container, a project with its sub-projects needs the owner role on the project and manager+ on the target; a parent change inside one container is an ordinary editor edit. Rules, API and database safeguards are in [MOVES.md](MOVES.md). Project `PATCH` still rejects `parent_id`/`space_id`. The core also disables the legacy whole-database export in corporate mode. Scoped Markdown/HTML/PDF import/export and interactive artifacts remain separate planned work.
 
 ## MCP
 

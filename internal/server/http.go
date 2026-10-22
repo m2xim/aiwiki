@@ -399,8 +399,11 @@ func (s *Server) commitUpdate(aid string, base int, author, message string, muta
 	if e != nil {
 		return Article{}, 400, e
 	}
-	if s.principal != nil && (a.SpaceID != old.SpaceID || a.ProjectID != old.ProjectID || a.ParentID != old.ParentID) {
-		return Article{}, 400, errors.New("corporate moves require a permission preview and are not yet enabled")
+	// In corporate mode a parent change inside the same container is an ordinary
+	// edit (editor+, enforced by RLS and the database trigger); a change of space
+	// or project needs the access-impact preview.
+	if s.principal != nil && (a.SpaceID != old.SpaceID || a.ProjectID != old.ProjectID) {
+		return Article{}, 400, errors.New("moving an article to another space or project requires an access-impact preview: use POST /api/moves/preview and /api/moves/apply")
 	}
 	if e = requiredArticle(a); e != nil {
 		return Article{}, 400, e

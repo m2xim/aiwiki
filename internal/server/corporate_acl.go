@@ -34,7 +34,10 @@ func (s *Server) migrateCorporate() error {
 	if err := s.DB.runMigrations(ctx, "corporate_acl", []pgMigration{{Version: corporateSchemaVersion, Name: "corporate ACL and forced RLS", Statements: splitCorporateSQL(string(schema))}}); err != nil {
 		return err
 	}
-	return s.migrateMCPScope(ctx)
+	if err := s.migrateMCPScope(ctx); err != nil {
+		return err
+	}
+	return s.migrateCorporateMoves(ctx)
 }
 
 // splitCorporateSQL separates commands while preserving function bodies,
@@ -149,6 +152,7 @@ func (s *Server) corporateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/access/effective", s.corporateEffectiveAccess)
 	mux.HandleFunc("GET /api/catalog", s.corporateCatalog)
 	mux.HandleFunc("POST /api/corporate/spaces", s.corporateSpaceCreate)
+	s.registerMoveRoutes(mux)
 }
 
 func (s *Server) corporateActor(w http.ResponseWriter, r *http.Request, admin bool) (string, bool) {
@@ -967,7 +971,7 @@ func (s *Server) corporateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.ParentID != nil || in.SpaceID != nil {
-		apiErr(w, 400, "project moves require an access-impact preview")
+		apiErr(w, 400, "project moves require an access-impact preview: use POST /api/moves/preview and /api/moves/apply")
 		return
 	}
 	if in.InheritACL != nil {

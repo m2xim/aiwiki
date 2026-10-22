@@ -1,7 +1,10 @@
 # Safe moves with access-impact preview (corporate mode)
 
-Status: contract for implementation (2026-10-22). Trusted SQLite mode keeps its
-current move behaviour and is not changed by this work.
+Status: server side implemented (2026-10-22), covered by PostgreSQL tests in
+`internal/server/corporate_moves_postgres_test.go`. Trusted SQLite mode keeps its
+current move behaviour and is not changed by this work; the endpoints are not
+registered there. The web interface is a separate piece of work against this
+contract.
 
 ## Rules
 
@@ -96,3 +99,88 @@ and the trigger additionally requires that the row's old and new containers both
 grant the current user manager+ (or editor+ for a same-container parent change).
 RLS update policies remain in force for every row. The project PATCH keeps
 rejecting `parent_id`/`space_id`; project moves go through `/api/moves/apply`.
+
+## Implementation notes (server)
+
+Details fixed while implementing; the rules above are unchanged unless said so.
+
+- **Where**: `corporate_moves.go` (handlers, validation, apply), `corporate_moves.sql`
+  (migration component `corporate_moves`, version 1, applied after `corporate_acl`
+  and `mcp_access`; the older migrations are untouched).
+- **Preview vs apply**: both run the same planning code. Apply first takes the ACL
+  advisory lock (`corporateLockOwners`), then recomputes and compares the fingerprint
+  in constant time. `409 access changed` covers any difference in what the preview
+  covered: grants, team membership counts, moved ids, and the revisions of all moved
+  articles. A stale `base_revision` of the root is reported earlier as
+  `409 revision conflict`.
+- **Fingerprint**: SHA-256 over canonical JSON of `{v, kind, id, target, actor,
+  base_revision, articles[(id, revision, parent)] or projects[(id, parent, space)],
+  grants[(type, id, before, after, users)], users_gaining, users_losing}`, all lists
+  sorted. It is computed over the *access diff* (principals whose effective role
+  changes), not over complete before/after grant sets, so grants that are identical
+  before and after do not influence it.
+- **Access impact** is computed by the SQL function `corporate_move_impact(kind, id,
+  target_space, target_container)` (SECURITY DEFINER, `search_path=pg_catalog,public`,
+  EXECUTE revoked from PUBLIC). It reuses the recursive chain of
+  `corporate_effective_role` (projects while `inherit_acl=1`, then the space only if the
+  chain ends at a root project with inheritance) for the old and the new position; for
+  projects the new position is evaluated hypothetically, with the moved subtree
+  re-parented in the query. It returns only changes, never full grant lists: `principal`
+  rows (users and teams, strongest change over the moved containers; `users` is the
+  number of active members for a team and 1 for a user) and `user` rows (after
+  expanding teams; used for `users_gaining`, `users_losing` and the self-lockout check).
+  The function checks that the caller is the current `app.user_id` and holds the roles
+  the rules demand (article: manager+ on both containers; project: owner on the moved
+  project, manager+ on the target and on every project of the subtree) and raises
+  otherwise. MCP-scoped sessions get at most `reader` from `corporate_effective_role`
+  and are therefore refused; the handler also rejects them explicitly.
+- **Additional rules not spelled out in the table**: the caller needs manager+ on every
+  project of a moved subtree (otherwise RLS would hide those articles from the move); a
+  subtree containing an archived project is refused; a project move that would leave the
+  caller below editor on the moved content is refused (`403`); the root article must not
+  be soft-deleted; an article subtree spanning several containers is refused (`409`);
+  moving to the current container or the current parent is `400`.
+- **Status codes**: `404` when the actor cannot read the object or the target, `403`
+  when readable but the role is insufficient, `409` for archived containers, stale
+  revisions, concurrent changes and `access changed`, `400` for bad input, cycles,
+  and `move too large`.
+- **Preview of a project move**: `source`/`target` describe the old and the new parent
+  container (`project_id` is the parent project or empty for the space); `articles`
+  counts only articles whose `space_id` changes (none for a move within one space).
+  `warnings` are Russian, user-facing strings.
+- **Same-container parent change** goes through the ordinary article `PUT`; changing
+  `space_id` or `project_id` there is `400` with a hint to use `/api/moves/preview`.
+  Restoring a revision still cannot change container or parent.
+
+### Database safeguards (as implemented)
+
+- Transaction-local settings `app.move` (`article` | `project`) and `app.move_root` are
+  set by the server with `set_config(..., true)`. They are a switch, not a credential:
+  any runtime connection can set them, so every guard also checks roles.
+- `corporate_articles_no_move` (function `corporate_reject_article_move`, replaced in
+  place): a parent-only change requires editor+ on the container; a container change
+  requires `app.move='article'` and manager+ on the old **and** the new container; with
+  `app.move='project'` it only lets articles follow a project that already lives in the
+  new space (same project, same parent).
+- New trigger `corporate_projects_no_move` (function `corporate_guard_project_move`,
+  SECURITY DEFINER): a change of `parent_id`/`space_id` requires the marker; for the
+  moved root it requires the owner role on the old position, manager+ on the target,
+  a consistent target space, writable (non-archived) containers and no cycle; a
+  sub-project may only follow its parent into the parent's space. The projects table has
+  no role-based RLS, so this trigger is the database-level guard for projects.
+- Policies `corporate_articles_project_move_read` (SELECT) and
+  `corporate_articles_project_move` (UPDATE), permissive, active only with
+  `app.move='project'`: during a project move the articles briefly have a stale
+  `space_id`, for which neither the old nor the new row passes the ordinary policies
+  (an `UPDATE ... WHERE` needs SELECT visibility of the old row too). The policies
+  admit exactly those rows for an editor+ of the project at its current location.
+- `validateRuntimeSchema` additionally verifies `corporate_move_impact` (SECURITY
+  DEFINER, fixed `search_path`, not executable by PUBLIC, executable by the runtime role)
+  and that both triggers exist and are enabled.
+
+### Known limits
+
+A runtime connection that sets the markers itself and is manager+ on both containers
+can still move an article without a preview through direct SQL (the preview is
+enforced by the application, the roles by the database). That is the contract's
+intended trade-off; non-managers are stopped by the trigger.
