@@ -205,3 +205,16 @@ export const shareLabel = (revision: number | null | undefined): string => revis
 export function publicLinksDisabledHint(message: string): string | null {
   return /public|публич|disabled|отключ|выключ/i.test(message) ? 'Публичные ссылки отключены администратором организации. Обратитесь к нему, если ссылка нужна.' : null;
 }
+
+/** Frame URL with the application theme as ?theme=light|dark (the capability stays the same). */
+export function withTheme(frameUrl: string, theme: string): string {
+  const value = theme === 'dark' ? 'dark' : 'light';
+  const hash = frameUrl.indexOf('#');
+  const base = hash >= 0 ? frameUrl.slice(0, hash) : frameUrl;
+  const tail = hash >= 0 ? frameUrl.slice(hash) : '';
+  const query = base.indexOf('?');
+  if (query < 0) return `${base}?theme=${value}${tail}`;
+  const params = new URLSearchParams(base.slice(query + 1));
+  params.set('theme', value);
+  return `${base.slice(0, query)}?${params}${tail}`;
+}

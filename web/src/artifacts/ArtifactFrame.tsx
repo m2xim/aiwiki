@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { client } from '../api';
-import { FRAME_SANDBOX, parseResizeMessage, refreshDelay } from '../artifactsCore';
+import { FRAME_SANDBOX, parseResizeMessage, refreshDelay, withTheme } from '../artifactsCore';
 
 type Props = {
   artifactId: string;
@@ -22,6 +22,7 @@ export function ArtifactFrame({ artifactId, revision = null, title, sizing = 'au
   const [error, setError] = useState('');
   const [height, setHeight] = useState(initialHeight);
   const [nonce, setNonce] = useState(0);
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   const frameRef = useRef<HTMLIFrameElement>(null);
   const unavailableRef = useRef(onUnavailable); unavailableRef.current = onUnavailable;
 
@@ -46,6 +47,14 @@ export function ArtifactFrame({ artifactId, revision = null, title, sizing = 'au
     return () => { live = false; window.clearTimeout(timer); };
   }, [artifactId, revision, nonce]);
 
+  // The frame cannot see the app theme: it is passed as ?theme= and the src follows theme changes.
+  useEffect(() => {
+    const read = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+    const observer = new MutationObserver(read);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
+
   // Auto height: accept only the iframe's own window.
   useEffect(() => {
     if (sizing !== 'auto') return;
@@ -61,7 +70,7 @@ export function ArtifactFrame({ artifactId, revision = null, title, sizing = 'au
   if (error) return <div className="art-frame-error" role="alert">{error}</div>;
   if (!url) return <div className="art-frame-loading" role="status">Загружаем артефакт…</div>;
   return <div className={`art-frame-box ${sizing}`}>
-    <iframe ref={frameRef} className="art-frame" title={title || 'Артефакт'} src={url} sandbox={FRAME_SANDBOX} referrerPolicy="no-referrer" style={sizing === 'auto' ? { height } : undefined}/>
+    <iframe ref={frameRef} className="art-frame" title={title || 'Артефакт'} src={withTheme(url, theme)} sandbox={FRAME_SANDBOX} referrerPolicy="no-referrer" style={sizing === 'auto' ? { height } : undefined}/>
     {!compact && <button type="button" className="icon-button art-frame-reload" onClick={reload} title="Перезагрузить артефакт" aria-label="Перезагрузить артефакт"><RefreshCw size={14}/></button>}
   </div>;
 }

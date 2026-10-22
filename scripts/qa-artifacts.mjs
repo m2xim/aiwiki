@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   LIMITS, FRAME_SANDBOX, base64Bytes, buildTree, buildUpdate, checkNewPath, clampFrameHeight, contentBytes, diffFiles, draftFromManifest, extensionOf,
-  formatSize, parseArtRoute, artRouteUrl, parseResizeMessage, publicLinksDisabledHint, refreshDelay, shareLabel, textBytes, validateDraft, validatePath, visibilityLabel,
+  formatSize, parseArtRoute, artRouteUrl, parseResizeMessage, publicLinksDisabledHint, refreshDelay, shareLabel, textBytes, validateDraft, validatePath, visibilityLabel, withTheme,
 } from '../web/src/artifactsCore.ts';
 
 // ---- Paths and extensions.
@@ -145,5 +145,9 @@ assert.equal(shareLabel(4), 'версия 4');
 assert.ok(publicLinksDisabledHint('public links are disabled'));
 assert.ok(publicLinksDisabledHint('Публичные ссылки отключены'));
 assert.equal(publicLinksDisabledHint('500 Internal Server Error'), null);
+
+assert.equal(withTheme('/artifact-frame/c.p/index.html', 'dark'), '/artifact-frame/c.p/index.html?theme=dark');
+assert.equal(withTheme('/f/i.html?a=1&theme=dark', 'light'), '/f/i.html?a=1&theme=light');
+assert.equal(withTheme('/f/i.html', 'whatever'), '/f/i.html?theme=light');
 
 console.log('Artifact checks passed: paths, sizes, limits, tree, PUT diff, resize messages, capability renewal, routes.');
