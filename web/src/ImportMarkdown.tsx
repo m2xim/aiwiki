@@ -152,7 +152,8 @@ export function ImportMarkdownDialog({ spaces, projects, corporate, defaultSpace
         try { article = await client.updateArticle(current.id, { body: rewrite(urls), ...meta, author, base_revision: current.revision, message: 'Импорт Markdown' }); }
         catch (e) {
           const text = (e as Error).message;
-          setError(/409|conflict|revision/i.test(text) ? 'Статью изменили, пока шёл импорт. Закройте окно, откройте статью заново и повторите импорт; загруженные картинки остались во вложениях статьи.' : `Не удалось обновить статью: ${text}`);
+          const head = /409|conflict|revision/i.test(text) ? 'Статью изменили, пока шёл импорт. Закройте окно, откройте статью заново и повторите импорт; загруженные картинки остались во вложениях статьи.' : `Не удалось обновить статью: ${text}`;
+          setError(errors.length ? `${head} Ошибки загрузки картинок: ${errors.join(' ')}` : head);
           setSaving(false); return;
         }
       }

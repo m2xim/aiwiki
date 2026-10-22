@@ -63,6 +63,16 @@ assert.equal(amb.images[0].status, 'ambiguous'); assert.equal(amb.warnings[0].ki
 const ref = '![r][id]\n\n[id]: pics/ref.png "title"\n';
 const ra = analyzeMarkdown(ref, ['ref.png']);
 assert.equal(ra.images[0].status, 'local'); assert.equal(ref.slice(ra.images[0].start, ra.images[0].end), 'pics/ref.png');
+// definition with escapes / entities: the raw source text is located, not the decoded url
+const esc = '![r][id]\n\n[id]: my\_pic.png "t"\n';
+const ea = analyzeMarkdown(esc, ['my_pic.png']);
+assert.equal(ea.images[0].status, 'local'); assert.equal(esc.slice(ea.images[0].start, ea.images[0].end), 'my\_pic.png');
+const ent = '![r][id]\n\n[id]: a&amp;b.png\n';
+const na = analyzeMarkdown(ent, ['a&b.png']);
+assert.equal(na.images[0].status, 'local'); assert.equal(ent.slice(na.images[0].start, na.images[0].end), 'a&amp;b.png');
+const ang = '![r][id]\n\n[id]: <my pic.png> "t"\n';
+const ga = analyzeMarkdown(ang, ['my pic.png']);
+assert.equal(ang.slice(ga.images[0].start, ga.images[0].end), 'my pic.png');
 // image inside code is ignored
 assert.equal(analyzeMarkdown('`![a](x.png)`\n\n```\n![a](y.png)\n```', []).images.length, 0);
 

@@ -153,6 +153,23 @@ function imageDestination(source: string): [number, number] | null {
   return [from, q];
 }
 
+/** Finds the raw destination of a `[id]: dest "title"` definition inside the node source; returns offsets relative to the node start. */
+function definitionDestination(source: string): [number, number] | null {
+  const colon = source.indexOf(']:');
+  if (colon < 0) return null;
+  let p = colon + 2;
+  while (p < source.length && /\s/.test(source[p])) p++;
+  if (p >= source.length) return null;
+  if (source[p] === '<') {
+    const from = p + 1; let q = from;
+    while (q < source.length && source[q] !== '>') { if (source[q] === '\\') q++; q++; }
+    return q < source.length ? [from, q] : null;
+  }
+  const from = p; let q = p;
+  for (; q < source.length; q++) { if (source[q] === '\\') { q++; continue; } if (/\s/.test(source[q]) || source[q] === '"' || source[q] === "'") break; }
+  return q > from ? [from, Math.min(q, source.length)] : null;
+}
+
 const lineOf = (node: MdNode) => node.position?.start.line ?? 0;
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
@@ -212,14 +229,13 @@ export function analyzeMarkdown(body: string, fileNames: string[]): Analysis {
         const ds = def.position?.start.offset, de = def.position?.end.offset;
         let from = -1, to = -1;
         if (ds !== undefined && de !== undefined) {
-          const src = body.slice(ds, de); const raw = def.url || '';
-          const colon = src.indexOf(']:');
-          const at = colon < 0 ? -1 : src.indexOf(raw, colon + 2);
-          if (at >= 0 && raw) { from = ds + at; to = from + raw.length; }
+          const dest = definitionDestination(body.slice(ds, de));
+          if (dest) { from = ds + dest[0]; to = ds + dest[1]; }
         }
         if (from >= 0 && seenDefinitionUrls.has(from)) break;
         if (from >= 0) seenDefinitionUrls.add(from);
         addImage(def.url || '', node.alt || '', from, to, lineOf(node));
+        if (from < 0 && images[images.length - 1].status === 'local') warnings.push({ kind: 'image-missing', message: `Картинка «${def.url}» не будет загружена: не удалось найти адрес в тексте определения.`, line: lineOf(node) });
         break;
       }
       case 'link': checkLink(node.url || '', lineOf(node)); break;
