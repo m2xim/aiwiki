@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,6 +28,8 @@ type Server struct {
 	// spaceQuotaDefault is AIWIKI_SPACE_QUOTA_BYTES: the storage limit of a space
 	// without an override (0 = unlimited). Corporate mode only.
 	spaceQuotaDefault int64
+	accessLog         *slog.Logger
+	ready             *readiness
 }
 
 // SetAllowedOrigin enables one explicitly trusted, canonicalized browser origin.
@@ -118,7 +121,10 @@ func (s *Server) Handler() http.Handler {
 	} else {
 		app = corsLocal(s.routes(), s.allowedOrigin)
 	}
-	return s.withArtifactOrigin(app)
+	if s.ready == nil {
+		s.ready = s.newReadiness()
+	}
+	return s.observe(s.withArtifactOrigin(app))
 }
 
 // routes is the bare router. In-process callers that have already passed the
@@ -136,6 +142,7 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("GET /api/catalog", s.trustedCatalog)
 	}
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
+	mux.HandleFunc("GET /api/ready", s.readyHandler)
 	mux.HandleFunc("/api/spaces", s.spaces)
 	mux.HandleFunc("/api/spaces/{id}", s.space)
 	mux.HandleFunc("GET /api/spaces/{id}/audit", s.spaceAudit)
@@ -155,7 +162,7 @@ func (s *Server) routes() http.Handler {
 	if s.WebDir != "" {
 		mux.Handle("/", webCache(http.FileServer(http.Dir(s.WebDir))))
 	}
-	return mux
+	return trackMux(mux)
 }
 
 // webCache lets browsers keep content-hashed build assets forever and makes them
