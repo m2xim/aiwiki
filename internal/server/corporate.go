@@ -51,6 +51,10 @@ func OpenCorporate(ctx context.Context, cfg CorporateConfig, dataDir, webDir str
 		return nil, err
 	}
 	s := &Server{DB: db, DataDir: dataDir, WebDir: webDir}
+	if s.art, err = newArtifactState(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	fail := func(err error) (*Server, error) {
 		if s.authDB != nil {
 			s.authDB.Close()

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дашборд продаж</title>
+<link rel="stylesheet" href="/artifact-runtime/aiwiki-kit.css">
+<script src="/artifact-runtime/aiwiki-kit.js"></script>
+</head>
+<body>
+<h1>Продажи по регионам</h1>
+<p class="aw-muted">Ползунок, список и переключатель связаны с общим состоянием: KPI, график и таблица пересчитываются сами.</p>
+
+<div class="aw-grid">
+  <aiwiki-slider id="threshold" label="Минимальная сумма сделки" min="0" max="500000" step="10000" value="0" unit="₽"></aiwiki-slider>
+  <aiwiki-select id="region" label="Регион" options="Все, Центр, Северо-Запад, Урал, Сибирь"></aiwiki-select>
+  <aiwiki-toggle id="onlyDone" label="Только закрытые сделки"></aiwiki-toggle>
+</div>
+
+<div id="kpi"></div>
+
+<div class="aw-grid">
+  <div><div id="lineChart"></div></div>
+  <div><div id="barChart"></div></div>
+</div>
+
+<div id="tbl"></div>
+
+<script>
+  // Данные лежат прямо в файле: fetch() в песочнице запрещён. Генерируем детерминированно.
+  const regions = ['Центр', 'Северо-Запад', 'Урал', 'Сибирь'];
+  const managers = ['Иванова А.', 'Петров Б.', 'Сидоров В.', 'Ёлкин Г.', 'Орлова Д.'];
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const rows = Array.from({ length: 240 }, (_, i) => {
+    const month = Math.floor(rnd() * 12) + 1;
+    return {
+      id: i + 1,
+      date: `2026-${String(month).padStart(2, '0')}-${String(Math.floor(rnd() * 27) + 1).padStart(2, '0')}`,
+      region: regions[Math.floor(rnd() * regions.length)],
+      manager: managers[Math.floor(rnd() * managers.length)],
+      amount: Math.round(rnd() * 480000 / 1000) * 1000 + 5000,
+      done: rnd() > 0.3,
+    };
+  });
+  const monthNames = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+  const s = AIWiki.state({ threshold: 0, region: 'Все', onlyDone: false });
+  AIWiki.bind('#threshold', s, 'threshold');
+  AIWiki.bind('#region', s, 'region');
+  AIWiki.bind('#onlyDone', s, 'onlyDone');
+
+  const kpi = AIWiki.stats('#kpi', [
+    { label: 'Выручка', value: 0, format: 'currency', digits: 0 },
+    { label: 'Сделок', value: 0, format: 'integer' },
+    { label: 'Средний чек', value: 0, format: 'currency', digits: 0 },
+    { label: 'Доля закрытых', value: 0, format: 'percent', digits: 0 },
+  ]);
+  const line = AIWiki.lineChart('#lineChart', { title: 'Выручка по месяцам', labels: monthNames, series: { 'Выручка': new Array(12).fill(0) }, format: 'currency', digits: 0, fill: true });
+  const bar = AIWiki.barChart('#barChart', { title: 'Выручка по регионам', labels: regions, series: { 'Выручка': [0, 0, 0, 0] }, format: 'currency', digits: 0 });
+  const grid = AIWiki.table('#tbl', {
+    title: 'Сделки',
+    rows,
+    groupBy: 'region',
+    pageSize: 25,
+    totals: true,
+    csvName: 'sdelki',
+    columns: [
+      { key: 'id', label: '№', type: 'number', format: 'integer', agg: 'count', filter: false, width: '70px' },
+      { key: 'date', label: 'Дата', type: 'date' },
+      { key: 'region', label: 'Регион', filter: 'select' },
+      { key: 'manager', label: 'Менеджер' },
+      { key: 'amount', label: 'Сумма', type: 'number', format: 'currency', digits: 0, agg: 'sum' },
+      { key: 'done', label: 'Закрыта', type: 'boolean', filter: 'select' },
+    ],
+    highlight: (r) => (r.amount >= 400000 ? 'good' : false),
+  });
+
+  AIWiki.effect(() => {
+    const f = rows.filter((r) => r.amount >= s.threshold && (s.region === 'Все' || r.region === s.region) && (!s.onlyDone || r.done));
+    const sum = f.reduce((a, r) => a + r.amount, 0);
+    kpi[0].update({ value: sum });
+    kpi[1].update({ value: f.length });
+    kpi[2].update({ value: f.length ? sum / f.length : null });
+    kpi[3].update({ value: f.length ? f.filter((r) => r.done).length / f.length : null });
+    const byMonth = new Array(12).fill(0), byRegion = regions.map(() => 0);
+    for (const r of f) { byMonth[+r.date.slice(5, 7) - 1] += r.amount; byRegion[regions.indexOf(r.region)] += r.amount; }
+    line.update({ labels: monthNames, series: { 'Выручка': byMonth } });
+    bar.update({ labels: regions, series: { 'Выручка': byRegion } });
+    grid.update({ rows: f });
+  });
+</script>
+</body>
+</html>

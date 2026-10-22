@@ -32,7 +32,18 @@ export type MovePlace = { space_id: string; space_name: string; project_id: stri
 export type MoveAccessChange = { subject_type: 'user' | 'team' | 'other'; subject_id: string; name: string; before: AccessGrant['role'] | null; after: AccessGrant['role'] | null; users?: number };
 export type MovePreview = { fingerprint: string; articles: number; projects: number; source: MovePlace; target: MovePlace; access: MoveAccessChange[]; users_gaining: number; users_losing: number; warnings: string[] };
 export type MoveApplyResult = { conflict: false; articles: number; projects: number; root: Article | Project } | { conflict: true; preview: MovePreview };
+export type ArtifactSummary = {
+  id: string; space_id: string; project_id?: string; title: string; description: string; visibility: Visibility;
+  owner_id?: string; owner_name?: string; author?: string; revision: number; created_at?: string; updated_at: string; file_count: number; deleted_at?: string | null;
+};
+export type ArtifactDetail = ArtifactSummary & { manifest: ManifestFile[]; can_edit: boolean; can_share: boolean; can_manage: boolean };
+export type ArtifactRevisionInfo = { revision: number; author: string; message: string; created_at: string; file_count: number };
+export type ArtifactShare = { id: string; url?: string; revision: number | null; created_by?: string; created_at: string; revoked_at?: string | null };
+export type ArtifactFileInput = { path: string; content: string; encoding: 'utf8' | 'base64' } | { path: string; delete: true };
+export type ArtifactView = { frame_url: string; expires_at: string };
+export type AdminSettings = { public_artifact_links: boolean };
 export type Bootstrap = { instructions: Article[]; spaces: Space[]; recent: Article[]; guide: string };
+import type { ManifestFile, Visibility } from './artifactsCore';
 let corporateSession = false;
 export const setCorporateSession = (value: boolean) => { corporateSession = value; };
 
@@ -51,7 +62,7 @@ const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
     }
     let message = response.status === 403 ? 'Недостаточно прав для этого действия.' : `${response.status} ${response.statusText}`;
     try { const body = await response.json(); if (body.error && body.error !== 'forbidden') message = body.error; } catch { /* response is not JSON */ }
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: response.status });
   }
   if (response.status === 204) return undefined as T;
   const type = response.headers.get('content-type') || '';
@@ -87,7 +98,43 @@ const moveApply = async (request: MoveRequest): Promise<MoveApplyResult> => {
   return { conflict: false, articles: body.articles ?? 0, projects: body.projects ?? 0, root: body.root as Article | Project };
 };
 const json = (method: string, data: unknown): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+const listOf = <T,>(value: unknown, key: string): T[] => Array.isArray(value) ? value as T[] : Array.isArray((value as Record<string, unknown> | null)?.[key]) ? (value as Record<string, T[]>)[key] : [];
+const flag = (root: Record<string, unknown>, name: string): boolean => Boolean(root[name] ?? (root.permissions as Record<string, unknown> | undefined)?.[name]);
+const normalizeArtifact = (raw: Record<string, unknown>): ArtifactDetail => ({
+  ...(raw as unknown as ArtifactSummary),
+  manifest: listOf<ManifestFile>(raw.manifest ?? raw.files, 'files'),
+  can_edit: flag(raw, 'can_edit'), can_share: flag(raw, 'can_share'), can_manage: flag(raw, 'can_manage'),
+});
+const absoluteUrl = (url: string | undefined) => url && url.startsWith('/') ? `${location.origin}${url}` : url;
+const enc = encodeURIComponent;
+const encPath = (path: string) => path.split('/').map(enc).join('/');
+export const errorStatus = (error: unknown): number => Number((error as { status?: number } | null)?.status) || 0;
+const artifactApi = {
+  artifacts: async (params: Record<string, string>) => listOf<ArtifactSummary>(await api<unknown>(`/api/artifacts?${new URLSearchParams(Object.entries(params).filter(([, value]) => value))}`), 'artifacts'),
+  artifact: async (id: string) => normalizeArtifact(await api<Record<string, unknown>>(`/api/artifacts/${enc(id)}`)),
+  createArtifact: async (data: { space_id: string; project_id?: string; title: string; description: string; visibility: Visibility; files: ArtifactFileInput[]; message?: string }) => normalizeArtifact(await api<Record<string, unknown>>('/api/artifacts', json('POST', data))),
+  updateArtifact: async (id: string, data: Record<string, unknown>) => normalizeArtifact(await api<Record<string, unknown>>(`/api/artifacts/${enc(id)}`, json('PUT', data))),
+  deleteArtifact: (id: string, baseRevision: number) => api<unknown>(`/api/artifacts/${enc(id)}`, json('DELETE', { base_revision: baseRevision })),
+  restoreArtifact: (id: string, baseRevision: number) => api<unknown>(`/api/artifacts/${enc(id)}/restore`, json('POST', { base_revision: baseRevision })),
+  artifactHistory: async (id: string) => listOf<ArtifactRevisionInfo>(await api<unknown>(`/api/artifacts/${enc(id)}/history`), 'revisions'),
+  artifactView: (id: string, revision?: number | null) => api<ArtifactView>(`/api/artifacts/${enc(id)}/view`, json('POST', revision ? { revision } : {})),
+  artifactShares: async (id: string) => listOf<ArtifactShare>(await api<unknown>(`/api/artifacts/${enc(id)}/shares`), 'shares'),
+  createArtifactShare: async (id: string, revision: number | null) => { const share = await api<ArtifactShare>(`/api/artifacts/${enc(id)}/shares`, json('POST', { revision })); return { ...share, url: absoluteUrl(share.url) }; },
+  revokeArtifactShare: (id: string, shareId: string) => api<void>(`/api/artifacts/${enc(id)}/shares/${enc(shareId)}`, { method: 'DELETE' }),
+  /** Raw bytes of one file (for the editor). */
+  artifactFile: async (id: string, path: string, revision?: number): Promise<ArrayBuffer> => {
+    const response = await fetch(`/api/artifacts/${enc(id)}/files/${encPath(path)}${revision ? `?revision=${revision}` : ''}`);
+    if (!response.ok) {
+      if (response.status === 401 && !location.pathname.startsWith('/auth/')) { if (authExpiredHandler) authExpiredHandler(); else location.assign('/auth/login'); }
+      throw new Error(response.status === 403 ? 'Недостаточно прав для этого действия.' : `${response.status} ${response.statusText}`);
+    }
+    return response.arrayBuffer();
+  },
+  adminSettings: () => api<AdminSettings>('/api/admin/settings'),
+  setAdminSettings: (data: AdminSettings) => api<AdminSettings>('/api/admin/settings', json('PUT', data)),
+};
 export const client = {
+  ...artifactApi,
   me: () => api<AuthSession>('/api/me'),
   logout: () => api204('/auth/logout', { method: 'POST' }),
   spaces: (includeArchived = false) => api<Space[]>(`/api/spaces${includeArchived ? '?include_archived=true' : ''}`),

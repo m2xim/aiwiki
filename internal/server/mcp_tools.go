@@ -79,7 +79,7 @@ func mcpToolList() []map[string]any {
 		"message":       prop("string", "Short change description stored in history."),
 	})
 	article["description"] = "Editable article fields. Create: space_id and title required. Update (id given): include base_revision; fields not sent keep their current values."
-	return []map[string]any{
+	tools := []map[string]any{
 		{"name": "wiki_bootstrap", "description": "Start of every session. Without space_id: returns full pinned instructions of the general space, compact other_pinned (pinned articles of other spaces without bodies), spaces and recent changes. Call it again with the space_id of your project to get that space's pinned rules in full.", "inputSchema": objectSchema(map[string]any{"space_id": prop("string", "Project space id; when given, pinned articles of general and this space are returned in full.")})},
 		{"name": "wiki_search", "description": "Ranked full-text search over title, summary, tags, properties and body with Russian and English morphology (word forms match). All words must match (AND); if no article matches all words, the best partial matches are returned and mode is \"any\". Results are compact (no body) with score, snippet and matched_in; most relevant first. Filters narrow the result. Paging: if next_offset is present, call again with offset=next_offset.", "inputSchema": objectSchema(map[string]any{
 			"q":          prop("string", "Search words, whitespace separated. Omit to list by recent update."),
@@ -128,6 +128,7 @@ func mcpToolList() []map[string]any {
 		{"name": "wiki_restore", "description": "Restore a prior revision as a new revision", "inputSchema": objectSchema(map[string]any{"id": stringSchema(), "revision": map[string]any{"type": "integer", "minimum": 1}, "base_revision": map[string]any{"type": "integer", "minimum": 1}, "author": stringSchema(), "message": stringSchema()}, "id", "revision", "base_revision")},
 		{"name": "wiki_comment", "description": "Add a comment to an article heading", "inputSchema": objectSchema(map[string]any{"id": stringSchema(), "anchor": stringSchema(), "body": stringSchema(), "author": stringSchema()}, "id", "body")},
 	}
+	return append(tools, artifactToolList()...)
 }
 
 func (s *Server) callTool(params map[string]json.RawMessage) any {
@@ -158,6 +159,12 @@ func (s *Server) callTool(params map[string]json.RawMessage) any {
 		return s.toolEdit(args)
 	case "wiki_write":
 		return s.toolWrite(args)
+	case "wiki_artifact_list":
+		return s.toolArtifactList(args)
+	case "wiki_artifact_read":
+		return s.toolArtifactRead(args)
+	case "wiki_artifact_write":
+		return s.toolArtifactWrite(args)
 	case "wiki_links":
 		return s.toolLinks(args)
 	case "wiki_history":

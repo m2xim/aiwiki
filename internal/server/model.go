@@ -229,6 +229,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS article_fts USING fts5(article_id UNINDEXED,t
 	if err == nil {
 		err = s.ensureSQLiteProjectColumn()
 	}
+	if err == nil {
+		err = s.migrateArtifactsSQLite()
+	}
 	return err
 }
 func (s *Server) ensureSQLiteProjectColumn() error {

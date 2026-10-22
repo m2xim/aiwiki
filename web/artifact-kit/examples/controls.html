@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Элементы управления</title>
+<link rel="stylesheet" href="/artifact-runtime/aiwiki-kit.css">
+<script src="/artifact-runtime/aiwiki-kit.js"></script>
+</head>
+<body>
+<h1>Элементы управления, KPI, графики, галерея</h1>
+
+<div class="aw-row">
+  <button class="aw-btn" id="light">Светлая</button>
+  <button class="aw-btn" id="dark">Тёмная</button>
+  <button class="aw-btn" id="auto">Как в системе</button>
+  <span class="aw-muted">Тема сейчас: <b id="themeNow"></b></span>
+</div>
+
+<h2>Управление</h2>
+<div class="aw-grid">
+  <aiwiki-slider id="rate" label="Ставка" min="0" max="1" step="0.01" value="0.2" format="percent"></aiwiki-slider>
+  <aiwiki-number id="years" label="Срок, лет" min="1" max="30" step="1" value="5"></aiwiki-number>
+  <aiwiki-select id="plan" label="Тариф" options='[{"value":"basic","label":"Базовый"},{"value":"pro","label":"Профессиональный"},{"value":"team","label":"Для команды"}]' value="pro"></aiwiki-select>
+  <aiwiki-toggle id="vat" label="Учитывать НДС 20%" checked></aiwiki-toggle>
+</div>
+
+<aiwiki-tabs id="tabs" value="b">
+  <section data-tab="Сводка" data-value="a"><p>Первая вкладка. Переключайте стрелками ← → на клавиатуре.</p></section>
+  <section data-tab="Расчёт" data-value="b"><div id="out"></div></section>
+  <section data-tab="Заметки" data-value="c"><p>Третья вкладка.</p></section>
+</aiwiki-tabs>
+
+<p>Последнее событие <code>change</code>: <code id="lastEvent">—</code></p>
+
+<h2>KPI</h2>
+<div id="kpi"></div>
+
+<h2>Графики</h2>
+<div class="aw-grid">
+  <div id="pie"></div>
+  <div id="dates"></div>
+</div>
+
+<h2>Галерея</h2>
+<div id="gal"></div>
+
+<script>
+  const s = AIWiki.state({ rate: 0.2, years: 5, plan: 'pro', vat: true });
+  for (const k of ['rate', 'years', 'plan', 'vat']) AIWiki.bind('#' + k, s, k);
+  const price = { basic: 1000, pro: 2500, team: 6000 };
+
+  const kpi = AIWiki.stats('#kpi', [
+    { label: 'В месяц', value: 0, format: 'currency', digits: 0 },
+    { label: 'За весь срок', value: 0, format: 'currency', digits: 0, delta: 0, good: 'down', hint: 'Рост цены в год' },
+    { label: 'Тариф', value: 'Pro' },
+  ]);
+  AIWiki.effect(() => {
+    const monthly = price[s.plan] * (s.vat ? 1.2 : 1);
+    let total = 0, p = monthly;
+    for (let y = 0; y < s.years; y++) { total += p * 12; p *= 1 + s.rate; }
+    kpi[0].update({ value: monthly });
+    kpi[1].update({ value: total, delta: s.rate });
+    kpi[2].update({ value: { basic: 'Базовый', pro: 'Профессиональный', team: 'Для команды' }[s.plan] });
+    document.getElementById('out').textContent = `Через ${s.years} лет платёж составит ${AIWiki.format(p / (1 + s.rate), 'currency', { digits: 0 })} в месяц.`;
+  });
+
+  document.addEventListener('change', (e) => {
+    if (e.detail && 'value' in e.detail) document.getElementById('lastEvent').textContent = `${e.target.localName}#${e.target.id} -> ${JSON.stringify(e.detail.value)}`;
+  });
+
+  const showTheme = () => (document.getElementById('themeNow').textContent = AIWiki.getTheme());
+  for (const m of ['light', 'dark', 'auto']) document.getElementById(m).onclick = () => { AIWiki.setTheme(m); showTheme(); };
+  showTheme();
+
+  AIWiki.pieChart('#pie', { title: 'Структура расходов', labels: ['Зарплата', 'Аренда', 'Маркетинг', 'Прочее'], series: [520000, 180000, 90000, 40000], format: 'currency', digits: 0, donut: true });
+  AIWiki.lineChart('#dates', {
+    title: 'Даты по оси X (ISO-строки превращаются в ДД.ММ.ГГГГ)',
+    labels: ['2026-10-01', '2026-10-08', '2026-10-15', '2026-10-22'],
+    series: { 'Заказы': [12, 18, 15, 25], 'Возвраты': [1, 2, 1, 3] },
+  });
+
+  AIWiki.gallery('#gal', { images: [
+    { src: 'img/one.svg', caption: 'Первое изображение' },
+    { src: 'img/two.svg', caption: 'Второе изображение' },
+    { src: 'img/three.svg', caption: 'Третье изображение' },
+  ] });
+</script>
+</body>
+</html>

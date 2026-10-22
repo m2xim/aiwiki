@@ -23,6 +23,7 @@ type Server struct {
 	allowedOrigin   string
 	auth            *AuthService
 	principal       *Principal
+	art             *artifactState
 }
 
 // SetAllowedOrigin enables one explicitly trusted, canonicalized browser origin.
@@ -85,6 +86,10 @@ func Open(dataDir, webDir string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{DB: &database{pool: db}, DataDir: dataDir, WebDir: webDir}
+	if s.art, err = newArtifactState(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -104,10 +109,13 @@ func (s *Server) Close() error {
 
 // Handler returns the routes behind the Host and Origin checks of corsLocal.
 func (s *Server) Handler() http.Handler {
+	var app http.Handler
 	if s.auth != nil {
-		return corsLocal(s.corporateHandler(), s.allowedOrigin)
+		app = corsLocal(s.corporateHandler(), s.allowedOrigin)
+	} else {
+		app = corsLocal(s.routes(), s.allowedOrigin)
 	}
-	return corsLocal(s.routes(), s.allowedOrigin)
+	return s.withArtifactOrigin(app)
 }
 
 // routes is the bare router. In-process callers that have already passed the
@@ -139,6 +147,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/search", s.searchHTTP)
 	mux.HandleFunc("/files/", s.fileRoute)
 	mux.HandleFunc("/mcp", s.mcp)
+	s.registerArtifactRoutes(mux)
 	if s.WebDir != "" {
 		mux.Handle("/", webCache(http.FileServer(http.Dir(s.WebDir))))
 	}
@@ -171,7 +180,12 @@ func corsLocal(next http.Handler, allowedOrigin string) http.Handler {
 			apiErr(w, http.StatusForbidden, "host not allowed")
 			return
 		}
-		if origin := r.Header.Get("Origin"); origin != "" {
+		if origin := r.Header.Get("Origin"); origin == "null" && isArtifactAssetRequest(r) {
+			// The sandboxed artifact frame has an opaque origin; it only loads its own
+			// files and the public kit (module scripts and fonts send Origin: null).
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Vary", "Origin")
+		} else if origin != "" {
 			parsed, parseErr := url.Parse(origin)
 			if parseErr != nil || (!allowedLocalOrigin(parsed, r, hostLoopback) && origin != allowedOrigin) {
 				apiErr(w, http.StatusForbidden, "origin not allowed")

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Таблицы</title>
+<link rel="stylesheet" href="/artifact-runtime/aiwiki-kit.css">
+<script src="/artifact-runtime/aiwiki-kit.js"></script>
+</head>
+<body>
+<h1>Таблицы</h1>
+
+<h2>1. Из встроенного CSV (тег &lt;aiwiki-table&gt;)</h2>
+<p class="aw-muted">Разделитель определяется сам (здесь «;»), числа с запятой и даты ДД.ММ.ГГГГ разбираются автоматически. Есть кавычки, запятая и перевод строки внутри ячейки.</p>
+<aiwiki-table title="Города" group-by="Регион" page-size="10" totals csv-name="goroda">
+<script type="text/csv">
+Город;Регион;Население, тыс.;Основан;Рост за год;Заметка
+Москва;Центр;12 600;01.01.1147;0,5%;"Столица, крупнейший город"
+Санкт-Петербург;Северо-Запад;5 600;27.05.1703;-0,1%;"Назван в честь
+святого Петра"
+Екатеринбург;Урал;1 500,5;18.11.1723;1,2%;
+Новосибирск;Сибирь;1 620;1893-01-01;0,8%;"Бывший ""Новониколаевск"""
+Архангельск;Северо-Запад;300;1584-03-01;-0,4%;
+Ёлки;Урал;;;;нет данных
+абакан;Сибирь;185;1931-01-01;0,2%;
+Казань;Поволжье;1 300;1005-01-01;1,0%;
+Нижний Новгород;Поволжье;1 220;1221-01-01;0,3%;
+Челябинск;Урал;1 190;1736-01-01;0,1%;
+Омск;Сибирь;1 110;1716-01-01;-0,2%;
+Самара;Поволжье;1 140;1586-01-01;0,0%;
+Красноярск;Сибирь;1 190;1628-01-01;0,9%;
+Воронеж;Центр;1 050;1586-01-01;0,6%;
+</script>
+</aiwiki-table>
+
+<h2>2. Через JavaScript: 10 000 строк, пагинация, форматы, подсветка</h2>
+<div id="big"></div>
+
+<h2>3. Данные JSON и свои форматы</h2>
+<div id="json"></div>
+
+<script>
+  // Колонки для первой таблицы (проценты в тексте «0,5%» нужно задать функцией — это не число для Intl).
+  document.querySelector('aiwiki-table').config = {
+    columns: [
+      'Город', 'Регион',
+      { key: 'Население, тыс.', type: 'number', format: 'integer', agg: 'sum' },
+      { key: 'Основан', type: 'date' },
+      { key: 'Рост за год', type: 'string', align: 'right' },
+      { key: 'Заметка', filter: false },
+    ],
+  };
+
+  let seed = 11;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const cats = ['Электроника', 'Одежда', 'Продукты', 'Книги', 'Спорт'];
+  const big = Array.from({ length: 10000 }, (_, i) => ({
+    n: i + 1,
+    date: new Date(2026, 0, 1 + Math.floor(rnd() * 300)),
+    cat: cats[Math.floor(rnd() * cats.length)],
+    qty: Math.floor(rnd() * 20),
+    price: Math.round(rnd() * 90000) / 100 + 10,
+    margin: rnd() * 0.4 - 0.05,
+  }));
+  AIWiki.table('#big', {
+    title: '10 000 заказов',
+    rows: big,
+    pageSize: 50,
+    pageSizes: [25, 50, 100, 500],
+    sortBy: { key: 'date', dir: 'desc' },
+    columns: [
+      { key: 'n', label: '№', type: 'number', format: 'integer', filter: false },
+      { key: 'date', label: 'Дата', type: 'date' },
+      { key: 'cat', label: 'Категория', filter: 'select' },
+      { key: 'qty', label: 'Кол-во', type: 'number', format: 'integer', agg: 'sum' },
+      { key: 'price', label: 'Цена', type: 'number', format: 'currency', agg: 'avg' },
+      { key: 'margin', label: 'Маржа', type: 'number', format: 'percent', agg: 'avg' },
+    ],
+    totals: true,
+    highlight: (r) => (r.margin < 0 ? 'bad' : r.margin > 0.3 ? 'good' : false),
+  });
+
+  AIWiki.table('#json', {
+    rows: JSON.stringify([
+      { задача: 'Подготовить релиз', срок: '2026-11-01', готово: 0.8, ответственный: 'Анна' },
+      { задача: 'Обновить документацию', срок: '2026-11-15', готово: 0.25, ответственный: 'Борис' },
+      { задача: 'Провести обучение', срок: '2026-12-01', готово: 0, ответственный: null },
+    ]),
+    searchable: false,
+    columns: [
+      'задача', { key: 'срок', type: 'date' },
+      { key: 'готово', format: 'percent', digits: 0 },
+      { key: 'ответственный', format: (v) => (v ? String(v) : '— не назначен —') },
+    ],
+    highlight: (r) => (r.готово === 0 ? 'warn' : false),
+  });
+</script>
+</body>
+</html>

@@ -23,7 +23,7 @@ type mcpDelegation struct {
 
 func mcpReadTool(name string) bool {
 	switch name {
-	case "wiki_bootstrap", "wiki_search", "wiki_search_sections", "wiki_read", "wiki_links", "wiki_history", "wiki_comments":
+	case "wiki_bootstrap", "wiki_search", "wiki_search_sections", "wiki_read", "wiki_links", "wiki_history", "wiki_comments", "wiki_artifact_list", "wiki_artifact_read":
 		return true
 	}
 	return false
