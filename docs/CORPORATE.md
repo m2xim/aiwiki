@@ -32,6 +32,8 @@ Missing admission claims deny access, including for administrators. Identities u
 
 Browser sessions use opaque HttpOnly, SameSite cookies, Secure in normal deployments; random secrets are hashed as in-memory session-map keys. Login validates state, a browser-bound cookie, PKCE, nonce, issuer, audience, signature and expiry. Sessions default to five minutes, never exceed fifteen minutes or the access-token expiry, and have no refresh. A restart logs users out. Unsafe browser operations require `X-CSRF-Token` from `/api/me`. Logout revokes the local session; it does not terminate the entire Keycloak SSO session.
 
+A failed browser login at `/auth/callback` does not return JSON: the server answers `303` to `/?login_error=<code>` (`expired`, `failed`, `denied` or `unavailable`; the code is the only thing in the URL) and the web shell shows an explanation with "sign in again" buttons, without automatic retry. `/auth/login`, `/mcp` and the API keep JSON errors. `/auth/login` accepts an optional `return` (only the path `/` with its own query and fragment; anything else is ignored), kept server-side with the pending login, and a successful callback answers `303` to it instead of `/`; error redirects never carry it.
+
 Every authenticated request introspects the access token; outages deny access. Locally disabling a user or revoking a content grant takes effect on the next statement/request. Directory/role changes cannot be promised instantaneously: an already issued Keycloak token may retain claims until it expires or Keycloak reports it inactive. Set a short access-token lifetime in the pilot realm and test the actual AD federation/cache settings. No production AD connection is bundled or implied by the local tests.
 
 ## Content rights
