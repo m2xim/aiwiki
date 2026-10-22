@@ -38,6 +38,9 @@ jobs:
         working-directory: web
         run: npm run build
 
+      - name: Markdown formatting checks
+        run: node scripts/qa-markdown-format.mjs
+
       - name: Integration QA
         run: node scripts/qa.mjs
 
