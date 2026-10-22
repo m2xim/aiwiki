@@ -125,6 +125,16 @@ The artifact never runs on the application's origin with application privileges.
    height. The stored file, its size and sha256 are unchanged; `resize.js` is
    embedded in the binary, does nothing when `window.AIWiki` exists at
    `DOMContentLoaded`, and sends `aiwiki:resize` only inside a frame.
+   The server also inserts `<script src="/artifact-runtime/theme.js"></script>`
+   before the first element: after a leading UTF-8 BOM, whitespace, comments and
+   doctype (never before the doctype, which would switch to quirks mode); tags are
+   not parsed. It runs before the first paint, reads `?theme=light|dark` from the
+   frame URL and sets `data-theme` on `<html>`; the parser merges the attributes of
+   the author's `<html>` later and keeps that value, so a static `data-theme` in
+   the markup is overridden (a script can still change it). An artifact written
+   without the kit follows the wiki theme with ordinary `:root[data-theme="dark"]`
+   CSS. Both scripts are embedded and served with an ETag. A theme switch in the
+   wiki reloads the frame, which discards the artifact's in-memory state.
 3. The application embeds it as `<iframe sandbox="allow-scripts allow-modals"
    referrerpolicy="no-referrer" src="<frame_url>">` (never `allow-same-origin`,
    `allow-top-navigation`, `allow-popups`, `allow-forms`). Verified on 2026-10-22

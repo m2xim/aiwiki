@@ -874,11 +874,15 @@ func TestArtifactCapabilityUnit(t *testing.T) {
 func TestArtifactFrameResizeInjection(t *testing.T) {
 	s := testServer(t)
 	script := `<script src="/artifact-runtime/resize.js"></script>`
+	theme := `<script src="/artifact-runtime/theme.js"></script>`
 	cases := map[string]struct{ in, want string }{
-		"with body":    {"<html><body><p>x</p></body></html>", "<html><body><p>x</p>" + script + "</body></html>"},
-		"upper case":   {"<HTML><BODY>x</BODY></HTML>", "<HTML><BODY>x" + script + "</BODY></HTML>"},
-		"two closings": {"<body>a</body><!-- </body> -->", "<body>a</body><!-- " + script + "</body> -->"},
-		"no body":      {"<h1>Привет İİİ</h1>", "<h1>Привет İİİ</h1>" + script},
+		"with body":    {"<html><body><p>x</p></body></html>", theme + "<html><body><p>x</p>" + script + "</body></html>"},
+		"upper case":   {"<HTML><BODY>x</BODY></HTML>", theme + "<HTML><BODY>x" + script + "</BODY></HTML>"},
+		"two closings": {"<body>a</body><!-- </body> -->", theme + "<body>a</body><!-- " + script + "</body> -->"},
+		"no body":      {"<h1>Привет İİİ</h1>", theme + "<h1>Привет İİİ</h1>" + script},
+		"doctype":      {"<!doctype html><html lang=ru data-x=\"a>b\"><head></head><body></body></html>", "<!doctype html>" + theme + "<html lang=ru data-x=\"a>b\"><head></head><body>" + script + "</body></html>"},
+		"bom comments": {"\xEF\xBB\xBF \n<!-- <head> --><!-- x -->\n<!DOCTYPE html>\n<header>h</header>", "\xEF\xBB\xBF \n<!-- <head> --><!-- x -->\n<!DOCTYPE html>" + theme + "\n<header>h</header>" + script},
+		"open comment": {"<!-- never closed", "<!-- never closed" + script + theme},
 	}
 	for name, c := range cases {
 		d := createArtifactT(t, s, map[string]any{"files": []fileSpec{{Path: "index.html", Content: c.in}, {Path: "other.html", Content: c.in}, {Path: "app.js", Content: "</body>"}}})
@@ -909,6 +913,19 @@ func TestArtifactFrameResizeInjection(t *testing.T) {
 	_, h, b := artCall(t, s, "GET", frameURL(t, s, d.ID, nil), nil)
 	if h.Get("Content-Length") != strconv.Itoa(len(b)) || !strings.Contains(string(b), script) {
 		t.Errorf("content length %s vs %d", h.Get("Content-Length"), len(b))
+	}
+}
+
+func TestArtifactThemeScriptServed(t *testing.T) {
+	s := testServer(t) // no web directory: the script is embedded
+	code, h, b := artCall(t, s, "GET", "/artifact-runtime/theme.js", nil)
+	if code != 200 || !bytes.Contains(b, []byte("data-theme")) || !bytes.Contains(b, []byte("location.search")) || !bytes.Contains(b, []byte("hasAttribute")) {
+		t.Fatalf("theme.js: %d", code)
+	}
+	for k, v := range map[string]string{"Content-Type": "text/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "cross-origin"} {
+		if h.Get(k) != v {
+			t.Errorf("%s = %q", k, h.Get(k))
+		}
 	}
 }
 
