@@ -339,7 +339,7 @@ func verifyObjectHash(ctx context.Context, store objectStore, r storageRef) (boo
 }
 
 func (r *StorageReport) write(w io.Writer) {
-	fmt.Fprintf(w, "references in database: %d\nobjects in bucket:      %d\n", r.References, r.Objects)
+	fmt.Fprintf(w, "references in database: %d\nobjects in store:       %d\n", r.References, r.Objects)
 	fmt.Fprintf(w, "MISSING (in database, not in bucket): %d\n", len(r.Missing))
 	for i, m := range r.Missing {
 		if i == storageReportListCap {

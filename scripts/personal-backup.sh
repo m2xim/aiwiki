@@ -74,7 +74,8 @@ mv "$PART" "$FINAL"
 SIZE=$(wc -c <"$FINAL" | tr -d ' ')
 
 # 2. Then the objects (immutable, shared by all dumps; never deleted here).
-dc --profile backup run --rm backup
+# stdin closed: compose run would otherwise read the caller's input.
+dc --profile backup run --rm backup </dev/null
 
 # 3. Rotation only after both steps succeeded; names are read line by line, so
 # spaces in the directory are fine (dump names themselves contain none).
