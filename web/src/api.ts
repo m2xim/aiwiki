@@ -41,6 +41,7 @@ export type ArtifactRevisionInfo = { revision: number; author: string; message: 
 export type ArtifactShare = { id: string; url?: string; revision: number | null; created_by?: string; created_at: string; revoked_at?: string | null };
 export type ArtifactFileInput = { path: string; content: string; encoding: 'utf8' | 'base64' } | { path: string; delete: true };
 export type ArtifactView = { frame_url: string; expires_at: string };
+export type SpaceStorage = { used: number; limit: number; override: number | null; default: number };
 export type AdminSettings = { public_artifact_links: boolean };
 export type Bootstrap = { instructions: Article[]; spaces: Space[]; recent: Article[]; guide: string };
 import type { ManifestFile, Visibility } from './artifactsCore';
@@ -139,6 +140,8 @@ export const client = {
   logout: () => api204('/auth/logout', { method: 'POST' }),
   spaces: (includeArchived = false) => api<Space[]>(`/api/spaces${includeArchived ? '?include_archived=true' : ''}`),
   updateSpace: (id: string, data: { name?: string; description?: string; archived?: boolean }) => api<Space>(`/api/spaces/${encodeURIComponent(id)}`, json('PATCH', data)),
+  spaceStorage: (id: string) => api<SpaceStorage>(`/api/spaces/${encodeURIComponent(id)}/storage`),
+  setSpaceQuota: (id: string, bytes: number | null) => api<{ id: string; storage_quota_bytes: number | null }>(`/api/spaces/${encodeURIComponent(id)}`, json('PATCH', { storage_quota_bytes: bytes })),
   tags: (spaceId: string) => api<string[]>(`/api/tags?space_id=${encodeURIComponent(spaceId)}`),
   createSpace: (name: string, description: string) => corporateSession
     ? api<Space>('/api/corporate/spaces', json('POST', { name, description, personal: true }))

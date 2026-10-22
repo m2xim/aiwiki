@@ -43,6 +43,9 @@ func (s *Server) migrateCorporate() error {
 	if err := s.migrateArtifacts(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateStorageQuotas(ctx); err != nil {
+		return err
+	}
 	return s.migrateSemantic(ctx)
 }
 

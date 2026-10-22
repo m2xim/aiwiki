@@ -21,6 +21,9 @@ func OpenCorporate(ctx context.Context, cfg CorporateConfig, dataDir, webDir str
 	if cfg.DatabaseURL == "" || cfg.IssuerURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.RedirectURL == "" {
 		return nil, errors.New("corporate mode requires database and complete OIDC configuration")
 	}
+	if cfg.SpaceQuotaBytes < 0 {
+		return nil, errors.New("space storage quota must not be negative")
+	}
 	if err := os.MkdirAll(filepath.Join(dataDir, "files"), 0755); err != nil {
 		return nil, err
 	}
@@ -50,7 +53,7 @@ func OpenCorporate(ctx context.Context, cfg CorporateConfig, dataDir, webDir str
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{DB: db, DataDir: dataDir, WebDir: webDir}
+	s := &Server{DB: db, DataDir: dataDir, WebDir: webDir, spaceQuotaDefault: cfg.SpaceQuotaBytes}
 	if s.art, err = newArtifactState(); err != nil {
 		db.Close()
 		return nil, err
@@ -94,6 +97,7 @@ func (s *Server) corporateHandler() http.Handler {
 	public := http.NewServeMux()
 	s.auth.routes(public)
 	public.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
+	public.HandleFunc("GET /api/ready", s.readyHandler)
 	public.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		protected := strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/files/") || authIsMCPPath(r.URL.Path)
 		if !protected {
@@ -121,7 +125,7 @@ func (s *Server) corporateHandler() http.Handler {
 		// A request owns its scope all the way through the in-process MCP proxy.
 		requestServer.routes().ServeHTTP(w, r)
 	}))
-	return public
+	return trackMux(public)
 }
 
 func (s *Server) changeAuthor(proposed string) string {

@@ -27,6 +27,7 @@ Environment variables:
 | `AIWIKI_OIDC_ACCESS_ROLE` | Admission role, default `aiwiki-access` |
 | `AIWIKI_OIDC_ADMIN_ROLE` | System administrator role, default `aiwiki-admin` |
 | `AIWIKI_ALLOW_INSECURE_LOOPBACK` | `1` permits HTTP only on loopback for local integration tests |
+| `AIWIKI_SPACE_QUOTA_BYTES` | Optional default storage limit per space in bytes; empty or `0` means unlimited, a negative or non-numeric value fails startup. A system administrator can override it per space, see [OPERATIONS.md](OPERATIONS.md) section 5 |
 
 Missing admission claims deny access, including for administrators. Identities use `(issuer, subject)`; email changes never merge accounts. Setting corporate configuration incompletely fails startup instead of opening an anonymous SQLite service. TLS terminates at the trusted deployment proxy; publish the application only behind that proxy and configure the exact browser origin.
 
@@ -65,6 +66,8 @@ Moving between containers is done only through the access-impact preview (`POST 
 In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. Optional [OAuth resource discovery](MCP-OAUTH.md) binds tokens to the canonical MCP resource and `aiwiki:mcp` scope, with Keycloak as the authorization server. It also supports [temporary project-scoped read-only keys](MCP-TEMPORARY-ACCESS.md), tied to a live browser session, and [persistent personal/service keys](MCP-PERSISTENT-ACCESS.md). Provider bearer requests are rate-limited per subject (per process) before introspection and audited per request, see the Limits section of that page. Browser cookies do not authorize MCP. Real client login and the actual AD federation remain pilot checks.
 
 Interactive artifacts (versioned HTML/JS objects with sandboxed rendering, public links and an administrator switch) are described in [ARTIFACTS.md](ARTIFACTS.md); they add a migration component `artifacts`, FORCE RLS tables and startup checks.
+
+Per-space storage quotas (default `AIWIKI_SPACE_QUOTA_BYTES`, administrator override in `spaces.storage_quota_bytes`, enforced on attachment upload and artifact create/update) are specified in [OPERATIONS.md](OPERATIONS.md) section 5; they add a migration component `storage_quotas`, probe policies on `spaces`/`articles`/`attachments` that only pass inside its `SECURITY DEFINER` functions, and startup checks.
 
 ## Verification
 

@@ -1,0 +1,8 @@
+.space-storage { margin: 4px 0 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--lavender); display: grid; gap: 8px; }
+.space-storage strong { font-size: 13px; }
+.space-storage p { margin: 0; font-size: 13px; color: var(--muted); }
+.space-storage-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.space-storage-bar > span { display: block; height: 100%; background: var(--purple); }
+.space-storage-bar.is-over > span { background: #c0392b; }
+.space-storage-admin { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.space-storage-admin .field { flex: 1 1 180px; margin: 0; }

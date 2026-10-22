@@ -226,7 +226,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		}
 		result = map[string]any{"tools": tools}
 	case "tools/call":
-		result = s.callTool(q.Params)
+		result = s.observedCallTool(q.Params)
 	default:
 		writeJSON(w, 200, map[string]any{"jsonrpc": "2.0", "id": q.ID, "error": map[string]any{"code": -32601, "message": "method not found"}})
 		return

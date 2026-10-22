@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +41,14 @@ func run() error {
 			return err
 		}
 	}
+	accessLog, err := server.ParseAccessLogMode(os.Getenv("AIWIKI_ACCESS_LOG"))
+	if err != nil {
+		return err
+	}
+	metricsAddr, metricsToken := os.Getenv("AIWIKI_METRICS_ADDR"), os.Getenv("AIWIKI_METRICS_TOKEN")
+	if err := server.ValidateMetricsConfig(metricsAddr, metricsToken); err != nil {
+		return err
+	}
 	var s *server.Server
 	databaseURL := os.Getenv("AIWIKI_DATABASE_URL")
 	issuer := os.Getenv("AIWIKI_OIDC_ISSUER")
@@ -46,6 +57,14 @@ func run() error {
 		if strings.HasPrefix(setting, "AIWIKI_OIDC_") || strings.HasPrefix(setting, "AIWIKI_S3_") || strings.HasPrefix(setting, "AIWIKI_KEYCLOAK_") || strings.HasPrefix(setting, "AIWIKI_MCP_RESOURCE_URL=") || strings.HasPrefix(setting, "AIWIKI_MCP_INTROSPECTION_") {
 			corporate = true
 		}
+	}
+	var spaceQuota int64
+	if v := strings.TrimSpace(os.Getenv("AIWIKI_SPACE_QUOTA_BYTES")); v != "" {
+		parsed, perr := strconv.ParseInt(v, 10, 64)
+		if perr != nil || parsed < 0 {
+			return errors.New("AIWIKI_SPACE_QUOTA_BYTES must be a non-negative number of bytes")
+		}
+		spaceQuota = parsed
 	}
 	if corporate {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -58,6 +77,7 @@ func run() error {
 			IssuerURL: issuer, ClientID: os.Getenv("AIWIKI_OIDC_CLIENT_ID"), ClientSecret: os.Getenv("AIWIKI_OIDC_CLIENT_SECRET"), RedirectURL: os.Getenv("AIWIKI_OIDC_REDIRECT_URL"),
 			AccessRole: os.Getenv("AIWIKI_OIDC_ACCESS_ROLE"), AdminRole: os.Getenv("AIWIKI_OIDC_ADMIN_ROLE"), RolesClaim: os.Getenv("AIWIKI_OIDC_ROLES_CLAIM"),
 			AllowInsecureHTTP: os.Getenv("AIWIKI_ALLOW_INSECURE_LOOPBACK") == "1",
+			SpaceQuotaBytes:   spaceQuota,
 		}, *data, *web)
 	} else {
 		s, err = server.Open(*data, *web)
@@ -77,11 +97,30 @@ func run() error {
 			return err
 		}
 	}
+	if accessLog {
+		s.SetAccessLog(os.Stderr)
+	}
 	log.Printf("AI Wiki: http://%s", *addr)
 	srv := &http.Server{Addr: *addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 90 * time.Second}
 	stopped := make(chan os.Signal, 1)
 	signal.Notify(stopped, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stopped)
+	var metricsSrv *http.Server
+	if metricsAddr != "" {
+		// Bind first: a taken port fails startup cleanly, before the main server runs.
+		ln, err := net.Listen("tcp", metricsAddr)
+		if err != nil {
+			return fmt.Errorf("metrics listener: %w", err)
+		}
+		log.Printf("AI Wiki metrics: http://%s/metrics", ln.Addr())
+		metricsSrv = &http.Server{Handler: s.MetricsHandler(metricsToken), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second}
+		// Metrics are non-essential: a later failure is logged, the wiki keeps serving.
+		go func() {
+			if err := metricsSrv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("metrics listener stopped: %v", err)
+			}
+		}()
+	}
 	failure := make(chan error, 1)
 	go func() { failure <- srv.ListenAndServe() }()
 	select {
@@ -92,6 +131,9 @@ func run() error {
 	case <-stopped:
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if metricsSrv != nil {
+			_ = metricsSrv.Shutdown(ctx)
+		}
 		if err := srv.Shutdown(ctx); err != nil {
 			return err
 		}
