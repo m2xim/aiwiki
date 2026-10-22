@@ -340,7 +340,7 @@ func (s *Server) mcpDelegation(w http.ResponseWriter, r *http.Request) {
 func (a *AuthService) authenticateDelegation(w http.ResponseWriter, r *http.Request, raw string) (Principal, bool) {
 	deny := func(status int, msg string) (Principal, bool) {
 		if status == http.StatusUnauthorized {
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+			w.Header().Set("WWW-Authenticate", a.mcpBearerChallenge("invalid_token"))
 		}
 		authError(w, status, msg)
 		return Principal{}, false

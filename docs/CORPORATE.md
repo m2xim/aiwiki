@@ -19,6 +19,9 @@ Environment variables:
 | `AIWIKI_OIDC_ISSUER` | Exact realm issuer, for example `https://identity.example.org/realms/company` |
 | `AIWIKI_OIDC_CLIENT_ID` | Confidential client and expected token audience |
 | `AIWIKI_OIDC_CLIENT_SECRET` | Server-only client secret |
+| `AIWIKI_MCP_RESOURCE_URL` | Optional canonical public `/mcp` URL; enables resource discovery and separate MCP audience/scope checks |
+| `AIWIKI_MCP_INTROSPECTION_CLIENT_ID` | Optional confidential resource client for MCP introspection, paired with its secret |
+| `AIWIKI_MCP_INTROSPECTION_CLIENT_SECRET` | Server-only resource client secret; browser credentials remain separate |
 | `AIWIKI_OIDC_REDIRECT_URL` | Exact public callback URL, e.g. `https://wiki.example.org/auth/callback` |
 | `AIWIKI_OIDC_ROLES_CLAIM` | Dot path, default `realm_access.roles` |
 | `AIWIKI_OIDC_ACCESS_ROLE` | Admission role, default `aiwiki-access` |
@@ -55,7 +58,7 @@ The first core deliberately rejects article container/parent moves and project r
 
 ## MCP
 
-In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. It also supports [temporary project-scoped read-only keys](MCP-TEMPORARY-ACCESS.md), tied to a live browser session with per-request introspection. Browser cookies do not authorize MCP. Existing trusted-network mode remains compatible. Long-lived personal tokens, service-account lifecycle, OAuth authorization-server discovery and the client compatibility matrix remain subsequent MCP work.
+In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. Optional [OAuth resource discovery](MCP-OAUTH.md) binds tokens to the canonical MCP resource and `aiwiki:mcp` scope, with Keycloak as the authorization server. It also supports [temporary project-scoped read-only keys](MCP-TEMPORARY-ACCESS.md), tied to a live browser session, and [persistent personal/service keys](MCP-PERSISTENT-ACCESS.md). Browser cookies do not authorize MCP. Real client login and the actual AD federation remain pilot checks.
 
 ## Verification
 

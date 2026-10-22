@@ -4,6 +4,7 @@ import "time"
 
 // CorporateConfig enables the isolated PostgreSQL/OIDC edition.
 type CorporateConfig struct {
+	MCPOAuth             MCPOAuthConfig
 	Admission            KeycloakAdmissionConfig
 	S3                   S3Config
 	DatabaseURL          string

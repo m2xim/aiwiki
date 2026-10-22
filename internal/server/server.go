@@ -114,6 +114,10 @@ func (s *Server) Handler() http.Handler {
 // Host check on the outer request may use it directly.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	// Corporate metadata is served by the outer auth router. In trusted mode,
+	// discovery must return 404 rather than the SPA document.
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource", http.NotFound)
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", http.NotFound)
 	if s.DB.pg {
 		s.corporateRoutes(mux)
 	} else {

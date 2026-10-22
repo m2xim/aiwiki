@@ -753,7 +753,7 @@ func (a *AuthService) authenticatePersistent(w http.ResponseWriter, r *http.Requ
 	deny := func(status int, msg string) (Principal, bool) {
 		switch status {
 		case http.StatusUnauthorized:
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+			w.Header().Set("WWW-Authenticate", a.mcpBearerChallenge("invalid_token"))
 		case http.StatusTooManyRequests:
 			w.Header().Set("Retry-After", "60")
 		}
