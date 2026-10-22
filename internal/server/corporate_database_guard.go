@@ -61,6 +61,9 @@ func (d *database) validateRuntimeSchema() error {
 	if err := d.QueryRow(`SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('users','teams','team_members','projects','memberships','security_audit','corporate_space_state','schema_migrations') AND pg_has_role(current_user,c.relowner,'MEMBER')`).Scan(&count); err != nil || count != 0 {
 		return errors.New("runtime role must not own ACL, identity or migration tables")
 	}
+	if err := d.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.corporate_mcp_oauth_audit(text,text,text)') AND prosecdef AND prosrc LIKE '%mcp.oauth.request%') AND has_function_privilege(current_user,'public.corporate_mcp_oauth_audit(text,text,text)','EXECUTE') AND NOT EXISTS(SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid=to_regprocedure('public.corporate_mcp_oauth_audit(text,text,text)') AND a.grantee=0)`).Scan(&mcpReady); err != nil || !mcpReady {
+		return errors.New("MCP OAuth audit function is missing, not SECURITY DEFINER or executable by PUBLIC")
+	}
 	var unsafe bool
 	if err := d.QueryRow(`SELECT has_schema_privilege(current_user,'public','CREATE') OR has_table_privilege(current_user,'security_audit','UPDATE,DELETE') OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') AND has_table_privilege(current_user,c.oid,'TRUNCATE,TRIGGER')) OR EXISTS(SELECT 1 FROM pg_roles WHERE rolname=current_user AND (rolsuper OR rolbypassrls OR rolcreaterole))`).Scan(&unsafe); err != nil || unsafe {
 		return errors.New("runtime role has unsafe schema, audit or role privileges")

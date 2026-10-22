@@ -84,6 +84,9 @@ type AuthService struct {
 	maxSessions   int
 	maxLogins     int
 
+	oauthLimitOnce sync.Once
+	oauthLimit     *mcpOAuthLimiter
+
 	mu          sync.Mutex
 	sessions    map[[32]byte]*authSession
 	logins      map[[32]byte]*authLogin
@@ -413,6 +416,15 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	if typ, _ := claims["typ"].(string); strings.EqualFold(typ, "ID") {
 		return deny(http.StatusUnauthorized, "invalid token")
 	}
+	// The signature and claims are verified, so the subject is authentic: charge
+	// the per-process limiter BEFORE asking the identity provider.
+	if tok.Subject == "" {
+		return deny(http.StatusUnauthorized, "invalid token")
+	}
+	if !a.oauthLimiter().allow(a.cfg.IssuerURL+"\x00"+tok.Subject, a.clock()) {
+		w.Header().Set("Retry-After", "60")
+		return deny(http.StatusTooManyRequests, "rate limit exceeded")
+	}
 	info, err := a.introspectAudience(r.Context(), raw, audience)
 	if err == nil && info.subject != tok.Subject {
 		err = errAuthTokenInactive
@@ -432,7 +444,25 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	if fail != 0 {
 		return deny(fail, authFailText(fail))
 	}
+	p.MCPBearer = true
+	p.MCPClientID = mcpOAuthClientID(claims, info.claims)
 	return p, true
+}
+
+func (a *AuthService) oauthLimiter() *mcpOAuthLimiter {
+	a.oauthLimitOnce.Do(func() {
+		if a.oauthLimit == nil {
+			a.oauthLimit = newMCPOAuthLimiter()
+		}
+	})
+	return a.oauthLimit
+}
+
+func (a *AuthService) clock() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
 }
 
 const (
