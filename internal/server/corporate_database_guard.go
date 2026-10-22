@@ -74,5 +74,8 @@ func (d *database) validateRuntimeSchema() error {
 	if err := d.QueryRow(`SELECT has_schema_privilege(current_user,'public','CREATE') OR has_table_privilege(current_user,'security_audit','UPDATE,DELETE') OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') AND has_table_privilege(current_user,c.oid,'TRUNCATE,TRIGGER')) OR EXISTS(SELECT 1 FROM pg_roles WHERE rolname=current_user AND (rolsuper OR rolbypassrls OR rolcreaterole))`).Scan(&unsafe); err != nil || unsafe {
 		return errors.New("runtime role has unsafe schema, audit or role privileges")
 	}
-	return d.validateArtifactSchema()
+	if err := d.validateArtifactSchema(); err != nil {
+		return err
+	}
+	return d.validateSemanticSchema()
 }

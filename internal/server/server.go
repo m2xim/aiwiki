@@ -24,6 +24,7 @@ type Server struct {
 	auth            *AuthService
 	principal       *Principal
 	art             *artifactState
+	semantic        *semanticIndex
 }
 
 // SetAllowedOrigin enables one explicitly trusted, canonicalized browser origin.
@@ -101,6 +102,7 @@ func Open(dataDir, webDir string) (*Server, error) {
 	return s, nil
 }
 func (s *Server) Close() error {
+	s.semantic.close()
 	if s.authDB != nil {
 		_ = s.authDB.Close()
 	}

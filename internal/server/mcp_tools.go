@@ -92,7 +92,7 @@ func mcpToolList() []map[string]any {
 			"limit":      prop("integer", "Page size, default 20, maximum 100."),
 			"offset":     prop("integer", "Number of results to skip (use next_offset from the previous response)."),
 		})},
-		{"name": "wiki_search_sections", "description": "Search sections using their own heading/text, weaker ancestor headings and article identity (title, summary, tags, property values). Common function words are ignored when other terms remain; rare terms and local evidence rank higher. mode all covers effective terms, otherwise partial fallback any. matched_in separates local fields from article context; context-only hits may have empty snippet and need verification. Use revision-pinned read_args directly in wiki_read. Global search excludes archived spaces unless explicitly scoped. Pages reflect current data, not a snapshot.", "inputSchema": objectSchema(map[string]any{
+		{"name": "wiki_search_sections", "description": "Search sections using their own heading/text, weaker ancestor headings and article identity (title, summary, tags, property values). Common function words are ignored when other terms remain; rare terms and local evidence rank higher. mode all covers effective terms, otherwise partial fallback any. matched_in separates local fields from article context; context-only hits may have empty snippet and need verification. Use revision-pinned read_args directly in wiki_read. Global search excludes archived spaces unless explicitly scoped. Pages reflect current data, not a snapshot. When the server has semantic search (response field semantic), sections are also ranked by meaning, including across Russian and English, and fused with full lexical matches; matched_by tells lexical from semantic, similarity is the cosine score. A semantic-only hit is a candidate, not evidence that the subject exists: read it before relying on it. Argument semantic=false forces lexical search. Response semantic is on, indexing (some sections not embedded yet, see semantic_coverage), unavailable (embedding service down: lexical results) or off.", "inputSchema": objectSchema(map[string]any{
 			"q":          prop("string", "Required nonempty search words; Russian and English morphology."),
 			"space_id":   prop("string", "Only this space; omit for global search."),
 			"project_id": prop("string", "Only this project; omit for all accessible projects."),
@@ -100,6 +100,7 @@ func mcpToolList() []map[string]any {
 			"pinned":     prop("boolean", "true: only pinned articles."),
 			"tag":        strArrProp("Require all exact tags."),
 			"property":   strArrProp("Require all exact key:value properties."),
+			"semantic":   prop("boolean", "false: lexical search only. Default true when the server has semantic search."),
 			"limit":      map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Page size, default 5, maximum 20."},
 			"offset":     map[string]any{"type": "integer", "minimum": 0, "description": "Skip this many results; use next_offset when present."},
 		}, "q")},

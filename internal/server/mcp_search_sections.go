@@ -19,6 +19,8 @@ type sectionSearchHit struct {
 	Snippet     string         `json:"snippet"`
 	Score       float64        `json:"score"`
 	MatchedIn   []string       `json:"matched_in"`
+	MatchedBy   []string       `json:"matched_by,omitempty"`
+	Similarity  *float64       `json:"similarity,omitempty"`
 	ReadArgs    map[string]any `json:"read_args"`
 }
 
@@ -48,6 +50,8 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 	q := ar.str("q")
 	spaceID, kind := ar.str("space_id"), ar.str("kind")
 	pinned := ar.boolean("pinned")
+	useSemantic := true
+	ar.value("semantic", "boolean", &useSemantic)
 	limit, offset := 5, 0
 	tags, properties := ar.strings("tag"), ar.strings("property")
 	if bad := ar.fail(); bad != nil {
@@ -134,20 +138,51 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 	m = effectiveMatcher(m)
 	ranker := newSectionRanker(m)
 	order := 0
+	var visible []visibleArticle
 	for rows.Next() {
 		a, scanErr := scanArticle(rows)
 		if scanErr != nil {
 			return toolErr("database error")
 		}
-		ranker.addArticle(a, splitSearchSections(a.Body), &order)
+		sections := splitSearchSections(a.Body)
+		ranker.addArticle(a, sections, &order)
+		visible = append(visible, visibleArticle{article: a, sections: sections})
 	}
 	if err := rows.Err(); err != nil {
 		return toolErr("database error")
 	}
 	candidates, mode := ranker.results()
+	semanticStatus, coverage := "", -1.0
+	var fused []fusedHit
+	if s.semantic != nil {
+		semanticStatus = "off"
+		if useSemantic {
+			var hits []semanticHit
+			hits, semanticStatus, coverage = s.semanticRank(q, visible)
+			if semanticStatus != "unavailable" {
+				lexical := candidates
+				if mode != "all" {
+					// Partial lexical matches are noise next to semantic ranking.
+					lexical = nil
+				}
+				fused = fuseSectionHits(lexical, hits)
+			}
+		}
+	}
 	total := len(candidates)
+	if fused != nil {
+		total = len(fused)
+	}
 	results := make([]sectionSearchHit, 0, limit)
-	if offset < total {
+	if fused != nil && offset < total {
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		for _, h := range fused[offset:end] {
+			results = append(results, h.hit(m))
+		}
+	} else if offset < total {
 		end := offset + limit
 		if end > total {
 			end = total
@@ -169,7 +204,13 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 		Mode       string             `json:"mode"`
 		Results    []sectionSearchHit `json:"results"`
 		NextOffset *int               `json:"next_offset,omitempty"`
-	}{Total: total, Offset: offset, Mode: mode, Results: results}
+		Semantic   string             `json:"semantic,omitempty"`
+		Coverage   *float64           `json:"semantic_coverage,omitempty"`
+	}{Total: total, Offset: offset, Mode: mode, Results: results, Semantic: semanticStatus}
+	if coverage >= 0 {
+		c := math.Round(coverage*1000) / 1000
+		out.Coverage = &c
+	}
 	if len(results) > 0 && offset+len(results) < total {
 		next := offset + len(results)
 		out.NextOffset = &next
