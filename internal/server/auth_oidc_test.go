@@ -377,10 +377,10 @@ func TestAuthLoginStatePKCEAndSingleUse(t *testing.T) {
 	target := "/auth/callback?code=" + code + "&state=" + url.QueryEscape(q.Get("state"))
 
 	// Missing browser binding cookie is refused, and burns the state.
-	if rec := x.do("GET", target, "", nil); rec.Code != http.StatusBadRequest {
+	if rec := x.do("GET", target, "", nil); !authLoginError(rec, "expired") {
 		t.Fatalf("unbound callback: %d", rec.Code)
 	}
-	if rec := x.do("GET", target, "", nil, lc); rec.Code != http.StatusBadRequest {
+	if rec := x.do("GET", target, "", nil, lc); !authLoginError(rec, "expired") {
 		t.Fatalf("state must be single use: %d", rec.Code)
 	}
 
@@ -406,7 +406,7 @@ func TestAuthLoginStatePKCEAndSingleUse(t *testing.T) {
 	if r := x.do("GET", ok, "", nil, lc2); r.Code != http.StatusSeeOther {
 		t.Fatalf("expected success, got %d", r.Code)
 	}
-	if r := x.do("GET", ok, "", nil, lc2); r.Code != http.StatusBadRequest {
+	if r := x.do("GET", ok, "", nil, lc2); !authLoginError(r, "expired") {
 		t.Fatalf("replay must fail, got %d", r.Code)
 	}
 }
@@ -418,7 +418,7 @@ func TestAuthRejectsWrongStateWrongPKCEAndNonce(t *testing.T) {
 	g := authUserGrant("bob", "aiwiki-access")
 	g.nonce = q.Get("nonce")
 	code := x.iss.issueCode(q.Get("code_challenge"), g)
-	if r := x.do("GET", "/auth/callback?code="+code+"&state=forged", "", nil, lc); r.Code != http.StatusBadRequest {
+	if r := x.do("GET", "/auth/callback?code="+code+"&state=forged", "", nil, lc); !authLoginError(r, "expired") {
 		t.Fatalf("forged state: %d", r.Code)
 	}
 
@@ -426,13 +426,13 @@ func TestAuthRejectsWrongStateWrongPKCEAndNonce(t *testing.T) {
 	q, lc = x.startLogin()
 	g.nonce = q.Get("nonce")
 	code = x.iss.issueCode(authS256("other-verifier"), g)
-	if r := x.do("GET", "/auth/callback?code="+code+"&state="+url.QueryEscape(q.Get("state")), "", nil, lc); r.Code != http.StatusUnauthorized {
+	if r := x.do("GET", "/auth/callback?code="+code+"&state="+url.QueryEscape(q.Get("state")), "", nil, lc); !authLoginError(r, "failed") {
 		t.Fatalf("pkce mismatch: %d", r.Code)
 	}
 
 	// ID token with a nonce the caller did not request.
 	g.nonce = "attacker-nonce"
-	if r := x.login(g); r.Code != http.StatusUnauthorized {
+	if r := x.login(g); !authLoginError(r, "failed") {
 		t.Fatalf("nonce mismatch: %d", r.Code)
 	}
 }
@@ -522,13 +522,13 @@ func TestAuthConfigurableRoles(t *testing.T) {
 	grant := func(sub string, claims map[string]any) authGrant {
 		return authGrant{sub: sub, name: sub, claims: claims}
 	}
-	if r := x.login(grant("noroles", nil)); r.Code != http.StatusForbidden {
+	if r := x.login(grant("noroles", nil)); !authLoginError(r, "denied") {
 		t.Fatalf("missing roles must deny: %d", r.Code)
 	}
-	if r := x.login(grant("default-claim", authRolesClaim("aiwiki-access"))); r.Code != http.StatusForbidden {
+	if r := x.login(grant("default-claim", authRolesClaim("aiwiki-access"))); !authLoginError(r, "denied") {
 		t.Fatalf("default claim path must not apply: %d", r.Code)
 	}
-	if r := x.login(grant("adminonly", custom("wiki-root"))); r.Code != http.StatusForbidden {
+	if r := x.login(grant("adminonly", custom("wiki-root"))); !authLoginError(r, "denied") {
 		t.Fatalf("admin without access must deny: %d", r.Code)
 	}
 	sc := x.session(grant("member", custom("wiki-user")))
@@ -575,7 +575,7 @@ func TestAuthDisabledUserNeverReenabled(t *testing.T) {
 	if r := x.do("GET", "/api/me", "", nil, sc); r.Code != http.StatusUnauthorized {
 		t.Fatalf("session should be dropped: %d", r.Code)
 	}
-	if r := x.login(g); r.Code != http.StatusForbidden {
+	if r := x.login(g); !authLoginError(r, "denied") {
 		t.Fatalf("login must not re-enable: %d", r.Code)
 	}
 	if !x.users.off[authUserID(x.iss.srv.URL, "dave")] {
@@ -655,7 +655,7 @@ func TestAuthSessionBounds(t *testing.T) {
 	}
 
 	x.a.maxSessions = 1
-	if r := x.login(authUserGrant("gus", "aiwiki-access")); r.Code != http.StatusServiceUnavailable {
+	if r := x.login(authUserGrant("gus", "aiwiki-access")); !authLoginError(r, "unavailable") {
 		t.Fatalf("session cap: %d", r.Code)
 	}
 
@@ -811,4 +811,75 @@ func TestAuthMissingIntrospectionRolesDoesNotUseOldJWT(t *testing.T) {
 	if r.Code != http.StatusForbidden {
 		t.Fatalf("missing current admission role must deny despite signed old role: %d", r.Code)
 	}
+}
+
+// authLoginError reports whether a callback answered with the browser error
+// redirect for code: 303, a Location that is exactly /?login_error=<code>,
+// no store caching, the login cookie cleared and no session cookie.
+func authLoginError(rec *httptest.ResponseRecorder, code string) bool {
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?login_error="+code ||
+		rec.Header().Get("Cache-Control") != "no-store" {
+		return false
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Value != "" && c.MaxAge >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func TestAuthCallbackErrorRedirects(t *testing.T) {
+	x := newAuthHarness(t, nil)
+	expect := func(name string, rec *httptest.ResponseRecorder, code string) {
+		t.Helper()
+		if !authLoginError(rec, code) {
+			t.Errorf("%s: want 303 /?login_error=%s, got %d %q %q", name, code, rec.Code,
+				rec.Header().Get("Location"), rec.Body)
+		}
+	}
+
+	// No state at all.
+	expect("no state", x.do("GET", "/auth/callback?code=abc", "", nil), "expired")
+
+	// Provider error and missing code are failures, not expiry.
+	q, lc := x.startLogin()
+	expect("provider error", x.do("GET", "/auth/callback?error=access_denied&state="+url.QueryEscape(q.Get("state")), "", nil, lc), "failed")
+	q, lc = x.startLogin()
+	expect("login_required", x.do("GET", "/auth/callback?error=login_required&state="+url.QueryEscape(q.Get("state")), "", nil, lc), "failed")
+	q, lc = x.startLogin()
+	expect("no code", x.do("GET", "/auth/callback?state="+url.QueryEscape(q.Get("state")), "", nil, lc), "failed")
+
+	// The state is burned by the failed attempt: reuse reports expiry.
+	q, lc = x.startLogin()
+	g := authUserGrant("erin", "aiwiki-access")
+	g.nonce = q.Get("nonce")
+	target := "/auth/callback?code=" + x.iss.issueCode(q.Get("code_challenge"), g) + "&state=" + url.QueryEscape(q.Get("state"))
+	expect("first use", x.do("GET", "/auth/callback?error=x&state="+url.QueryEscape(q.Get("state")), "", nil, lc), "failed")
+	expect("reuse after failure", x.do("GET", target, "", nil, lc), "expired")
+
+	// Cookie bound to a different login.
+	q1, _ := x.startLogin()
+	_, lc2 := x.startLogin()
+	expect("foreign cookie", x.do("GET", "/auth/callback?code=abc&state="+url.QueryEscape(q1.Get("state")), "", nil, lc2), "expired")
+
+	// Expired login state.
+	q, lc = x.startLogin()
+	g.nonce = q.Get("nonce")
+	target = "/auth/callback?code=" + x.iss.issueCode(q.Get("code_challenge"), g) + "&state=" + url.QueryEscape(q.Get("state"))
+	x.a.mu.Lock()
+	for _, l := range x.a.logins {
+		l.expires = x.a.now().Add(-time.Second)
+	}
+	x.a.mu.Unlock()
+	expect("expired state", x.do("GET", target, "", nil, lc), "expired")
+
+	// Identity provider introspection outage.
+	x.iss.mu.Lock()
+	x.iss.down = true
+	x.iss.mu.Unlock()
+	expect("introspection down", x.login(authUserGrant("frank", "aiwiki-access")), "unavailable")
+	x.iss.mu.Lock()
+	x.iss.down = false
+	x.iss.mu.Unlock()
 }

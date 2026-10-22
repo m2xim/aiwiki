@@ -682,7 +682,18 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
     </div>
   </div>;
 }
+const LOGIN_ERRORS: Record<string, string> = {
+  expired: 'Страница входа устарела или вход был начат в другой вкладке. Начните вход заново.',
+  failed: 'Провайдер входа не подтвердил вход. Попробуйте ещё раз.',
+  denied: 'У этой учётной записи нет доступа к AI Wiki. Обратитесь к администратору или войдите другим пользователем.',
+  unavailable: 'Сервис входа временно недоступен. Повторите попытку позже.'
+};
+const REAUTH_HINT = 'Если на странице входа уже подставлено прежнее имя, нажмите значок рядом с ним, чтобы выбрать другого пользователя.';
 function AuthGate() {
+  const [loginError, setLoginError] = useState<string | null>(() => {
+    const code = new URLSearchParams(location.search).get('login_error');
+    return code === null ? null : (code in LOGIN_ERRORS ? code : 'expired');
+  });
   const [session, setSession] = useState<AuthSession | null>(null);
   const [error, setError] = useState('');
   const [logoutError, setLogoutError] = useState('');
@@ -696,6 +707,7 @@ function AuthGate() {
       const response = await fetch('/api/me', { credentials: 'same-origin' });
       if (response.status === 401) {
         if (new URLSearchParams(location.search).get('signed_out') === '1') { setSignedOut(true); return; }
+        if (new URLSearchParams(location.search).has('login_error')) return; // no automatic retry: it could loop
         location.assign('/auth/login'); return;
       }
       if (!response.ok) throw new Error(`Не удалось проверить вход (${response.status}).`);
@@ -705,6 +717,13 @@ function AuthGate() {
       setCorporateSession(value.mode === 'corporate');
       setDraftIdentity(value.mode === 'corporate' ? value.user.id : '', value.mode === 'corporate');
       setSession(value);
+      const params = new URLSearchParams(location.search);
+      if (params.has('login_error')) {
+        params.delete('login_error');
+        const query = params.toString();
+        history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
+      }
+      setLoginError(null);
     } catch (e) { setError((e as Error).message || 'Не удалось подключиться к серверу.'); }
     finally { setLoading(false); }
   };
@@ -727,7 +746,8 @@ function AuthGate() {
     history.replaceState(null, '', '/?signed_out=1');
     } finally { loggingOut.current = false; }
   };
-  if (signedOut && !session && !loading) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>Вы вышли из AI Wiki</h1><p>Сеанс завершён. Для продолжения войдите снова.</p><button className="button primary" onClick={() => location.assign('/auth/login')}>Войти</button><button className="button ghost" onClick={() => location.assign('/auth/login?reauth=1')}>Войти другим пользователем</button></div></main>;
+  if (signedOut && !session && !loading) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>Вы вышли из AI Wiki</h1><p>Сеанс завершён. Для продолжения войдите снова.</p><button className="button primary" onClick={() => location.assign('/auth/login')}>Войти</button><button className="button ghost" onClick={() => location.assign('/auth/login?reauth=1')}>Войти другим пользователем</button><p className="auth-hint">{REAUTH_HINT}</p></div></main>;
+  if (loginError && !session && !loading) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>Не удалось войти</h1><p>{LOGIN_ERRORS[loginError]}</p><button className="button primary" onClick={() => location.assign('/auth/login')}>Войти снова</button><button className="button ghost" onClick={() => location.assign('/auth/login?reauth=1')}>Войти другим пользователем</button><p className="auth-hint">{REAUTH_HINT}</p></div></main>;
   if (expired) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>Сессия завершилась</h1><p>Черновики этой вкладки сохранены под вашей учётной записью.</p><button className="button primary" onClick={() => location.assign('/auth/login')}>Войти снова</button></div></main>;
   if (!session) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>{loading ? 'Проверяем вход…' : 'Нет доступа к базе знаний'}</h1>{error && <p role="alert">{error}</p>}{!loading && <button className="button primary" onClick={() => void loadSession()}>Повторить</button>}</div></main>;
   return <App session={session} logoutError={logoutError} onLogout={() => void logout()}/>;
