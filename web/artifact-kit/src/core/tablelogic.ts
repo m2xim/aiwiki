@@ -244,6 +244,8 @@ export function layoutPage(groups: Group[] | null, rows: Row[], page: number, pa
 export function exportMatrix(rows: Row[], cols: Column[]): unknown[][] {
   const head = cols.map(c => c.label);
   const body = rows.map(r => cols.map(c => {
+    const rawVal = r[c.key];
+    if (c.type !== 'date' && typeof rawVal === 'number' && Number.isFinite(rawVal)) return rawVal; // real numbers stay numbers
     const v = cellValue(r, c);
     if (v === null) return '';
     if (c.type === 'date') { const d = new Date(v as number); const p = (x: number) => String(x).padStart(2, '0'); const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; return d.getHours() || d.getMinutes() || d.getSeconds() ? `${date}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` : date; }

@@ -7,7 +7,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { formatSigned, formatValue, isEmpty, toDate, toNumber } from '../web/artifact-kit/src/core/format.ts';
-import { parseCSV, parseCSVMatrix, parseData, toCSV, detectDelimiter } from '../web/artifact-kit/src/core/csv.ts';
+import { neutralizeFormula, parseCSV, parseCSVMatrix, parseData, toCSV, detectDelimiter } from '../web/artifact-kit/src/core/csv.ts';
 import {
   aggregate, cellValue, filterRows, groupRows, inferType, layoutPage, nextSort, normalizeColumns, sortRows, exportMatrix, displayText,
 } from '../web/artifact-kit/src/core/tablelogic.ts';
@@ -125,6 +125,32 @@ ok('toCSV roundtrip', () => {
   }
   assert.ok(toCSV([['a;b']], ';').startsWith('"'));
   assert.ok(!toCSV([['a;b']], ',').startsWith('"'));
+});
+ok('CSV formula injection guard', () => {
+  const cell = (v, d = ',') => toCSV([[v]], d);
+  assert.equal(cell('=1+1'), "\"'=1+1\"");
+  assert.equal(cell('=HYPERLINK("http://x","y")'), "\"'=HYPERLINK(\"\"http://x\"\",\"\"y\"\")\"");
+  assert.equal(cell('+7 999'), "\"'+7 999\"");
+  assert.equal(cell('@SUM(A1:A2)'), "\"'@SUM(A1:A2)\"");
+  assert.equal(cell('-5'), "\"'-5\"", 'a numeric-looking string is prefixed too');
+  assert.equal(cell('\tтаб'), "\"'\tтаб\"");
+  assert.equal(cell('\rсимвол'), "\"'\rсимвол\"");
+  assert.equal(cell(' =1'), "\"' =1\"", 'leading spaces do not hide a formula');
+  assert.equal(cell('=Привет'), "\"'=Привет\"");
+  assert.equal(cell(-5), '-5', 'a real negative number is not prefixed');
+  assert.equal(cell(-0.25), '-0.25');
+  assert.equal(cell(12), '12');
+  assert.equal(cell('Привет-мир'), 'Привет-мир', 'dash inside text is fine');
+  assert.equal(cell('1-2'), '1-2');
+  assert.equal(cell('2026-01-01'), '2026-01-01');
+  assert.equal(neutralizeFormula('abc'), 'abc');
+  const rows = [{ a: -5, b: '-5', c: '=cmd', d: 'норм' }];
+  const m = exportMatrix(rows, normalizeColumns(['a', { key: 'b', type: 'string' }, 'c', 'd'], rows));
+  const text = toCSV(m, ';');
+  const back = parseCSVMatrix(text, ';')[1];
+  assert.deepEqual(back, ['-5', "'-5", "'=cmd", 'норм']);
+  assert.ok(!/(^|;)=/m.test(text));
+  assert.equal(toCSV([['-label']], ','), "\"'-label\"", 'header cells are guarded too');
 });
 ok('parseData', () => {
   assert.deepEqual(parseData('[{"a":1}]').rows, [{ a: 1 }]);

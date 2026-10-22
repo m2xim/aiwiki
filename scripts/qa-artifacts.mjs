@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   LIMITS, FRAME_SANDBOX, base64Bytes, buildTree, buildUpdate, checkNewPath, clampFrameHeight, contentBytes, diffFiles, draftFromManifest, extensionOf,
-  formatSize, parseArtRoute, artRouteUrl, parseResizeMessage, publicLinksDisabledHint, refreshDelay, shareLabel, textBytes, validateDraft, validatePath, visibilityLabel, withTheme,
+  formatSize, parseArtRoute, artRouteUrl, parseResizeMessage, publicLinksDisabledHint, refreshDelay, shareLabel, textBytes, validateDraft, validatePath, visibilityLabel, withTheme, isArtifactFence,
 } from '../web/src/artifactsCore.ts';
 
 // ---- Paths and extensions.
@@ -149,5 +149,9 @@ assert.equal(publicLinksDisabledHint('500 Internal Server Error'), null);
 assert.equal(withTheme('/artifact-frame/c.p/index.html', 'dark'), '/artifact-frame/c.p/index.html?theme=dark');
 assert.equal(withTheme('/f/i.html?a=1&theme=dark', 'light'), '/f/i.html?a=1&theme=light');
 assert.equal(withTheme('/f/i.html', 'whatever'), '/f/i.html?theme=light');
+
+assert.equal(isArtifactFence('language-artifact'), true);
+assert.equal(isArtifactFence('foo language-artifact bar'), true);
+for (const c of ['language-artifacts', 'language-artifact2', 'xlanguage-artifact', 'language-js', '', undefined]) assert.equal(isArtifactFence(c), false, String(c));
 
 console.log('Artifact checks passed: paths, sizes, limits, tree, PUT diff, resize messages, capability renewal, routes.');
