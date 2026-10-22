@@ -836,10 +836,28 @@ func TestPostgresRoleScopeMigrationAndGuard(t *testing.T) {
 	if err := owner.DB.QueryRow(`SELECT count(*) FROM schema_migrations WHERE component='role_scope' AND version=1`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("role_scope migration rows: %d %v", n, err)
 	}
+	var fn string
+	for _, st := range splitCorporateSQL(roleScopeSQL) {
+		if strings.Contains(st, "CREATE OR REPLACE FUNCTION public.corporate_role_scope") {
+			fn = st
+		}
+	}
+	if fn == "" || !strings.Contains(fn, "WHERE b.rank >= 1") {
+		t.Fatal("function statement not found in role_scope.sql")
+	}
+	const spaces = `(id, ''::text) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s)`
+	const fnName = `FUNCTION public.corporate_role_scope()`
 	for _, c := range []struct{ name, break_, fix string }{
-		{"PUBLIC may execute", `GRANT EXECUTE ON FUNCTION public.corporate_role_scope() TO PUBLIC`, `REVOKE ALL ON FUNCTION public.corporate_role_scope() FROM PUBLIC`},
-		{"runtime role may not execute", `REVOKE EXECUTE ON FUNCTION public.corporate_role_scope() FROM aiwiki_app`, `GRANT EXECUTE ON FUNCTION public.corporate_role_scope() TO aiwiki_app`},
-		{"spaces policy back to the per-row check", `ALTER POLICY corporate_spaces_read ON spaces USING (true)`, `ALTER POLICY corporate_spaces_read ON spaces USING ((id, ''::text) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s))`},
+		{"PUBLIC may execute", `GRANT EXECUTE ON ` + fnName + ` TO PUBLIC`, `REVOKE ALL ON ` + fnName + ` FROM PUBLIC`},
+		{"runtime role may not execute", `REVOKE EXECUTE ON ` + fnName + ` FROM aiwiki_app`, `GRANT EXECUTE ON ` + fnName + ` TO aiwiki_app`},
+		{"spaces policy back to true", `ALTER POLICY corporate_spaces_read ON spaces USING (true)`, `ALTER POLICY corporate_spaces_read ON spaces USING (` + spaces + `)`},
+		{"true OR scope", `ALTER POLICY corporate_spaces_read ON spaces USING (true OR ` + spaces + `)`, `ALTER POLICY corporate_spaces_read ON spaces USING (` + spaces + `)`},
+		{"SECURITY INVOKER", `ALTER ` + fnName + ` SECURITY INVOKER`, `ALTER ` + fnName + ` SECURITY DEFINER`},
+		{"search_path dropped", `ALTER ` + fnName + ` RESET search_path`, `ALTER ` + fnName + ` SET search_path = pg_catalog, public, pg_temp`},
+		{"restrictive swap", `DROP POLICY corporate_spaces_read ON spaces; CREATE POLICY corporate_spaces_read ON spaces AS RESTRICTIVE FOR SELECT USING (` + spaces + `)`,
+			`DROP POLICY corporate_spaces_read ON spaces; CREATE POLICY corporate_spaces_read ON spaces FOR SELECT USING (` + spaces + `)`},
+		{"extra permissive SELECT policy", `CREATE POLICY zz_extra ON articles FOR SELECT USING (true)`, `DROP POLICY zz_extra ON articles`},
+		{"altered function body", strings.Replace(fn, "WHERE b.rank >= 1", "WHERE b.rank >= 0", 1), fn},
 	} {
 		if _, err := owner.DB.Exec(c.break_); err != nil {
 			t.Fatalf("%s: %v", c.name, err)
@@ -848,11 +866,11 @@ func TestPostgresRoleScopeMigrationAndGuard(t *testing.T) {
 		if _, ferr := owner.DB.Exec(c.fix); ferr != nil {
 			t.Fatalf("%s: restore: %v", c.name, ferr)
 		}
-		if err == nil {
-			t.Fatalf("%s: guard did not notice", c.name)
+		if err == nil || err != errRoleScope {
+			t.Fatalf("%s: guard returned %v, want the role scope error", c.name, err)
 		}
-	}
-	if err := root.DB.validateRuntimeSchema(); err != nil {
-		t.Fatalf("guard after restoring: %v", err)
+		if err := root.DB.validateRuntimeSchema(); err != nil {
+			t.Fatalf("%s: guard after restore: %v", c.name, err)
+		}
 	}
 }

@@ -1,3 +1,6 @@
+-- DROP/CREATE POLICY below take ACCESS EXCLUSIVE on 8 tables; the owner session default wait is 5 s.
+SET LOCAL lock_timeout = '60s';
+
 -- Read permission as a set: corporate_role_scope() returns every (space, project)
 -- the current user may read, with the effective role rank, computed once per
 -- statement in one pass over memberships, teams and the project tree. Policies
@@ -69,46 +72,46 @@ BEGIN
 END
 $fn$;
 
-DROP POLICY IF EXISTS corporate_articles_read ON articles;
-CREATE POLICY corporate_articles_read ON articles FOR SELECT USING (
+DROP POLICY IF EXISTS corporate_articles_read ON public.articles;
+CREATE POLICY corporate_articles_read ON public.articles FOR SELECT USING (
   (space_id, project_id) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s));
 
 -- The explicit check inside EXISTS stays: other permissive SELECT policies on articles
 -- (move and probe modes) must not widen what revisions show.
-DROP POLICY IF EXISTS corporate_revisions_read ON revisions;
-CREATE POLICY corporate_revisions_read ON revisions FOR SELECT USING (
+DROP POLICY IF EXISTS corporate_revisions_read ON public.revisions;
+CREATE POLICY corporate_revisions_read ON public.revisions FOR SELECT USING (
   EXISTS (SELECT 1 FROM public.articles current_article
     WHERE current_article.id = revisions.article_id
       AND (current_article.space_id, current_article.project_id) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s))
   AND (revisions.space_id, revisions.project_id) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s));
 
-DROP POLICY IF EXISTS corporate_fts_read ON article_fts;
-CREATE POLICY corporate_fts_read ON article_fts FOR SELECT USING (
+DROP POLICY IF EXISTS corporate_fts_read ON public.article_fts;
+CREATE POLICY corporate_fts_read ON public.article_fts FOR SELECT USING (
   EXISTS (SELECT 1 FROM public.articles a
     WHERE a.id = article_fts.article_id AND (a.space_id, a.project_id) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s)));
 
-DROP POLICY IF EXISTS corporate_attachments_read ON attachments;
-CREATE POLICY corporate_attachments_read ON attachments FOR SELECT USING (
+DROP POLICY IF EXISTS corporate_attachments_read ON public.attachments;
+CREATE POLICY corporate_attachments_read ON public.attachments FOR SELECT USING (
   EXISTS (SELECT 1 FROM public.articles a
     WHERE a.id = attachments.article_id AND (a.space_id, a.project_id) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s)));
 
-DROP POLICY IF EXISTS corporate_comments_read ON comments;
-CREATE POLICY corporate_comments_read ON comments FOR SELECT USING (
+DROP POLICY IF EXISTS corporate_comments_read ON public.comments;
+CREATE POLICY corporate_comments_read ON public.comments FOR SELECT USING (
   EXISTS (SELECT 1 FROM public.articles a
     WHERE a.id = comments.article_id AND (a.space_id, a.project_id) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s)));
 
-DROP POLICY IF EXISTS corporate_favorites_read ON favorites;
-CREATE POLICY corporate_favorites_read ON favorites FOR SELECT USING (
+DROP POLICY IF EXISTS corporate_favorites_read ON public.favorites;
+CREATE POLICY corporate_favorites_read ON public.favorites FOR SELECT USING (
   user_id = current_setting('app.user_id', true)
   AND EXISTS (SELECT 1 FROM public.articles a
     WHERE a.id = favorites.article_id AND (a.space_id, a.project_id) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s)));
 
-DROP POLICY IF EXISTS mcp_scope_projects_read ON projects;
-CREATE POLICY mcp_scope_projects_read ON projects FOR SELECT USING (
+DROP POLICY IF EXISTS mcp_scope_projects_read ON public.projects;
+CREATE POLICY mcp_scope_projects_read ON public.projects FOR SELECT USING (
   (space_id, id) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s));
 
-DROP POLICY IF EXISTS corporate_spaces_read ON spaces;
-CREATE POLICY corporate_spaces_read ON spaces FOR SELECT USING (
+DROP POLICY IF EXISTS corporate_spaces_read ON public.spaces;
+CREATE POLICY corporate_spaces_read ON public.spaces FOR SELECT USING (
   (id, ''::text) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s));
 
 -- New functions are executable by PUBLIC by default; the runtime role gets EXECUTE
