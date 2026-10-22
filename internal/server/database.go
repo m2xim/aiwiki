@@ -460,3 +460,12 @@ func (d *database) resumeAfterTransfer(ctx context.Context) (*database, func(), 
 	}
 	return d, func() {}, nil
 }
+
+// revisionSpaceSQL is the space of the article snapshot stored in a revisions row
+// (alias): a real indexed column on PostgreSQL, the snapshot JSON on SQLite.
+func (d *database) revisionSpaceSQL(alias string) string {
+	if d.pg {
+		return sqlIdent(alias) + ".space_id"
+	}
+	return d.jsonFieldSQL(alias+".snapshot", "space_id")
+}

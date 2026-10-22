@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -48,14 +49,27 @@ func (s *Server) spaceAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	author := r.URL.Query().Get("author")
 	hasAuthor := r.URL.Query().Has("author")
+	// Candidates: the newest events of the space itself plus the newest moves out of it
+	// (previous revision in the space, this one not). Each branch is capped at
+	// limit+offset, enough for any page of the union, and uses the per-space index
+	// instead of reading every revision.
+	// int64 and clamped so 32-bit builds cannot overflow; a huge offset still returns [].
+	window := int64(limit) + int64(min(offset, math.MaxInt32))
+	cur, prev, next := s.DB.revisionSpaceSQL("r1"), s.DB.revisionSpaceSQL("p1"), s.DB.revisionSpaceSQL("n")
 	rows, err := s.DB.Query(`
+		WITH cand AS (
+		  SELECT id FROM (SELECT id FROM revisions r1 WHERE `+cur+`=? AND (?=0 OR r1.author=?) ORDER BY id DESC LIMIT ?) a
+		  UNION
+		  SELECT id FROM (SELECT n.id FROM revisions p1
+		    JOIN revisions n ON n.article_id=p1.article_id AND n.revision=p1.revision+1
+		    WHERE `+prev+`=? AND (`+next+` IS NULL OR `+next+`<>?) AND (?=0 OR n.author=?)
+		    ORDER BY n.id DESC LIMIT ?) b)
 		SELECT r.id,r.article_id,r.revision,r.author,r.message,r.created_at,r.snapshot,
 		       p.snapshot
-		FROM revisions r
+		FROM cand JOIN revisions r ON r.id=cand.id
 		LEFT JOIN revisions p ON p.article_id=r.article_id AND p.revision=r.revision-1
-		WHERE (`+s.DB.jsonFieldSQL("r.snapshot", "space_id")+`=? OR `+s.DB.jsonFieldSQL("p.snapshot", "space_id")+`=?)
-		  AND (?=0 OR r.author=?)
-		ORDER BY r.id DESC LIMIT ? OFFSET ?`, spaceID, spaceID, boolInt(hasAuthor), author, limit, offset)
+		ORDER BY r.id DESC LIMIT ? OFFSET ?`,
+		spaceID, boolInt(hasAuthor), author, window, spaceID, spaceID, boolInt(hasAuthor), author, window, limit, offset)
 	if err != nil {
 		apiErr(w, http.StatusInternalServerError, "database error")
 		return
