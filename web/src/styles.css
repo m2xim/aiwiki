@@ -421,3 +421,8 @@ html[data-theme="dark"] .diff-row code ins{background:#2b5a3d;color:#d3f5de}
   html{scroll-behavior:auto!important}
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
 }
+
+/* Native controls follow the app theme, not the OS scheme (color-scheme is set on :root / html[data-theme]). */
+.space-form input{background:#fff;color:var(--ink)}
+.space-form input::placeholder{color:var(--ph,#8b899d)}
+input[type="checkbox"],input[type="radio"]{accent-color:var(--purple)}

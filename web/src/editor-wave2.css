@@ -42,13 +42,3 @@ html[data-theme="dark"]{--w2-warn-bg:#3a3020;--w2-warn-line:#5e4d2a;--w2-warn-in
 
 /* editor / preview layouts */
 .editor-split-pane{min-width:0}
-.button.split-toggle{display:none}
-@media(min-width:1300px){
-  .button.split-toggle{display:inline-flex}
-  .editor-split.is-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:stretch}
-  .editor-split-preview{position:relative;min-width:0;min-height:360px}
-  .editor-split-preview .preview-box{position:absolute;inset:0;min-height:0;overflow:auto;overflow-wrap:anywhere}
-  /* Give the two columns the room of the right-hand sidebar. */
-  .workspace:has(.editor-page.is-split) .right-sidebar{display:none}
-  .workspace:has(.editor-page.is-split) .reading-area{grid-column:2 / -1}
-}
