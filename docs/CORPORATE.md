@@ -36,6 +36,8 @@ Every authenticated request introspects the access token; outages deny access. L
 
 ## Content rights
 
+Personal spaces are created explicitly by an admitted user; first sign-in creates or synchronizes the user record, without automatically provisioning a space. The user administration page lists a user's effective access only in spaces and projects that the viewing administrator manages. Administration does not grant visibility into another user's private spaces.
+
 Optional persistent MCP credentials use a separate current-admission checker and
 can survive browser logout/restarts. Configuration, exact project scopes, service
 accounts and revocation boundaries: [MCP-PERSISTENT-ACCESS.md](MCP-PERSISTENT-ACCESS.md).

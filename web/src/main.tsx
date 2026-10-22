@@ -686,13 +686,18 @@ function AuthGate() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [error, setError] = useState('');
   const [logoutError, setLogoutError] = useState('');
+  const [signedOut, setSignedOut] = useState(new URLSearchParams(location.search).get('signed_out') === '1');
+  const loggingOut = useRef(false);
   const [expired, setExpired] = useState(false);
   const [loading, setLoading] = useState(true);
   const loadSession = async () => {
     setLoading(true); setError('');
     try {
       const response = await fetch('/api/me', { credentials: 'same-origin' });
-      if (response.status === 401) { location.assign('/auth/login'); return; }
+      if (response.status === 401) {
+        if (new URLSearchParams(location.search).get('signed_out') === '1') { setSignedOut(true); return; }
+        location.assign('/auth/login'); return;
+      }
       if (!response.ok) throw new Error(`Не удалось проверить вход (${response.status}).`);
       const value = await response.json() as AuthSession;
       if (value.mode !== 'trusted' && value.mode !== 'corporate') throw new Error('Сервер вернул неизвестный режим входа.');
@@ -709,13 +714,20 @@ function AuthGate() {
     return () => setAuthExpiredHandler(null);
   }, []);
   const logout = async () => {
+    if (loggingOut.current) return;
+    loggingOut.current = true;
+    try {
     if (session?.mode === 'corporate') {
       setLogoutError('');
       try { await client.logout(); } catch (e) { setLogoutError((e as Error).message || 'Сервер не подтвердил выход. Повторите попытку.'); return; }
       clearCorporateDrafts(session.user.id);
     }
-    setCsrfToken(''); setCorporateSession(false); location.reload();
+    setCsrfToken(''); setCorporateSession(false); setDraftIdentity('', false);
+    setSession(null); setExpired(false); setSignedOut(true);
+    history.replaceState(null, '', '/?signed_out=1');
+    } finally { loggingOut.current = false; }
   };
+  if (signedOut && !session && !loading) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>Вы вышли из AI Wiki</h1><p>Сеанс завершён. Для продолжения войдите снова.</p><button className="button primary" onClick={() => location.assign('/auth/login')}>Войти</button><button className="button ghost" onClick={() => location.assign('/auth/login?reauth=1')}>Войти другим пользователем</button></div></main>;
   if (expired) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>Сессия завершилась</h1><p>Черновики этой вкладки сохранены под вашей учётной записью.</p><button className="button primary" onClick={() => location.assign('/auth/login')}>Войти снова</button></div></main>;
   if (!session) return <main className="auth-gate" aria-live="polite"><div><BookOpen size={24}/><h1>{loading ? 'Проверяем вход…' : 'Нет доступа к базе знаний'}</h1>{error && <p role="alert">{error}</p>}{!loading && <button className="button primary" onClick={() => void loadSession()}>Повторить</button>}</div></main>;
   return <App session={session} logoutError={logoutError} onLogout={() => void logout()}/>;
