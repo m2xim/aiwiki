@@ -5,7 +5,43 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
+import { Bold, Code, FileCode, Heading1, Heading2, Heading3, Italic, Link, List, ListChecks, ListOrdered, Minus, Quote, Strikethrough, Table } from 'lucide-react';
+import { codeBlock, insertRule, insertTable, makeLink, toggleLines, toggleWrap, type FormatEdit } from './markdownFormat';
 import './MarkdownEditor.css';
+
+type Formatter = (doc: string, from: number, to: number) => FormatEdit;
+const wrap = (mark: string): Formatter => (d, f, t) => toggleWrap(d, f, t, mark);
+const lines = (kind: Parameters<typeof toggleLines>[3]): Formatter => (d, f, t) => toggleLines(d, f, t, kind);
+const TOOLS: Array<{ label: string; icon: typeof Bold; run: Formatter; sep?: boolean }> = [
+  { label: 'Заголовок 1', icon: Heading1, run: lines('h1') },
+  { label: 'Заголовок 2', icon: Heading2, run: lines('h2') },
+  { label: 'Заголовок 3', icon: Heading3, run: lines('h3') },
+  { label: 'Жирный (Ctrl+B)', icon: Bold, run: wrap('**'), sep: true },
+  { label: 'Курсив (Ctrl+I)', icon: Italic, run: wrap('*') },
+  { label: 'Зачёркнутый', icon: Strikethrough, run: wrap('~~') },
+  { label: 'Код', icon: Code, run: wrap('`') },
+  { label: 'Ссылка (Ctrl+K)', icon: Link, run: makeLink },
+  { label: 'Маркированный список', icon: List, run: lines('ul'), sep: true },
+  { label: 'Нумерованный список', icon: ListOrdered, run: lines('ol') },
+  { label: 'Задача', icon: ListChecks, run: lines('task') },
+  { label: 'Цитата', icon: Quote, run: lines('quote') },
+  { label: 'Блок кода', icon: FileCode, run: codeBlock, sep: true },
+  { label: 'Таблица', icon: Table, run: insertTable },
+  { label: 'Разделитель', icon: Minus, run: insertRule },
+];
+
+/** Applies a pure formatter to the main selection as a single transaction (one undo step). */
+function applyFormat(view: EditorView, format: Formatter) {
+  const { from, to } = view.state.selection.main;
+  const edit = format(view.state.doc.toString(), from, to);
+  view.dispatch({
+    changes: { from: edit.from, to: edit.to, insert: edit.insert },
+    selection: { anchor: edit.anchor, head: edit.head },
+    scrollIntoView: true,
+    userEvent: 'input.format',
+  });
+  view.focus();
+}
 
 export type MarkdownEditorHandle = { insertText(value: string): void; wrapSelection(before: string, after: string): void };
 type Props = {
@@ -86,7 +122,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
       doc: value,
       extensions: [
         lineNumbers(), highlightActiveLineGutter(), EditorView.lineWrapping, markdown(), history(),
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        keymap.of([
+          { key: 'Mod-b', run: v => (applyFormat(v, wrap('**')), true) },
+          { key: 'Mod-i', run: v => (applyFormat(v, wrap('*')), true) },
+          { key: 'Mod-k', run: v => (applyFormat(v, makeLink), true) },
+          ...defaultKeymap, ...historyKeymap, indentWithTab]),
         compartment.of(themeExtension(theme)),
         editable.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
         EditorView.updateListener.of(update => {
@@ -139,5 +179,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
     if (view && compartment) view.dispatch({ effects: compartment.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]) });
   }, [readOnly]);
 
-  return <div className={`markdown-editor markdown-editor--${theme}${compact ? ' markdown-editor--compact' : ''}`} ref={hostRef} />;
+  return (
+    <div className={`markdown-editor markdown-editor--${theme}${compact ? ' markdown-editor--compact' : ''}`}>
+      <div className="markdown-toolbar" role="toolbar" aria-label="Форматирование Markdown">
+        {TOOLS.map(({ label, icon: Icon, run, sep }) => (
+          <button key={label} type="button" className={`markdown-tool${sep ? ' has-sep' : ''}`} title={label} aria-label={label} disabled={readOnly}
+            onMouseDown={e => e.preventDefault()} onClick={() => { const view = viewRef.current; if (view) applyFormat(view, run); }}><Icon size={15} aria-hidden="true" /></button>
+        ))}
+      </div>
+      <div className="markdown-editor-host" ref={hostRef} />
+    </div>
+  );
 });
