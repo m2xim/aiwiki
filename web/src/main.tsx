@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Archive, ArrowDownToLine, ArrowLeft, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleHelp, Clock3, Code2, FileImage, FolderInput, FolderPlus, FolderTree, History, ImagePlus, LayoutGrid, Link2, List, ListFilter, LogOut, MessageCircle, Moon, Pencil, Pin, Plus, Search, Settings2, ShieldCheck, Sparkles, Star, Sun, Tag, Trash2, Upload, UserRound, X } from 'lucide-react';
+import { Activity, Archive, Box, ArrowDownToLine, ArrowLeft, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleHelp, Clock3, Code2, FileImage, FolderInput, FolderPlus, FolderTree, History, ImagePlus, LayoutGrid, Link2, List, ListFilter, LogOut, MessageCircle, Moon, Pencil, Pin, Plus, Search, Settings2, ShieldCheck, Sparkles, Star, Sun, Tag, Trash2, Upload, UserRound, X } from 'lucide-react';
 import { Article, Attachment, AuthSession, Bootstrap, Favorite, Project, Revision, SearchHit, SearchResponse, Space, client, setAuthExpiredHandler, setCorporateSession, setCsrfToken } from './api';
 import { headings, Markdown, scrollToFirstHighlight, smoothBehavior } from './markdown';
 import { Toc } from './Toc';
@@ -20,6 +20,9 @@ import { EditorConflict } from './EditorConflict';
 import { clearCorporateDrafts, DraftFields, setDraftIdentity, StoredDraft, draftKey, formatDraftTime, loadDraft, loadParkedList, popParked, pushParked, removeDraft, sameFields, saveDraft } from './draftStore';
 import { AdminPanel, adminUrl, readAdminTab } from './AdminPanel';
 import { ArticleExportMenu } from './ArticleExportMenu';
+import { ArtifactsRoot, useArtifactCount } from './artifacts/ArtifactsRoot';
+import { ARTIFACT_NAVIGATE_EVENT } from './artifacts/ArtifactEmbed';
+import { artRouteUrl, parseArtRoute, type ArtRoute } from './artifactsCore';
 import { MoveDialog, MoveDone } from './MoveDialog';
 import { canEditRole, containerRole } from './moveCore';
 const ImportMarkdownDialog = lazy(() => import('./ImportMarkdown').then(m => ({ default: m.ImportMarkdownDialog })));
@@ -77,6 +80,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   const [searchHighlight, setSearchHighlight] = useState<{ id: string; terms: string[] }>({ id: '', terms: [] });
   const [revisions, setRevisions] = useState<Revision[]>([]); const [commentStats, setCommentStats] = useState({ open: 0, total: 0 }); const [attachments, setAttachments] = useState<Attachment[]>([]); const [links, setLinks] = useState<{ outgoing: Article[]; incoming: Article[] }>({ outgoing: [], incoming: [] }); const [pendingDelete, setPendingDelete] = useState<Attachment | null>(null); const [deletingAttachmentId, setDeletingAttachmentId] = useState(''); const [pendingDeleteArticle, setPendingDeleteArticle] = useState<Article | null>(null); const [deletingArticle, setDeletingArticle] = useState(false); const [undeletingArticle, setUndeletingArticle] = useState(false);
   const [historyView, setHistoryView] = useState(initialRoute.view === 'history' && Boolean(initialRoute.article)); const [historyArticleId, setHistoryArticleId] = useState(''); const [historyLoading, setHistoryLoading] = useState(false); const [historyError, setHistoryError] = useState(''); const [historyReload, setHistoryReload] = useState(0); const [restoring, setRestoring] = useState(false); const historyEntry = useRef(false);
+  const [artRoute, setArtRoute] = useState<ArtRoute | null>(() => initialRoute.article ? null : parseArtRoute(location.search)); const artDirtyRef = useRef(false); const [artReload, setArtReload] = useState(0);
   const [auditView, setAuditView] = useState(initialRoute.view === 'audit' && !initialRoute.article);
   const [spacesView, setSpacesView] = useState(initialRoute.view === 'spaces' && !initialRoute.article);
   const [spaceForm, setSpaceForm] = useState(false); const [spaceName, setSpaceName] = useState(''); const [spaceDescription, setSpaceDescription] = useState(''); const [notice, setNotice] = useState(''); const [pendingAnchor, setPendingAnchor] = useState('');
@@ -101,7 +105,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   // ---- Unsaved-changes guard.
   const isDirty = Boolean(editor && draft && baselineRef.current && !sameSnapshot(baselineRef.current, snapshotOf(draft, tagsText, propertiesText)));
   dirtyRef.current = isDirty;
-  const confirmLeave = useCallback(() => !dirtyRef.current || window.confirm(UNSAVED_MESSAGE), []);
+  const confirmLeave = useCallback(() => (!dirtyRef.current && !artDirtyRef.current) || window.confirm(UNSAVED_MESSAGE), []);
   useEffect(() => {
     if (!isDirty) return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -209,7 +213,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   useEffect(() => {
     if (booting || articleLoading || selected || !spaceId) return;
     const route = readRoute();
-    if (route.view === 'admin' || route.view === 'spaces' || route.article || route.space === spaceId) return;
+    if (route.view === 'admin' || route.view === 'spaces' || route.article || route.space === spaceId || parseArtRoute(location.search)) return;
     urlReplace(spaceUrl(spaceId, route.view === 'audit' ? 'audit' : ''));
   }, [booting, articleLoading, selected, spaceId, auditView]);
 
@@ -231,11 +235,11 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
     setEditor(false); setDraft(null); setPanel(null); setMobileNav(false); historyEntry.current = false;
     attachmentDeleteRequest.current++; setPendingDelete(null); setDeletingAttachmentId('');
     if (route.article) {
-      setAuditView(false); setSpacesView(false); setHistoryView(route.view === 'history');
+      setAuditView(false); setSpacesView(false); setArtRoute(null); setHistoryView(route.view === 'history');
       if (route.article === selectedRef.current?.id) { articleRequest.current++; setArticleLoading(false); setPendingAnchor(route.anchor); }
       else void openArticle(route.article, { anchor: route.anchor, mode: 'none', view: route.view === 'history' ? 'history' : '' });
     } else {
-      articleRequest.current++; setArticleLoading(false); setSelected(null); setHistoryView(false); setAuditView(route.view === 'audit'); setSpacesView(route.view === 'spaces'); setBooting(false);
+      articleRequest.current++; setArticleLoading(false); setSelected(null); setHistoryView(false); setAuditView(route.view === 'audit'); setSpacesView(route.view === 'spaces'); setArtRoute(parseArtRoute(location.search)); setBooting(false);
       if (route.space && route.space !== spaceIdRef.current) { resetFilters(); setSpaceId(route.space); }
       else if (!spaceIdRef.current && session.mode !== 'corporate') setSpaceId('general');
     }
@@ -346,8 +350,9 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   // document.title
   useEffect(() => {
     const spaceTitle = spaces.find(s => s.id === spaceId)?.name;
+    if (artRoute) return;
     document.title = adminOpen ? 'Команды и доступ — AI Wiki' : spacesView ? 'Все пространства — AI Wiki' : selected && !editor && !auditView ? `${selected.title || "Без названия"} — AI Wiki` : spaceTitle ? `${spaceTitle} — AI Wiki` : "AI Wiki";
-  }, [selected?.id, selected?.title, editor, auditView, spacesView, spaces, spaceId, adminOpen]);
+  }, [selected?.id, selected?.title, editor, auditView, spacesView, spaces, spaceId, adminOpen, artRoute]);
 
   // Hotkeys: «/» and Ctrl/Cmd+K focus the search; Escape closes the slide-out panels.
   useEffect(() => {
@@ -381,7 +386,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   };
   // Only what belongs to the current editing session is removed; an offered draft nobody has looked at yet stays in storage.
   const discardDraft = () => { latestDraftRef.current = null; if (!offerRef.current) removeDraft(draftKeyRef.current); };
-  const clearSelection = (updateURL = true) => { articleRequest.current++; attachmentDeleteRequest.current++; setArticleLoading(false); setPendingDelete(null); setDeletingAttachmentId(''); setSelected(null); leaveEditing(); setPanel(null); setHistoryView(false); setAuditView(false); setSpacesView(false); historyEntry.current = false; if (updateURL) urlReplace(spaceUrl(spaceIdRef.current)); };
+  const clearSelection = (updateURL = true) => { setArtRoute(null); articleRequest.current++; attachmentDeleteRequest.current++; setArticleLoading(false); setPendingDelete(null); setDeletingAttachmentId(''); setSelected(null); leaveEditing(); setPanel(null); setHistoryView(false); setAuditView(false); setSpacesView(false); historyEntry.current = false; if (updateURL) urlReplace(spaceUrl(spaceIdRef.current)); };
   const selectArticle = useCallback((id: string, anchor = '') => {
     if (!confirmLeave()) return;
     attachmentDeleteRequest.current++; setPendingDelete(null); setDeletingAttachmentId(''); setHistoryView(false); setAuditView(false); setSpacesView(false); historyEntry.current = false;
@@ -528,6 +533,26 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   };
   const openHistory = () => { if (!selected || editorOpenRef.current) return; setAuditView(false); historyEntry.current = true; urlPush(articleUrl(selected.id, { view: 'history' })); setHistoryView(true); setPanel(null); };
   const openAudit = () => { if (!spaceId) return; if (auditView) { setMobileNav(false); return; } if (!confirmLeave()) return; clearSelection(false); setAuditView(true); setMobileNav(false); urlPush(spaceUrl(spaceId, 'audit')); };
+  // ---- Artifacts (docs/ARTIFACTS.md): the views live in ./artifacts, the shell only routes and guards unsaved changes.
+  const artifactCount = useArtifactCount(spaceId, artReload);
+  const goArt = useCallback((route: ArtRoute, replace = false) => {
+    if (!replace && !confirmLeave()) return;
+    artDirtyRef.current = false;
+    if (!replace) clearSelection(false);
+    setArtRoute(route); setMobileNav(false);
+    if (replace) urlReplace(artRouteUrl(route)); else urlPush(artRouteUrl(route));
+  }, [confirmLeave, urlPush, urlReplace]);
+  const goArtRef = useRef(goArt); goArtRef.current = goArt;
+  const openArtifacts = () => { if (artRoute?.kind === 'list') { setMobileNav(false); return; } if (!spaceId) return; goArt({ kind: 'list', space: spaceId, q: '', project: '' }); };
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const url = (event as CustomEvent<{ url?: string }>).detail?.url; if (!url) return;
+      const route = parseArtRoute(new URL(url, location.origin).search);
+      if (route) goArtRef.current(route);
+    };
+    window.addEventListener(ARTIFACT_NAVIGATE_EVENT, onNavigate);
+    return () => window.removeEventListener(ARTIFACT_NAVIGATE_EVENT, onNavigate);
+  }, []);
   const openSpaces = () => { if (spacesView) { setMobileNav(false); return; } if (!confirmLeave()) return; clearSelection(false); setSpacesView(true); setMobileNav(false); urlPush('/?view=spaces'); };
   const startCreateSpace = () => { setSpaceForm(true); setMobileNav(true); };
   const openAuditHistory = (id: string) => { if (!confirmLeave()) return; setPanel(null); void openArticle(id, { mode: 'push', view: 'history', entry: true }); };
@@ -640,7 +665,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   return <div className="app-shell">
     <header className="topbar"><button className="mobile-menu icon-button" onClick={() => setMobileNav(!mobileNav)} aria-label="Меню" aria-expanded={mobileNav}><ListFilter size={19}/></button><a className="brand" href="/" onClick={e => { e.preventDefault(); goSpaceHome(spaceId); }}><span className="brand-mark"><BookOpen size={19}/></span><span>ai<span className="brand-accent">wiki</span></span></a><div className="topbar-divider"/><div className="crumbs"><span>{activeSpace?.name || 'Нет активного пространства'}</span></div><div className="top-actions">{session.mode === 'corporate' ? <span className="author-chip" title="Автор: изменения подписываются вашей учётной записью"><UserRound size={14} aria-hidden="true"/><span className="visually-hidden">Автор</span><strong className="author-name">{session.user.name}</strong></span> : <label className="author-chip" title="Автор изменений"><UserRound size={14} aria-hidden="true"/><input value={author} onChange={e => { setAuthor(e.target.value); storeAuthor(e.target.value); }} placeholder="Ваше имя" aria-label="Имя автора"/></label>}{session.mode === 'corporate' && <><button className="icon-button" onClick={openAdmin} title="Команды и доступ" aria-label="Команды и доступ"><ShieldCheck size={18}/></button><button className="button ghost small" onClick={onLogout}><LogOut size={14}/>Выйти</button></>}<button className="button ghost small" onClick={exportWiki} title="Экспорт JSON"><ArrowDownToLine size={16}/>Экспорт</button><button className="icon-button theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="icon-button" onClick={() => setPanel(panel === 'ai' ? null : 'ai')} title="Подключить ИИ" aria-label="Подключить ИИ"><Bot size={19}/></button></div></header>
     {logoutError && <div className="error-alert logout-error" role="alert">Не удалось завершить сеанс: {logoutError}</div>}
-    <div ref={sidebar.workspaceRef} className={`workspace ${historyView ? 'history-workspace' : ''} ${auditView || spacesView ? 'audit-workspace' : ''} ${sidebar.width !== null ? 'left-custom' : ''}`} style={sidebar.width !== null ? { '--left-w': `${sidebar.width}px` } as React.CSSProperties : undefined}>
+    <div ref={sidebar.workspaceRef} className={`workspace ${historyView ? 'history-workspace' : ''} ${auditView || spacesView || artRoute ? 'audit-workspace' : ''} ${sidebar.width !== null ? 'left-custom' : ''}`} style={sidebar.width !== null ? { '--left-w': `${sidebar.width}px` } as React.CSSProperties : undefined}>
       {mobileNav && <div className="drawer-backdrop for-nav" onClick={() => setMobileNav(false)} aria-hidden="true"/>}
       {panel && <div className="drawer-backdrop for-panel" onClick={() => setPanel(null)} aria-hidden="true"/>}
       {sidebar.handleLeft !== null && <div className={`sidebar-resizer ${sidebar.dragging ? 'dragging' : ''}`} role="separator" aria-orientation="vertical" aria-label="Ширина левой панели" aria-valuemin={SIDEBAR_MIN} aria-valuemax={SIDEBAR_MAX} aria-valuenow={sidebar.shownWidth} tabIndex={0} title="Потяните, чтобы изменить ширину. Двойной щелчок — сбросить" style={{ left: sidebar.handleLeft - 3 }} onPointerDown={sidebar.onPointerDown} onKeyDown={sidebar.onKeyDown} onDoubleClick={sidebar.reset}/>}
@@ -650,6 +675,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
         <button className="spaces-manage-button" onClick={() => { setSpaceManager(true); setMobileNav(false); }}><Settings2 size={15}/>Управление пространствами</button>
         <button className={`spaces-manage-button audit-nav-button ${spacesView ? 'active' : ''}`} onClick={openSpaces}><LayoutGrid size={15}/>Все пространства</button>
         {spaceId && <button className={`spaces-manage-button audit-nav-button ${auditView ? 'active' : ''}`} onClick={openAudit}><History size={15}/>Журнал изменений</button>}
+        {spaceId && <button className={`spaces-manage-button audit-nav-button ${artRoute ? 'active' : ''}`} onClick={openArtifacts}><Box size={15}/>Артефакты{artifactCount !== null && <span className="art-count" aria-label={`Артефактов: ${artifactCount}`}>{artifactCount}</span>}</button>}
         {spaceId && <button className="spaces-manage-button" onClick={() => { setImportOpen(true); setMobileNav(false); }}><Upload size={15}/>Импорт Markdown</button>}
         {spaceForm && <form className="space-form" onSubmit={e => void addSpace(e)}><input autoFocus value={spaceName} onChange={e => setSpaceName(e.target.value)} placeholder="Название"/><input value={spaceDescription} onChange={e => setSpaceDescription(e.target.value)} placeholder="Описание (необязательно)"/><div><button className="button primary small">Создать</button><button type="button" className="button ghost small" onClick={() => setSpaceForm(false)}>Отмена</button></div></form>}
         <button className="create-button" onClick={() => beginCreate()}><Plus size={16}/>Новая статья</button>
@@ -664,7 +690,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
       </aside>
       <main className="reading-area">
         {error && <div className="alert error-alert"><CircleHelp size={17}/><span>{error}</span><button onClick={() => setError('')} aria-label="Закрыть"><X size={16}/></button></div>}{notice && <div className="alert success-alert"><Check size={16}/>{notice}<button onClick={() => setNotice('')} aria-label="Закрыть"><X size={15}/></button></div>}
-        {spacesView ? <SpacesDirectory trusted={session.mode === 'trusted'} currentSpaceId={spaceId} onOpenSpace={changeSpace} onCreate={startCreateSpace}/> : auditView && spaceId ? <AuditPage key={spaceId} spaceId={spaceId} spaceName={activeSpace?.name || spaceId} onOpenArticle={id => selectArticle(id)} onOpenHistory={id => openAuditHistory(id)}/> : historyView && selected ? <HistoryPage article={selected} revisions={historyArticleId === selected.id ? revisions : []} loading={historyArticleId !== selected.id || historyLoading} error={historyArticleId === selected.id ? historyError : ''} restoring={restoring} deleted={Boolean(selected.deleted_at)} onRetry={() => setHistoryReload(value => value + 1)} onBack={closeHistory} onRestore={revision => void restore(revision)}/> : editor && draft ? <section className="editor-page"><div className="editor-top"><div><div className="eyebrow">{draft.id ? 'РЕДАКТИРОВАНИЕ' : 'НОВЫЙ МАТЕРИАЛ'}{isDirty && <span className="dirty-mark"> · есть несохранённые изменения</span>}</div><h1>{draft.id ? 'Изменить статью' : 'Создать статью'}</h1></div><button className="icon-button" onClick={closeEditor} title="Закрыть (Esc)"><X size={19}/></button></div>
+        {artRoute ? <ArtifactsRoot route={artRoute} spaceId={spaceId} spaces={spaces} theme={theme} go={goArt} onDirty={dirty => { artDirtyRef.current = dirty; }} onChanged={() => setArtReload(value => value + 1)} onSpace={id => { if (id !== spaceIdRef.current) { resetFilters(); setSpaceId(id); } }}/> : spacesView ? <SpacesDirectory trusted={session.mode === 'trusted'} currentSpaceId={spaceId} onOpenSpace={changeSpace} onCreate={startCreateSpace}/> : auditView && spaceId ? <AuditPage key={spaceId} spaceId={spaceId} spaceName={activeSpace?.name || spaceId} onOpenArticle={id => selectArticle(id)} onOpenHistory={id => openAuditHistory(id)}/> : historyView && selected ? <HistoryPage article={selected} revisions={historyArticleId === selected.id ? revisions : []} loading={historyArticleId !== selected.id || historyLoading} error={historyArticleId === selected.id ? historyError : ''} restoring={restoring} deleted={Boolean(selected.deleted_at)} onRetry={() => setHistoryReload(value => value + 1)} onBack={closeHistory} onRestore={revision => void restore(revision)}/> : editor && draft ? <section className="editor-page"><div className="editor-top"><div><div className="eyebrow">{draft.id ? 'РЕДАКТИРОВАНИЕ' : 'НОВЫЙ МАТЕРИАЛ'}{isDirty && <span className="dirty-mark"> · есть несохранённые изменения</span>}</div><h1>{draft.id ? 'Изменить статью' : 'Создать статью'}</h1></div><button className="icon-button" onClick={closeEditor} title="Закрыть (Esc)"><X size={19}/></button></div>
           <div ref={conflictRef}>{conflict && mineFields && <EditorConflict current={conflict} mine={mineFields} busy={saving} onTakeTheirs={takeTheirs} onOverwrite={overwriteConflict} onDismiss={() => setConflict(null)}/>}</div>
           {offer && <div className="draft-banner info" role="status"><div>Найден несохранённый черновик от {formatDraftTime(offer.savedAt)}.{draft.id && offer.base_revision < draft.revision && <> Статья с тех пор менялась (черновик начат с версии {offer.base_revision}, сейчас {draft.revision}): при сохранении появится окно сравнения.</>}</div><div className="draft-banner-actions"><button type="button" className="button primary small" onClick={restoreOffer}>Восстановить</button><button type="button" className="button ghost small" onClick={deleteOffer}>Удалить</button></div></div>}
           {parked && <div className="draft-banner" role="status"><div>Ваш черновик от {formatDraftTime(parked.savedAt)} отложен (основан на версии {parked.base_revision}).{parkedList.length > 1 && <> Ещё отложенных: {parkedList.length - 1}.</>}</div><div className="draft-banner-actions"><button type="button" className="button small" onClick={restoreParked}>Вернуть отложенный</button><button type="button" className="button ghost small" onClick={deleteParked}>Удалить</button></div></div>}
