@@ -93,12 +93,12 @@ jobs:
             --features=resource-indicators --hostname=http://127.0.0.1:58080
           for i in $(seq 1 45); do
             if curl -fsS -o /dev/null --max-time 2 "$AIWIKI_TEST_KEYCLOAK_ISSUER/.well-known/openid-configuration"; then
-              echo "Keycloak ready after about $((i * 2)) seconds"
+              echo "Keycloak ready on attempt $i"
               exit 0
             fi
             sleep 2
           done
-          echo "Keycloak did not become ready within about 90 seconds" >&2
+          echo "Keycloak did not become ready within 45 attempts (at most about 180 seconds)" >&2
           docker logs keycloak-oauth >&2 || true
           exit 1
       - name: Corporate PostgreSQL, signed OIDC, object storage and Keycloak OAuth checks

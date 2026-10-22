@@ -54,7 +54,7 @@ Add the optional client scope `aiwiki:mcp`, include it in access tokens, and att
 
 With the Resource Indicators feature on, Keycloak's [MCP guide](https://www.keycloak.org/securing-apps/mcp-authz-server) `resource_url` attribute plus the included client audience bind the access token to the resource URI. The guide also marks Resource Indicators and Client ID Metadata Documents (CIMD) experimental. Confirm the client sends the `resource` parameter and test the realm's resulting access-token and introspection claims. Avoid anonymous DCR and broad callback or origin allowlists.
 
-**Production consent.** Set `consentRequired` to `true` on MCP user clients in production. The test fixture sets it to `false` only so the login can be scripted.
+**Production consent.** Set `consentRequired` to `true` on MCP user clients in production. Set `display.on.consent.screen` to `true` on the `aiwiki:mcp` scope and provide clear consent text describing access, including writes under the user's current content rights. The test fixture disables consent only so login can be scripted.
 
 Apply these settings in a separate test realm before configuring the production identity provider.
 
@@ -62,7 +62,7 @@ Apply these settings in a separate test realm before configuring the production 
 
 | Area | Status as of 2026-10-22 |
 | --- | --- |
-| Actual authorization server, automated | The `TestMCPOAuth` integration test runs against a disposable Keycloak 26.8.0 (`--features=resource-indicators`) imported from `internal/server/testdata/keycloak-oauth-realm.json` (CI `corporate` job): discovery, PKCE S256 authorization-code login, resource-bound token, audience/scope/introspection acceptance, browser credentials rejected for the MCP token, and negative PKCE, resource and code-replay cases. Whether a given CI run passed is recorded by that run, not by this document. |
+| Actual authorization server, automated | The `TestMCPOAuthKeycloakIntegration` test runs against a disposable Keycloak 26.8.0 (`--features=resource-indicators`) imported from `internal/server/testdata/keycloak-oauth-realm.json` (CI `corporate` job): discovery, PKCE S256 authorization-code login, resource-bound token, audience/scope/introspection acceptance, browser credentials rejected for the MCP token, and negative PKCE, resource and code-replay cases. Whether a given CI run passed is recorded by that run, not by this document. |
 | Real Claude Code login | **Not executed.** |
 | Real Codex CLI login | **Not executed.** |
 | Real AD federation / S3 pilot | **Not done.** |
@@ -85,6 +85,7 @@ For Claude Code the callback is `http://localhost:58082/callback`, but this is v
 
 - [ ] Set the canonical public URL and confirm it matches the configured OIDC redirect origin and ends in `/mcp`.
 - [ ] Create the separate MCP resource client and set the introspection environment variables as a pair.
+- [ ] If using `-allowed-origin`, keep it equal to the public resource/callback origin; a different override causes metadata and MCP requests to be rejected with 403.
 - [ ] Configure the proxy to preserve the expected public `Host`; do not rely on `Forwarded` or `X-Forwarded-Host` to set the resource identity.
 - [ ] With the feature enabled, confirm the path-based RFC 9728 metadata (and the root alias) advertise the configured resource, existing OIDC issuer and only `aiwiki:mcp`. With it disabled, confirm the metadata endpoints return 404.
 - [ ] In the real Keycloak realm, confirm PKCE S256, exact callback allowlists, issuer response identification, optional `aiwiki:mcp` scope, resource audience in access and introspection responses, consent required, and normal realm access claims.
