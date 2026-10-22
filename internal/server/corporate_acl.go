@@ -763,6 +763,10 @@ func (s *Server) corporateSpaceCreate(w http.ResponseWriter, r *http.Request) {
 	if in.Personal != nil {
 		personal = *in.Personal
 	}
+	if s.personal {
+		// One owner: spaces stay personal=0, as in the imported data (docs/PERSONAL.md).
+		personal = false
+	}
 	if !personal && !s.principal.Admin {
 		apiErr(w, 403, "forbidden")
 		return

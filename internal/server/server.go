@@ -23,8 +23,11 @@ type Server struct {
 	DataDir, WebDir string
 	allowedOrigin   string
 	auth            *AuthService
-	principal       *Principal
-	art             *artifactState
+	// personal is set by OpenPersonal: one built-in owner, no identity provider.
+	personal     bool
+	personalName string
+	principal    *Principal
+	art          *artifactState
 	// spaceQuotaDefault is AIWIKI_SPACE_QUOTA_BYTES: the storage limit of a space
 	// without an override (0 = unlimited). Corporate mode only.
 	spaceQuotaDefault int64
@@ -118,7 +121,9 @@ func (s *Server) Close() error {
 // Handler returns the routes behind the Host and Origin checks of corsLocal.
 func (s *Server) Handler() http.Handler {
 	var app http.Handler
-	if s.auth != nil {
+	if s.personal {
+		app = corsLocal(s.personalHandler(), s.allowedOrigin)
+	} else if s.auth != nil {
 		app = corsLocal(s.corporateHandler(), s.allowedOrigin)
 	} else {
 		app = corsLocal(s.routes(), s.allowedOrigin)

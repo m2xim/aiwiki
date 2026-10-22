@@ -93,3 +93,48 @@ mode. The database and object data live in directories next to the compose file;
 only the wiki port is published. Roles and passwords come from an `.env` file
 that is not part of the repository. The existing trusted-mode data directory is
 left untouched, so switching back is starting the old container again.
+
+## Run
+
+```sh
+cp .env.personal.example .env.personal      # fill in every value; the file is git-ignored
+docker compose --env-file .env.personal -f compose.personal.yaml up -d --build
+# open the address from AIWIKI_ALLOWED_ORIGIN, e.g. http://127.0.0.1:8090
+```
+
+* Services: `db` (PostgreSQL 16.15, roles `aiwiki_owner` and `aiwiki_app` created
+  once by `scripts/personal-pg-init.sh`), `s3` (SeaweedFS 4.48, private bucket
+  `wiki` created by `s3-init`), `wiki` (this repository's Dockerfile, personal
+  mode). `edge` only holds the network namespace and the single published port.
+* Data stays in `./personal-data/pg` and `./personal-data/s3`; back them up as
+  described in BACKUP.md (a database dump plus the bucket).
+* To serve a home network or VPN set both `AIWIKI_BIND_ADDR` (this machine's
+  address) and `AIWIKI_ALLOWED_ORIGIN` (the address browsers use). There is no
+  login: do not expose the port outside a trusted network.
+* The wiki accepts a plain-HTTP S3 endpoint only on loopback, therefore `wiki`,
+  `s3` and `s3-init` share one network namespace and S3 is `127.0.0.1:8333`
+  there; it is not reachable from the host or the network.
+* Import of an existing trusted-mode installation (the superuser password is
+  used by this one-off service only):
+  `docker compose --env-file .env.personal -f compose.personal.yaml --profile import run --rm import`
+  with `AIWIKI_IMPORT_SOURCE` pointing at the old data directory (read-only).
+* Compose files were checked on Linux-style bind mounts. On a Windows host with
+  Podman a bind-mounted PostgreSQL directory fails with "could not change
+  permissions"; use a named volume for `db` there.
+* Without Docker: `AIWIKI_MODE=personal` with the same `AIWIKI_DATABASE_URL`,
+  `AIWIKI_MIGRATION_DATABASE_URL`, `AIWIKI_DATABASE_ROLE` and `AIWIKI_S3_*`
+  variables as corporate mode, and the usual `-allowed-origin` flag.
+
+## How the owner rows are written
+
+The server does it at every start through the runtime role, in one transaction on
+a connection scoped to `owner`, with no new privilege and no new migration:
+`users` and `memberships` have row-level security enabled without FORCE and a
+single policy ("no persistent MCP scope"), the runtime role already holds
+INSERT/UPDATE on them; `spaces` (FORCE RLS) is updated by the ordinary
+manager-or-better update policy, which holds because the owner membership was
+inserted just before in the same transaction. Spaces are enumerated from
+`corporate_space_state`, which a trigger keeps equal to `spaces`. A pre-existing
+`owner` user with another issuer/subject, `admin=0` or `disabled=1` stops the
+start instead of being taken over. An audit row `personal.owner.ensure` is
+written only when something changed.

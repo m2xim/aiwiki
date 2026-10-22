@@ -11,7 +11,7 @@ export type UserAccessSnapshot = { user_id: string; resources: UserAccessResourc
 export type AccessGrant = { subject_type: 'user' | 'team'; subject_id: string; role: 'owner' | 'manager' | 'editor' | 'commenter' | 'reader' };
 export type CatalogSpace = Space & { projects: Project[]; article_count: number };
 export type AuthUser = { id: string; name: string; admin: boolean };
-export type AuthSession = { mode: 'trusted' } | { mode: 'corporate'; user: AuthUser; csrf_token: string };
+export type AuthSession = { mode: 'trusted' } | { mode: 'corporate'; user: AuthUser; csrf_token: string } | { mode: 'personal'; user: AuthUser };
 export type Article = {
   id: string; space_id: string; project_id?: string; parent_id: string; title: string; summary: string; body: string;
   kind: string; status: string; pinned: boolean; tags: string[]; properties: Record<string, string>;

@@ -151,7 +151,7 @@ func (s *Server) newReadiness() *readiness {
 		pool := s.DB.pool
 		checks["database"] = func(ctx context.Context) error { return pool.PingContext(ctx) }
 	}
-	if s.auth != nil && s.objects != nil {
+	if (s.auth != nil || s.personal) && s.objects != nil {
 		store := s.objects
 		checks["storage"] = func(ctx context.Context) error {
 			_, err := store.Stat(ctx, readyProbeKey)
