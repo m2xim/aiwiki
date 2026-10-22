@@ -184,7 +184,15 @@ func (s *Server) parentOK(q interface{ QueryRow(string, ...any) *sql.Row }, a Ar
 	if a.ParentID == "" {
 		return nil
 	}
-	p, e := s.articleByID(q, a.ParentID)
+	var p Article
+	var e error
+	if _, isTx := q.(*transaction); isTx && s.DB.pg {
+		// A share lock conflicts with the FOR NO KEY UPDATE a move takes on its
+		// subtree, so a child cannot be attached to a parent that is being moved.
+		p, e = scanArticle(q.QueryRow("SELECT "+articleColumns+" FROM articles WHERE id=? FOR SHARE", a.ParentID))
+	} else {
+		p, e = s.articleByID(q, a.ParentID)
+	}
 	if e != nil {
 		return fmt.Errorf("parent not found")
 	}
@@ -201,7 +209,8 @@ func (s *Server) parentOK(q interface{ QueryRow(string, ...any) *sql.Row }, a Ar
 		if p.ParentID == "" {
 			break
 		}
-		p, e = s.articleByID(q, p.ParentID)
+		// Ancestors are read without locks (the cycle check only needs a snapshot).
+		p, e = scanArticle(q.QueryRow("SELECT "+articleColumns+" FROM articles WHERE id=?", p.ParentID))
 		if e != nil {
 			break
 		}
@@ -227,6 +236,20 @@ func (s *Server) createArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	if s.DB.pg && a.ProjectID != "" {
+		// Serializes with a project move: it holds the project row FOR NO KEY UPDATE.
+		// Delegated MCP sessions cannot lock the row (no UPDATE policy on projects for
+		// them) and only check that it exists.
+		lockClause := " FOR SHARE"
+		if s.principal != nil && (s.principal.MCPMode != "" || s.principal.MCPProjects != nil) {
+			lockClause = ""
+		}
+		var one int
+		if tx.QueryRow(`SELECT 1 FROM projects WHERE id=? AND space_id=?`+lockClause, a.ProjectID, a.SpaceID).Scan(&one) != nil {
+			apiErr(w, 400, "could not create article")
+			return
+		}
+	}
 	if e = s.parentOK(tx, a, ""); e != nil {
 		code := 400
 		if e.Error() == "parent article is deleted" {
@@ -399,8 +422,11 @@ func (s *Server) commitUpdate(aid string, base int, author, message string, muta
 	if e != nil {
 		return Article{}, 400, e
 	}
-	if s.principal != nil && (a.SpaceID != old.SpaceID || a.ProjectID != old.ProjectID || a.ParentID != old.ParentID) {
-		return Article{}, 400, errors.New("corporate moves require a permission preview and are not yet enabled")
+	// In corporate mode a parent change inside the same container is an ordinary
+	// edit (editor+, enforced by RLS and the database trigger); a change of space
+	// or project needs the access-impact preview.
+	if s.principal != nil && (a.SpaceID != old.SpaceID || a.ProjectID != old.ProjectID) {
+		return Article{}, 400, errors.New("moving an article to another space or project requires an access-impact preview: use POST /api/moves/preview and /api/moves/apply")
 	}
 	if e = requiredArticle(a); e != nil {
 		return Article{}, 400, e

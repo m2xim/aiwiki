@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import { Archive, ArrowLeft, ChevronDown, ChevronRight, Pencil, Plus, RefreshCw, RotateCcw, Shield } from 'lucide-react';
+import { Archive, ArrowLeft, ChevronDown, ChevronRight, FolderInput, Pencil, Plus, RefreshCw, RotateCcw, Shield } from 'lucide-react';
 import { AccessGrant, CatalogSpace, client, Project, Team, TeamMember, UserAccessSnapshot } from './api';
+import { MoveDialog } from './MoveDialog';
 import MCPDelegations from './MCPDelegations';
 import MCPPersistentAccess from './MCPPersistentAccess';
 import { CatalogKind, CatalogSort, DEFAULT_CATALOG_QUERY, catalogQueryString, parseCatalogQuery } from './catalogQuery';
@@ -60,6 +61,8 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
   const [editProject, setEditProject] = useState<EditDraft | null>(null);
   const [editTeam, setEditTeam] = useState<EditDraft | null>(null);
   const [editError, setEditError] = useState('');
+  const [moveProject, setMoveProject] = useState<Project | null>(null);
+  const [moveNotice, setMoveNotice] = useState('');
   const [memberPick, setMemberPick] = useState('');
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState('');
@@ -330,6 +333,7 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
           <div className="corp-admin-row-actions">
             {manager && !archived && <button type="button" disabled={busy} onClick={() => { setEditError(''); setEditProject({ id: project.id, name: project.name, description: project.description || '' }); }}><Pencil size={14}/>Изменить</button>}
             {manager && <button type="button" disabled={busy} onClick={() => void run(() => client.updateProject(project.id, { archived: !archived }))}>{archived ? <RotateCcw size={14}/> : <Archive size={14}/>}{archived ? 'Восстановить' : 'Архивировать'}</button>}
+            {owner && !archived && <button type="button" disabled={busy} onClick={() => { setMoveNotice(''); setMoveProject(project); }} title="Переместить проект вместе с вложенными проектами и статьями"><FolderInput size={14}/>Переместить</button>}
             {owner && !archived && <label className="corp-admin-check"><input type="checkbox" checked={project.inherit_acl} disabled={busy} onChange={e => void run(() => client.updateProject(project.id, { inherit_acl: e.target.checked }))}/>Наследовать доступ</label>}
           </div>
         </>}
@@ -362,6 +366,8 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
       <header><div><span>AIWIKI · УПРАВЛЕНИЕ</span><h1 id="corp-admin-title">Команды и доступ</h1></div><button type="button" onClick={onClose}><ArrowLeft size={18}/>К базе знаний</button></header>
       <nav>{([['catalog', 'Пространства'], ['teams', 'Команды'], ['projects', 'Проекты'], ['users', 'Пользователи'], ['tokens', 'MCP-доступ']] as [Tab, string][]).filter(([key]) => isAdmin || key === 'catalog' || key === 'projects' || key === 'tokens').map(([key, label]) => <button type="button" key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}{tab !== 'tokens' && <button type="button" className="corp-admin-refresh" onClick={() => void refresh()} disabled={busy} aria-label="Обновить"><RefreshCw size={15}/></button>}</nav>
       {error && <div className="corp-admin-error" role="alert">{error}</div>}
+      {moveNotice && <div className="corp-admin-notice" role="status">{moveNotice}</div>}
+      {moveProject && <MoveDialog subject={{ kind: 'project', project: moveProject }} author="" onClose={() => setMoveProject(null)} onDone={() => { const moved = moveProject; setMoveProject(null); setMoveNotice(`Проект «${moved.name}» перемещён`); void refresh(); }}/>}
       <main aria-busy={busy}>
         {tab === 'tokens' && <><MCPPersistentAccess/><MCPDelegations/></>}
         {tab === 'catalog' && <>
