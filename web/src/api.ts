@@ -6,6 +6,8 @@ export type MCPCredential = { id: string; name: string; service_account_id?: str
 export type MCPServiceAccount = { id: string; name: string; sponsor_id: string; disabled: boolean; created_at: string };
 export type Team = { id: string; name: string; description: string; archived_at?: string };
 export type TeamMember = { id: string; name: string };
+export type UserAccessResource = { resource_type: 'space' | 'project'; resource_id: string; name: string; role: AccessGrant['role']; archived: boolean; personal: boolean };
+export type UserAccessSnapshot = { user_id: string; resources: UserAccessResource[] };
 export type AccessGrant = { subject_type: 'user' | 'team'; subject_id: string; role: 'owner' | 'manager' | 'editor' | 'commenter' | 'reader' };
 export type CatalogSpace = Space & { projects: Project[]; article_count: number };
 export type AuthUser = { id: string; name: string; admin: boolean };
@@ -96,11 +98,13 @@ export const client = {
   upload: (id: string, file: File) => { const data = new FormData(); data.append('file', file); return api<Attachment>(`/api/articles/${encodeURIComponent(id)}/attachments`, { method: 'POST', body: data }); },
   catalog: () => api<CatalogSpace[]>('/api/catalog'),
   teams: () => api<Team[]>('/api/teams'),
-  createTeam: (name: string) => api<Team>('/api/teams', json('POST', { name, description: '' })),
+  createTeam: (name: string, description = '') => api<Team>('/api/teams', json('POST', { name, description })),
+  updateTeam: (id: string, data: { name?: string; description?: string; archived?: boolean }) => api<Team>(`/api/teams/${encodeURIComponent(id)}`, json('PATCH', data)),
   teamMembers: (teamId: string) => api<TeamMember[]>(`/api/teams/${encodeURIComponent(teamId)}/members`),
   setTeamMember: (teamId: string, userId: string) => api<void>(`/api/teams/${encodeURIComponent(teamId)}/members`, json('PUT', { user_id: userId })),
   removeTeamMember: (teamId: string, userId: string) => api<void>(`/api/teams/${encodeURIComponent(teamId)}/members`, json('DELETE', { user_id: userId })),
   adminUsers: () => api<{ id: string; name: string; disabled: boolean; admin: boolean }[]>('/api/admin/users'),
+  adminUserAccess: (userId: string) => api<UserAccessSnapshot>(`/api/admin/users/${encodeURIComponent(userId)}/access`),
   setUserDisabled: (userId: string, disabled: boolean) => api<void>(`/api/admin/users/${encodeURIComponent(userId)}`, json('PATCH', { disabled })),
   createSpaceFor: (data: { name: string; description: string; personal: boolean }) => api<Space>('/api/corporate/spaces', json('POST', data)),
   projects: (spaceId = '') => api<Project[]>(`/api/projects${spaceId ? `?space_id=${encodeURIComponent(spaceId)}` : ''}`),

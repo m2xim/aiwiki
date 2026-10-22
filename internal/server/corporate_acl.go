@@ -136,6 +136,7 @@ func (s *Server) corporateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp/service-accounts/{id}", s.mcpServiceAccount)
 	mux.HandleFunc("/api/mcp/delegations/{id}", s.mcpDelegation)
 	mux.HandleFunc("GET /api/admin/users", s.corporateUsers)
+	mux.HandleFunc("GET /api/admin/users/{id}/access", s.corporateUserAccess)
 	mux.HandleFunc("GET /api/users", s.corporateUserDirectory)
 	mux.HandleFunc("PATCH /api/admin/users/{id}", s.corporateUserDisable)
 	mux.HandleFunc("GET /api/admin/audit", s.corporateAudit)
@@ -782,13 +783,14 @@ func (s *Server) corporateSpaceCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 type corporateProject struct {
-	ID          string `json:"id"`
-	SpaceID     string `json:"space_id"`
-	ParentID    string `json:"parent_id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	InheritACL  bool   `json:"inherit_acl"`
-	ArchivedAt  string `json:"archived_at,omitempty"`
+	EffectiveRole string `json:"effective_role,omitempty"`
+	ID            string `json:"id"`
+	SpaceID       string `json:"space_id"`
+	ParentID      string `json:"parent_id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	InheritACL    bool   `json:"inherit_acl"`
+	ArchivedAt    string `json:"archived_at,omitempty"`
 }
 
 func (s *Server) corporateProjects(w http.ResponseWriter, r *http.Request) {
@@ -834,6 +836,7 @@ func (s *Server) corporateProjects(w http.ResponseWriter, r *http.Request) {
 			if roleErr != nil || role == "" {
 				continue
 			}
+			item.EffectiveRole = role
 			if item.ParentID != "" {
 				parentRole, _ := corporateRole(s.DB, actor, "project", item.ParentID)
 				if parentRole == "" {

@@ -783,9 +783,16 @@ func (a *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 
 	a.setCookie(w, a.loginCookie, binder, int(authLoginTTL.Seconds()))
-	target := a.oauth.AuthCodeURL(state,
+	options := []oauth2.AuthCodeOption{
 		oauth2.S256ChallengeOption(verifier),
-		oauth2.SetAuthURLParam("nonce", nonce))
+		oauth2.SetAuthURLParam("nonce", nonce),
+	}
+	// Fixed reauthentication option permits account switching without ending
+	// the provider's SSO sessions in unrelated applications.
+	if r.URL.Query().Get("reauth") == "1" {
+		options = append(options, oauth2.SetAuthURLParam("prompt", "login"))
+	}
+	target := a.oauth.AuthCodeURL(state, options...)
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, target, http.StatusFound)
 }
