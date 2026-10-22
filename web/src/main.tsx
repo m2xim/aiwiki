@@ -597,6 +597,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   const tocPanelOpen = panel === 'toc';
 
   const changeAdminTab = (tab: Parameters<typeof adminUrl>[0] = 'catalog') => {
+    if (adminOpen && tab === adminTab) return; // re-clicking the open tab must not wipe its URL parameters
     urlPush(adminUrl(tab));
     history.replaceState({ aiwikiAdminReturn: adminReturnUrl.current }, '', currentUrl());
     setAdminTab(tab);

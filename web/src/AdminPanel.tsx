@@ -40,8 +40,8 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
   const [accessLoading, setAccessLoading] = useState(false);
   const [accessError, setAccessError] = useState('');
   const [selectedTeam, setSelectedTeam] = useState('');
-  const [selectedSpace, setSelectedSpace] = useState(initialCatalog.space);
-  const [pickedSpace, setPickedSpace] = useState(initialCatalog.space); // chosen explicitly (kept in the URL), unlike the automatic first space
+  const [selectedSpace, setSelectedSpace] = useState(initialCatalog.cspace);
+  const [pickedSpace, setPickedSpace] = useState(initialCatalog.cspace); // chosen explicitly (kept in the URL), unlike the automatic first space
   const [selectedProject, setSelectedProject] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -111,10 +111,12 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
     } finally { if (seq === refreshSeq.current) setBusy(false); }
   };
   // Catalog state lives in the URL: re-read it on entering the tab (a fresh visit has none) and on Back / Forward.
+  const pendingSpace = useRef(''); // chosen via openResource before the tab URL (which carries no cspace) is applied
   const applyCatalogUrl = () => {
     const next = parseCatalogQuery(location.search);
-    setCatalogFilter(next.q); setCatalogSort(next.sort); setCatalogKind(next.kind); setPickedSpace(next.space);
-    if (next.space) setSelectedSpace(next.space);
+    setCatalogFilter(next.q); setCatalogSort(next.sort); setCatalogKind(next.kind); setPickedSpace(next.cspace || pendingSpace.current);
+    const chosen = next.cspace || pendingSpace.current; pendingSpace.current = '';
+    if (chosen) setSelectedSpace(chosen);
   };
   useEffect(() => { if (tab === 'catalog') applyCatalogUrl(); }, [tab]);
   useEffect(() => {
@@ -129,7 +131,7 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
     const timer = setTimeout(() => {
       const params = new URLSearchParams(location.search);
       if (params.get('view') !== 'admin' || readAdminTab() !== 'catalog') return;
-      const query = catalogQueryString({ q: catalogFilter, sort: catalogSort, kind: catalogKind, space: pickedSpace }, params);
+      const query = catalogQueryString({ q: catalogFilter, sort: catalogSort, kind: catalogKind, cspace: pickedSpace }, params);
       const url = `${location.pathname}?${query}${location.hash}`;
       if (url !== `${location.pathname}${location.search}${location.hash}`) replaceUrl(url);
     }, typed ? 300 : 0);
@@ -279,7 +281,7 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
     }
   };
   const openResource = (type: ResourceType, id: string) => {
-    if (type === 'space') { setSelectedSpace(id); setPickedSpace(id); setTab('catalog'); }
+    if (type === 'space') { setSelectedSpace(id); setPickedSpace(id); pendingSpace.current = id; setTab('catalog'); }
     else { setSelectedProject(id); setProjectSpaceFilter(''); setTab('projects'); }
   };
 
