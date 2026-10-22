@@ -60,7 +60,7 @@ The first core deliberately rejects article container/parent moves and project r
 
 ## MCP
 
-In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. Optional [OAuth resource discovery](MCP-OAUTH.md) binds tokens to the canonical MCP resource and `aiwiki:mcp` scope, with Keycloak as the authorization server. It also supports [temporary project-scoped read-only keys](MCP-TEMPORARY-ACCESS.md), tied to a live browser session, and [persistent personal/service keys](MCP-PERSISTENT-ACCESS.md). Browser cookies do not authorize MCP. Real client login and the actual AD federation remain pilot checks.
+In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. Optional [OAuth resource discovery](MCP-OAUTH.md) binds tokens to the canonical MCP resource and `aiwiki:mcp` scope, with Keycloak as the authorization server. It also supports [temporary project-scoped read-only keys](MCP-TEMPORARY-ACCESS.md), tied to a live browser session, and [persistent personal/service keys](MCP-PERSISTENT-ACCESS.md). Provider bearer requests are rate-limited per subject (per process) before introspection and audited per request, see the Limits section of that page. Browser cookies do not authorize MCP. Real client login and the actual AD federation remain pilot checks.
 
 ## Verification
 
