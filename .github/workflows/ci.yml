@@ -88,7 +88,7 @@ jobs:
       - name: Start disposable Keycloak 26.8.0 with the OAuth test realm
         run: |
           docker run -d --name keycloak-oauth -p 127.0.0.1:58080:8080 \
-            -v "$GITHUB_WORKSPACE/internal/server/testdata/keycloak-oauth-realm.json:/opt/keycloak/data/import/keycloak-oauth-realm.json:ro" \
+            -v "$GITHUB_WORKSPACE/internal/server/testdata/keycloak-oauth-realm.json:/opt/keycloak/data/import/aiwiki-oauth-test-realm.json:ro" \
             quay.io/keycloak/keycloak:26.8.0 start-dev --import-realm \
             --features=resource-indicators --hostname=http://127.0.0.1:58080
           for i in $(seq 1 45); do
