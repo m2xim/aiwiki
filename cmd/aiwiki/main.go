@@ -27,6 +27,9 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "check-storage" {
 		os.Exit(runCheckStorage(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "migrate-from-sqlite" {
+		os.Exit(runMigrateFromSQLite(os.Args[2:]))
+	}
 	addr := flag.String("addr", "127.0.0.1:8090", "HTTP listen address")
 	data := flag.String("data", "data", "SQLite and attachment directory")
 	web := flag.String("web", "web/dist", "Built frontend directory")
