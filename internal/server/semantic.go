@@ -103,6 +103,11 @@ type semanticJob struct {
 	chunks    []semanticChunk
 }
 
+type articleChunks struct {
+	revision int
+	sections [][]string
+}
+
 type semanticChunk struct {
 	key  string
 	text string
@@ -119,6 +124,8 @@ type semanticIndex struct {
 	pending map[string]bool                 // article ids queued for embedding
 	queries map[string][]float32
 	qorder  []string
+	dims    int                      // dimension of the latest embedding answer
+	keys    map[string]articleChunks // chunk keys per article revision
 
 	queue chan semanticJob
 	stop  chan struct{}
@@ -135,9 +142,12 @@ func (s *Server) EnableSemantic(c SemanticConfig) error {
 		return nil
 	}
 	idx := &semanticIndex{
-		cfg: c, root: s.DB, client: &http.Client{Timeout: semanticBatchTimeout},
+		cfg: c, root: s.DB, client: &http.Client{Timeout: semanticBatchTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
+			// A redirect would re-send article text to another host.
+			return http.ErrUseLastResponse
+		}},
 		vectors: map[string]map[string][]float32{}, loaded: map[string]bool{}, pending: map[string]bool{},
-		queries: map[string][]float32{}, queue: make(chan semanticJob, semanticQueueSize),
+		queries: map[string][]float32{}, keys: map[string]articleChunks{}, queue: make(chan semanticJob, semanticQueueSize),
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	go idx.worker()
@@ -268,16 +278,43 @@ func (idx *semanticIndex) ensureLoaded(ctx context.Context, db *database, ids []
 	}
 }
 
-// lookup returns the vectors of the given chunk keys of one article and whether
-// all of them are present.
-func (idx *semanticIndex) lookup(articleID string, chunks []semanticChunk) ([][]float32, bool) {
+// sectionKeys returns the chunk keys of every section of an article revision,
+// hashing the texts only once per revision.
+func (idx *semanticIndex) sectionKeys(a Article, sections []searchableSection) [][]string {
+	idx.mu.RLock()
+	c, ok := idx.keys[a.ID]
+	idx.mu.RUnlock()
+	if ok && c.revision == a.Revision && len(c.sections) == len(sections) {
+		return c.sections
+	}
+	out := make([][]string, len(sections))
+	for i, sec := range sections {
+		for _, ch := range idx.sectionChunks(a, sec) {
+			out[i] = append(out[i], ch.key)
+		}
+	}
+	idx.mu.Lock()
+	idx.keys[a.ID] = articleChunks{revision: a.Revision, sections: out}
+	idx.mu.Unlock()
+	return out
+}
+
+// usable reports whether a stored vector fits the current model output; a
+// vector of another dimension (the endpoint changed) counts as missing.
+func (idx *semanticIndex) usable(v []float32) bool {
+	return v != nil && (idx.dims == 0 || len(v) == idx.dims)
+}
+
+// lookup returns the usable vectors of the given chunk keys of one article and
+// whether all of them are present.
+func (idx *semanticIndex) lookup(articleID string, keys []string) ([][]float32, bool) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	m := idx.vectors[articleID]
-	out := make([][]float32, 0, len(chunks))
+	out := make([][]float32, 0, len(keys))
 	complete := true
-	for _, c := range chunks {
-		if v, ok := m[c.key]; ok {
+	for _, k := range keys {
+		if v, ok := m[k]; ok && idx.usable(v) {
 			out = append(out, v)
 		} else {
 			complete = false
@@ -327,16 +364,22 @@ func (idx *semanticIndex) worker() {
 // outlive the text. Storage goes through a connection scoped to the user whose
 // search saw the article, so row-level security checks the write.
 func (idx *semanticIndex) index(job semanticJob) error {
+	// Snapshot under the lock: reuse vectors that fit the current dimension,
+	// embed the rest (new text, or a dimension change of the endpoint).
 	idx.mu.RLock()
 	known := idx.vectors[job.articleID]
-	var todo []semanticChunk
 	current := map[string][]float32{}
+	fresh := map[string]bool{}
+	var todo []semanticChunk
 	for _, c := range job.chunks {
-		if v, ok := known[c.key]; ok {
+		if _, seen := current[c.key]; seen || fresh[c.key] {
+			continue
+		}
+		if v, ok := known[c.key]; ok && idx.usable(v) {
 			current[c.key] = v
-		} else if _, dup := current[c.key]; !dup {
+		} else {
 			todo = append(todo, c)
-			current[c.key] = nil
+			fresh[c.key] = true
 		}
 	}
 	idx.mu.RUnlock()
@@ -375,26 +418,25 @@ func (idx *semanticIndex) index(job semanticJob) error {
 	if err != nil {
 		return err
 	}
-	stored := map[string]bool{}
+	var stored []string
 	for rows.Next() {
 		var k string
 		if rows.Scan(&k) == nil {
-			stored[k] = true
+			stored = append(stored, k)
 		}
 	}
 	rows.Close()
-	for k := range stored {
-		if _, keep := current[k]; !keep {
+	// Rows of text that is gone, and rows that were embedded again, are removed.
+	for _, k := range stored {
+		if _, keep := current[k]; !keep || fresh[k] {
 			if _, err := tx.Exec(`DELETE FROM article_embeddings WHERE article_id=? AND model=? AND text_key=?`, job.articleID, idx.cfg.Model, k); err != nil {
 				return err
 			}
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	for k, v := range current {
-		if stored[k] || v == nil {
-			continue
-		}
+	for k := range fresh {
+		v := current[k]
 		if _, err := tx.Exec(`INSERT INTO article_embeddings(article_id,model,text_key,dims,vector,created_at) VALUES(?,?,?,?,?,?)`, job.articleID, idx.cfg.Model, k, len(v), encodeVector(v), now); err != nil {
 			return err
 		}
@@ -488,6 +530,9 @@ func (idx *semanticIndex) embed(ctx context.Context, texts []string) ([][]float3
 		}
 		vecs[d.Index] = v
 	}
+	idx.mu.Lock()
+	idx.dims = dims
+	idx.mu.Unlock()
 	return vecs, nil
 }
 

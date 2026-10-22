@@ -33,29 +33,43 @@ the frozen corpus of `corpus.mjs` (30 articles, 71 sections, 263 chunks).
 
 ### Qwen3-Embedding-0.6B (multilingual, GGUF Q8_0, LM Studio)
 
+Query prefix `Instruct: Given a search query in Russian or English, retrieve the
+wiki section that answers it
+Query: `, no document prefix, dev-chosen cut 0.358.
+
 | Set | Variant | top-1 | top-5 | MRR@5 | recall@5 | true no-hit |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | v4 held-out (16 + 5) | lexical | 5 | 11 | 0.424 | 0.656 | 3/5 |
-| | vector | 9 | 12 | 0.641 | 0.750 | 0/5 |
-| | plain RRF | 8 | 15 | 0.660 | 0.906 | 0/5 |
-| | **hybridAllOnly** | **11** | **14** | **0.766** | 0.875 | 0/5 |
+| | vector | 8 | 12 | 0.609 | 0.750 | 0/5 |
+| | plain RRF | 9 | 14 | 0.677 | 0.844 | 0/5 |
+| | **hybridAllOnly** | **10** | **14** | **0.734** | 0.875 | 0/5 |
 | v3 (20 + 6, informed the choice) | lexical | 7 | 12 | 0.438 | 0.600 | 3/6 |
-| | vector | 14 | 15 | 0.725 | 0.750 | 3/6 |
-| | plain RRF | 11 | 15 | 0.650 | 0.725 | 2/6 |
-| | hybridAllOnly | 15 | 16 | 0.775 | 0.800 | 3/6 |
+| | vector | 15 | 16 | 0.767 | 0.800 | 3/6 |
+| | plain RRF | 11 | 16 | 0.667 | 0.775 | 2/6 |
+| | hybridAllOnly | 16 | 17 | 0.817 | 0.850 | 3/6 |
 | dev v2 (17 + 5) | lexical | 14 | 17 | 0.879 | 0.971 | 5/5 |
 | | hybridAllOnly | 16 | 17 | 0.961 | 1.000 | 5/5 |
 | dev old7 (7) | lexical | 6 | 6 | 0.857 | 0.857 | — |
 | | hybridAllOnly | 5 | 7 | 0.857 | 1.000 | — |
 
-The server implementation (`--server-semantic`, the server embeds and fuses
-itself) produced exactly the `hybridAllOnly` numbers on every positive query
-set. It returned results for every negative query because it ran without a
-similarity cut (`AIWIKI_EMBEDDINGS_MIN_SIMILARITY` unset); with the dev-chosen
-0.35 the offline variant is the reference.
+**Server equals offline.** With `--server-semantic` the server embeds and fuses
+itself, here with `AIWIKI_EMBEDDINGS_MIN_SIMILARITY=0.358`. Its rank of the
+first gold section equals the offline `hybridAllOnly` rank for every positive
+query of every set (per-query field `serverHybrid` in the result file). The only
+difference is the negative query z03: no section passed the cut, and the server
+then returns the plain lexical results, partial matches included, instead of an
+empty list. A run without a cut (`-nocut` file) gives the same positive ranks
+and results for every negative query.
 
-On v4, exact identifiers (`OFR-7319`, `ledger-oncall`, `TIER-2-RU`,
-`AUDIT-7Q4M-91ZX`): lexical 4/4 at rank 1, vector alone 2/4, hybridAllOnly 4/4.
+On v4 the four exact identifiers (`OFR-7319`, `ledger-oncall`, `TIER-2-RU`,
+`AUDIT-7Q4M-91ZX`) are rank 1 for lexical and hybridAllOnly, while vectors alone
+miss two of them. The gain therefore rests on the 12 other v4 positives: top-1
+1 of 12 lexical, 6 of 12 hybridAllOnly.
+
+An earlier run had a defect in the script: an empty `--doc-prefix ""` was read
+as `"1"`, so chunks were embedded with a leading "1". It was found in review and
+fixed; all Qwen3 numbers above are from the corrected rerun (the defective run
+had v4 hybridAllOnly 11/14/0.766).
 
 ### nomic-embed-text-v1.5 (English-only)
 
@@ -74,15 +88,15 @@ lexical search.
 
 ### Cost
 
-On a Ryzen 9 7900X with LM Studio: indexing 263 chunks took about 4 s, query
-embedding p50 about 12-18 ms, max about 20 ms; exact scoring over 263 chunks is
-negligible.
+On a Ryzen 9 7900X with LM Studio: indexing 263 chunks took about 4 s (offline
+3.9 s, server 4.3 s until coverage 1), query embedding p50 about 12 ms, max
+about 13 ms; exact scoring over 263 chunks is negligible.
 
 ## Conclusions
 
-* With a multilingual model, hybrid search more than doubles top-1 on the v4
-  held-out set (5 to 11 of 16) and raises top-5 from 11 to 14, while keeping
-  exact identifiers first.
+* With a multilingual model, hybrid search doubles top-1 on the v4 held-out
+  set (5 to 10 of 16), raises top-5 from 11 to 14 and MRR@5 from 0.42 to 0.73,
+  while keeping exact identifiers first.
 * Semantic search does not detect absence: near-domain negative queries got
   results in every variant that uses vectors, and a similarity cut did not
   separate them from true answers (some negatives scored higher than some
@@ -96,9 +110,9 @@ The corpus is small and synthetic, the query sets are 21 to 26 queries each and
 were written by the same author as the corpus. These are not production recall
 figures. Lexical results contain ties resolved by update time, so a rerun on a
 freshly seeded server can move a lexical hit by one rank (observed once: v3
-lexical MRR 0.4375 vs 0.45). Result files:
-`results/2026-10-22-semantic-qwen3.json`, `results/2026-10-22-semantic-qwen3-server.json`,
-`results/2026-10-22-semantic-nomic.json`.
+lexical MRR 0.4375 vs 0.45). v4 was written by the same author shortly after seeing the v3 failure modes.
+Result files: `results/2026-10-22-semantic-qwen3.json` (server with cut),
+`results/2026-10-22-semantic-qwen3-nocut.json`, `results/2026-10-22-semantic-nomic.json`.
 
 ## Reproduce
 
@@ -109,4 +123,5 @@ node benchmarks/mcp/semantic-eval.mjs --bin .cache/aiwiki.exe \
   --model text-embedding-qwen3-embedding-0.6b --doc-prefix "" \
   --query-prefix $'Instruct: Given a search query in Russian or English, retrieve the wiki section that answers it\nQuery: ' \
   [--server-semantic] --out .cache/semantic.json
+# the server run takes the cut from AIWIKI_EMBEDDINGS_MIN_SIMILARITY in the environment
 ```

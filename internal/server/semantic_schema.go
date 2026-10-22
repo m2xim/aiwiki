@@ -43,10 +43,15 @@ func (d *database) validateSemanticSchema() error {
    FROM articles a
   WHERE (a.id = article_embeddings.article_id)))`
 	if err := d.QueryRow(`SELECT count(*) FROM pg_policy p WHERE p.polrelid='public.article_embeddings'::regclass AND p.polpermissive AND (
- (p.polname='article_embeddings_read' AND p.polcmd='r' AND pg_get_expr(p.polqual,p.polrelid)=? AND p.polwithcheck IS NULL) OR
- (p.polname='article_embeddings_insert' AND p.polcmd='a' AND pg_get_expr(p.polwithcheck,p.polrelid)=? AND p.polqual IS NULL) OR
- (p.polname='article_embeddings_delete' AND p.polcmd='d' AND pg_get_expr(p.polqual,p.polrelid)=? AND p.polwithcheck IS NULL))`, visible, visible, visible).Scan(&count); err != nil || count != 3 {
+ (p.polname='article_embeddings_read' AND p.polcmd='r' AND replace(pg_get_expr(p.polqual,p.polrelid),'public.articles','articles')=? AND p.polwithcheck IS NULL) OR
+ (p.polname='article_embeddings_insert' AND p.polcmd='a' AND replace(pg_get_expr(p.polwithcheck,p.polrelid),'public.articles','articles')=? AND p.polqual IS NULL) OR
+ (p.polname='article_embeddings_delete' AND p.polcmd='d' AND replace(pg_get_expr(p.polqual,p.polrelid),'public.articles','articles')=? AND p.polwithcheck IS NULL))`, visible, visible, visible).Scan(&count); err != nil || count != 3 {
 		return errors.New("article_embeddings row-level security policies are missing or changed")
+	}
+	// The printed text does not say which schema "articles" is in; the stored
+	// dependency does.
+	if err := d.QueryRow(`SELECT count(*) FROM pg_policy p WHERE p.polrelid='public.article_embeddings'::regclass AND p.polpermissive AND EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_policy'::regclass AND d.objid=p.oid AND d.refclassid='pg_class'::regclass AND d.refobjid='public.articles'::regclass)`).Scan(&count); err != nil || count != 3 {
+		return errors.New("article_embeddings policies must refer to public.articles")
 	}
 	if err := d.QueryRow(`SELECT count(*) FROM pg_policy p WHERE p.polrelid='public.article_embeddings'::regclass AND p.polpermissive`).Scan(&count); err != nil || count != 3 {
 		return errors.New("article_embeddings has unexpected row-level security policies")

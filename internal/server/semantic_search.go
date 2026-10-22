@@ -47,13 +47,11 @@ func (s *Server) semanticRank(q string, visible []visibleArticle) ([]semanticHit
 	var hits []semanticHit
 	total, have := 0, 0
 	for _, v := range visible {
-		var all []semanticChunk
 		articleComplete := true
-		for _, sec := range v.sections {
-			chunks := idx.sectionChunks(v.article, sec)
-			all = append(all, chunks...)
-			vecs, complete := idx.lookup(v.article.ID, chunks)
-			total += len(chunks)
+		keys := idx.sectionKeys(v.article, v.sections)
+		for i, sec := range v.sections {
+			vecs, complete := idx.lookup(v.article.ID, keys[i])
+			total += len(keys[i])
 			have += len(vecs)
 			if !complete {
 				articleComplete = false
@@ -72,6 +70,10 @@ func (s *Server) semanticRank(q string, visible []visibleArticle) ([]semanticHit
 			}
 		}
 		if !articleComplete {
+			var all []semanticChunk
+			for _, sec := range v.sections {
+				all = append(all, idx.sectionChunks(v.article, sec)...)
+			}
 			idx.enqueue(v.article.ID, userID, all)
 		}
 	}

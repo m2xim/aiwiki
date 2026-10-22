@@ -33,13 +33,14 @@ Measured configuration (multilingual, about 640 MB, runs on a CPU or a GPU):
 AIWIKI_EMBEDDINGS_URL=http://127.0.0.1:1234/v1/embeddings
 AIWIKI_EMBEDDINGS_MODEL=text-embedding-qwen3-embedding-0.6b
 AIWIKI_EMBEDDINGS_QUERY_PREFIX=Instruct: Given a search query in Russian or English, retrieve the wiki section that answers it\nQuery: 
-AIWIKI_EMBEDDINGS_MIN_SIMILARITY=0.35
+AIWIKI_EMBEDDINGS_MIN_SIMILARITY=0.358
 ```
 
 The model `Qwen/Qwen3-Embedding-0.6B` (GGUF Q8_0, Apache-2.0) is the one
 measured. An English-only model (`nomic-embed-text-v1.5`) made search worse on
-Russian and mixed queries and is not recommended. The 0.35 cut was chosen on the
-development sets for this model; another model needs its own value.
+Russian and mixed queries and is not recommended. No document prefix was used. The
+0.358 cut was chosen on the development sets for this model; another model
+needs its own value.
 
 ## How it works
 
@@ -73,7 +74,12 @@ development sets for this model; another model needs its own value.
   them.
 * **Fallback.** If the endpoint does not answer a query within 2 seconds, the
   response says `semantic: "unavailable"` and contains the ordinary lexical
-  results, the partial fallback included.
+  results, the partial fallback included. The same lexical results are returned
+  when no section passes the similarity cut. While sections are still being
+  embedded (`indexing`), partial lexical matches stay in the fusion, so a search
+  right after enabling the feature is never worse than the lexical one.
+* **Dimension change.** A stored vector whose dimension differs from the current
+  endpoint output counts as missing and is embedded again.
 
 ## Response
 
@@ -84,7 +90,11 @@ In addition to the existing fields:
 * `semantic_coverage`: 0 to 1, while semantic search took part.
 * per hit `matched_by`: `["lexical"]`, `["semantic"]` or both; `similarity`: the
   cosine of the best chunk when the semantic part found the section.
-* `score` is the fusion score when semantic search took part.
+* `score` is the fusion score (about 0.016 to 0.033) when semantic search took
+  part, not comparable with lexical scores.
+* `mode` is `semantic` when partial lexical matches were left out in favour of
+  the semantic ranking. With fusion, `total` counts the fused list (at most 40),
+  not every lexical candidate.
 
 **A semantic hit is a candidate, not evidence.** Semantic search always finds
 something similar. A query about a subject the wiki does not cover still returns
@@ -102,3 +112,13 @@ often.
 * Several server instances each keep their own memory copy; the table is shared.
 * Vectors are derived from article text. They are protected like the text, but
   they are an additional copy of it in another form.
+* Any user who can read an article can write its derived rows: the indexing runs
+  as the user whose search saw the article, readers included. A session that can
+  read an article could therefore delete or replace its vectors with its own;
+  the server never does, and the damage is limited to the ranking of articles
+  that session can read anyway.
+* Rows of a previous model stay in the table (unused). The table references
+  `articles`; a future hard delete of articles must delete these rows first.
+* The corporate startup check requires the `semantic_index` migration even when
+  semantic search is off; it is applied automatically at startup.
+* The endpoint is never followed through a redirect.

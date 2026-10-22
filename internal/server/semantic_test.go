@@ -17,6 +17,7 @@ import (
 type fakeEmbedder struct {
 	srv   *httptest.Server
 	calls atomic.Int64
+	dims  atomic.Int64 // 0 means 64
 }
 
 var fakeConcepts = map[string]int{
@@ -61,7 +62,11 @@ func newFakeEmbedder(t *testing.T) *fakeEmbedder {
 			Data []item `json:"data"`
 		}{}
 		for i := len(in.Input) - 1; i >= 0; i-- { // out of order on purpose
-			out.Data = append(out.Data, item{Index: i, Embedding: fakeVector(in.Input[i])})
+			v := fakeVector(in.Input[i])
+			if n := f.dims.Load(); n > 0 {
+				v = v[:n]
+			}
+			out.Data = append(out.Data, item{Index: i, Embedding: v})
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	}))
@@ -148,8 +153,14 @@ func TestSemanticSearchTrusted(t *testing.T) {
 	returns, rev := writeArticle(t, s, map[string]any{"space_id": "general", "title": "Возвраты", "body": "## Проверка\n\nЕсли упаковка повреждена, назначьте ручную проверку."})
 	deploy, _ := writeArticle(t, s, map[string]any{"space_id": "general", "title": "Release", "body": "## Steps\n\nStart the rollout in small batches."})
 
+	// Cold start: nothing is embedded yet, the partial lexical fallback stays.
+	r := semanticSearch(t, s, map[string]any{"q": "rollout zebra"})
+	if r.Semantic != "indexing" || len(r.Results) == 0 || r.Results[0].ID != deploy || r.Mode != "any" {
+		t.Fatalf("cold start: %+v", r)
+	}
+
 	// Lexically nothing matches; semantically the Russian section does.
-	r := searchIndexed(t, s, map[string]any{"q": "torn parcel"})
+	r = searchIndexed(t, s, map[string]any{"q": "torn parcel"})
 	if len(r.Results) == 0 || r.Results[0].ID != returns || r.Results[0].Heading != "Проверка" {
 		t.Fatalf("semantic hit: %+v", r.Results)
 	}
@@ -214,11 +225,38 @@ func TestSemanticSearchTrusted(t *testing.T) {
 		t.Fatalf("restart: status=%s embedding calls=%d (only the query expected)", r.Semantic, f.calls.Load()-before)
 	}
 
+	// The endpoint changes its output dimension: stored vectors are embedded
+	// again instead of silently matching nothing.
+	f.dims.Store(32)
+	r = searchIndexed(t, s, map[string]any{"q": "torn parcel again"})
+	if len(r.Results) == 0 || r.Results[0].ID != returns {
+		t.Fatalf("after dimension change: %+v", r.Results)
+	}
+	var dims int
+	if err := s.DB.QueryRow(`SELECT min(dims) FROM article_embeddings`).Scan(&dims); err != nil || dims != 32 {
+		t.Fatalf("stored dims=%d err=%v", dims, err)
+	}
+
 	// With the embedding service down the search falls back to lexical results.
 	f.srv.Close()
 	r = semanticSearch(t, s, map[string]any{"q": "rollout steps unseen"})
 	if r.Semantic != "unavailable" || len(r.Results) == 0 || r.Results[0].ID != deploy || r.Mode != "any" {
 		t.Fatalf("fallback: %+v", r)
+	}
+}
+
+func TestSemanticEndpointRedirectIsNotFollowed(t *testing.T) {
+	target := newFakeEmbedder(t)
+	redirect := httptest.NewServer(http.RedirectHandler(target.srv.URL, http.StatusTemporaryRedirect))
+	t.Cleanup(redirect.Close)
+	s := testServer(t)
+	if err := s.EnableSemantic(SemanticConfig{URL: redirect.URL, Model: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	writeArticle(t, s, map[string]any{"space_id": "general", "title": "Release", "body": "## Steps\n\nrollout"})
+	r := semanticSearch(t, s, map[string]any{"q": "rollout"})
+	if r.Semantic != "unavailable" || target.calls.Load() != 0 {
+		t.Fatalf("redirect followed: status=%s calls=%d", r.Semantic, target.calls.Load())
 	}
 }
 

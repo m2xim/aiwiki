@@ -159,11 +159,13 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 		if useSemantic {
 			var hits []semanticHit
 			hits, semanticStatus, coverage = s.semanticRank(q, visible)
-			if semanticStatus != "unavailable" {
+			if semanticStatus != "unavailable" && len(hits) > 0 {
 				lexical := candidates
-				if mode != "all" {
-					// Partial lexical matches are noise next to semantic ranking.
+				if mode != "all" && semanticStatus == "on" {
+					// Partial lexical matches are noise next to a complete semantic
+					// ranking; while sections are still being embedded they stay.
 					lexical = nil
+					mode = "semantic"
 				}
 				fused = fuseSectionHits(lexical, hits)
 			}

@@ -21,7 +21,8 @@ const RRF_K = 60;
 const CHUNK_CHARS = 1200;
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
-  if (a.startsWith("--")) acc.push([a.slice(2), all[i + 1] && !all[i + 1].startsWith("--") ? all[i + 1] : "1"]);
+  // An explicit empty value (--doc-prefix "") is a value, not a missing one.
+  if (a.startsWith("--")) acc.push([a.slice(2), all[i + 1] !== undefined && !all[i + 1].startsWith("--") ? all[i + 1] : "1"]);
   return acc;
 }, []));
 const BIN = args.bin;
@@ -246,6 +247,7 @@ async function main() {
       hybridModeWeighted: r.golds.length ? rankMetrics(variants.hybridModeWeighted(r), r.golds).firstRank : variants.hybridModeWeighted(r).length,
       hybridAllOnly: r.golds.length ? rankMetrics(variants.hybridAllOnly(r), r.golds).firstRank : variants.hybridAllOnly(r).length,
       lexMode: r.lexMode,
+      ...(serverSemantic ? { serverHybrid: r.golds.length ? rankMetrics(variants.serverHybrid(r), r.golds).firstRank : variants.serverHybrid(r).length } : {}),
       topVectorScore: +(r.vec[0]?.score ?? 0).toFixed(3) }));
     const qms = rows.map((r) => r.queryEmbedMs).sort((a, b) => a - b);
     const report = {
