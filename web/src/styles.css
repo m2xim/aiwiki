@@ -424,3 +424,7 @@ html[data-theme="dark"] .diff-row code ins{background:#2b5a3d;color:#d3f5de}
 
 .author-chip .author-name{font-weight:400;font-size:12px;color:#555267;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}html[data-theme="dark"] .author-chip .author-name{color:var(--ink)}
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}.author-chip>svg{flex:none;color:#9996a7}
+/* Native controls follow the app theme, not the OS scheme (color-scheme is set on :root / html[data-theme]). */
+.space-form input{background:#fff;color:var(--ink)}
+.space-form input::placeholder{color:var(--ph,#8b899d)}
+input[type="checkbox"],input[type="radio"]{accent-color:var(--purple)}

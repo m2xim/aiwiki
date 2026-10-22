@@ -1,11 +1,43 @@
 .markdown-editor {
-  min-height: 360px;
-  max-height: 600px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--line, #d9dfeb);
   border-radius: 10px;
   background: var(--panel, #fff);
 }
+
+.markdown-editor-host { min-width: 0; }
+
+.markdown-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line, #d9dfeb);
+  background: var(--lavender, #f5f3fc);
+}
+
+.markdown-tool {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted, #6b6880);
+}
+
+.markdown-tool.has-sep { margin-left: 6px; }
+.markdown-tool:hover:not(:disabled) { background: var(--purple-light, #f0edff); color: var(--purple-dark, #5d43be); }
+.markdown-tool:focus-visible { outline: 2px solid var(--purple, #7357d9); outline-offset: 1px; }
+.markdown-tool:disabled { opacity: 0.4; cursor: default; }
+html[data-theme="dark"] .markdown-toolbar { background: var(--lavender, #282535); }
+html[data-theme="dark"] .markdown-tool { color: #bbb5ca; }
+html[data-theme="dark"] .markdown-tool:hover:not(:disabled) { background: #302d3c; color: #c4b4ff; }
 
 .markdown-editor .cm-editor {
   min-height: 360px;
@@ -25,8 +57,10 @@
   caret-color: currentColor;
 }
 
+/* No vertical padding here: CodeMirror shifts the first gutter element by the top padding
+   of .cm-content itself, so extra padding would push the numbers below their lines. */
 .markdown-editor .cm-gutters {
-  padding: 14px 0 20px;
+  padding: 0;
   user-select: none;
 }
 
@@ -46,7 +80,6 @@
   border-color: var(--line, #343b49);
 }
 
-.markdown-editor--compact,
 .markdown-editor--compact .cm-editor {
   min-height: 140px;
   max-height: 300px;
@@ -59,5 +92,5 @@
 }
 
 .markdown-editor--compact .cm-gutters {
-  padding-top: 10px;
+  padding: 0;
 }
