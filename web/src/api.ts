@@ -26,6 +26,12 @@ export type Favorite = { id: string; title: string; space_id: string; parent_id:
 export type SearchMatch = 'title' | 'tags' | 'summary' | 'properties' | 'body';
 export type SearchHit = { id: string; title: string; space_id: string; parent_id: string; kind: string; status: string; summary: string; tags: string[]; updated_at: string; pinned?: boolean; score?: number; snippet?: string; matched_in?: string[] };
 export type SearchResponse = { total: number; offset: number; mode?: 'all' | 'any'; next_offset?: number; results: SearchHit[] };
+export type MoveTarget = { space_id: string; project_id?: string; parent_id?: string };
+export type MoveRequest = { kind: 'article' | 'project'; id: string; base_revision?: number; target: MoveTarget; fingerprint?: string };
+export type MovePlace = { space_id: string; space_name: string; project_id: string; project_name: string };
+export type MoveAccessChange = { subject_type: 'user' | 'team'; subject_id: string; name: string; before: AccessGrant['role'] | null; after: AccessGrant['role'] | null; users?: number };
+export type MovePreview = { fingerprint: string; articles: number; projects: number; source: MovePlace; target: MovePlace; access: MoveAccessChange[]; users_gaining: number; users_losing: number; warnings: string[] };
+export type MoveApplyResult = { conflict: false; articles: number; projects: number; root: Article | Project } | { conflict: true; preview: MovePreview };
 export type Bootstrap = { instructions: Article[]; spaces: Space[]; recent: Article[]; guide: string };
 let corporateSession = false;
 export const setCorporateSession = (value: boolean) => { corporateSession = value; };
@@ -64,6 +70,22 @@ const api204 = async (url: string, init: RequestInit) => {
   }
   if (response.status !== 204) throw new Error('Сервер не подтвердил завершение сеанса.');
 };
+// Apply needs the fresh preview from a 409, which api() would flatten into a message.
+const moveApply = async (request: MoveRequest): Promise<MoveApplyResult> => {
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  if (csrfToken) headers.set('X-CSRF-Token', csrfToken);
+  const response = await fetch('/api/moves/apply', { method: 'POST', headers, body: JSON.stringify(request) });
+  let body: { error?: string; preview?: MovePreview; articles?: number; projects?: number; root?: Article | Project } = {};
+  try { body = await response.json(); } catch { /* response is not JSON */ }
+  if (response.status === 409 && body.preview) return { conflict: true, preview: body.preview };
+  if (!response.ok) {
+    if (response.status === 401 && !location.pathname.startsWith('/auth/')) {
+      if (authExpiredHandler) authExpiredHandler(); else location.assign('/auth/login');
+    }
+    throw new Error(response.status === 403 ? 'Недостаточно прав для этого действия.' : body.error && body.error !== 'forbidden' ? body.error : `${response.status} ${response.statusText}`);
+  }
+  return { conflict: false, articles: body.articles ?? 0, projects: body.projects ?? 0, root: body.root as Article | Project };
+};
 const json = (method: string, data: unknown): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 export const client = {
   me: () => api<AuthSession>('/api/me'),
@@ -96,6 +118,8 @@ export const client = {
   attachments: (id: string) => api<Attachment[]>(`/api/articles/${encodeURIComponent(id)}/attachments`),
   deleteAttachment: (articleId: string, fileId: string) => api<void>(`/api/articles/${encodeURIComponent(articleId)}/attachments/${encodeURIComponent(fileId)}`, { method: 'DELETE' }),
   upload: (id: string, file: File) => { const data = new FormData(); data.append('file', file); return api<Attachment>(`/api/articles/${encodeURIComponent(id)}/attachments`, { method: 'POST', body: data }); },
+  movePreview: (request: MoveRequest) => api<MovePreview>('/api/moves/preview', json('POST', request)),
+  moveApply,
   catalog: () => api<CatalogSpace[]>('/api/catalog'),
   teams: () => api<Team[]>('/api/teams'),
   createTeam: (name: string, description = '') => api<Team>('/api/teams', json('POST', { name, description })),
