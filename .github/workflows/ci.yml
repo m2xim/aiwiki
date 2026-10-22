@@ -47,6 +47,9 @@ jobs:
       - name: Catalog query checks
         run: node scripts/qa-catalog-query.mjs
 
+      - name: Artifact kit checks
+        run: node scripts/qa-kit.mjs
+
       - name: History diff checks
         run: node scripts/qa-diff.mjs
 
