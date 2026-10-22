@@ -83,57 +83,50 @@ are seeded (100 per user), so a search sees about 100 articles, not 500.
 export AIWIKI_LOAD_POSTGRES=1
 export AIWIKI_TEST_POSTGRES_OWNER='postgres://aiwiki_owner:...@127.0.0.1:55433/aiwiki_load?sslmode=disable'
 export AIWIKI_TEST_POSTGRES='postgres://aiwiki_app:...@127.0.0.1:55433/aiwiki_load?sslmode=disable'
-AIWIKI_LOAD_DURATION=60s AIWIKI_LOAD_ARTICLES=500 AIWIKI_LOAD_USERS=5 \
-AIWIKI_LOAD_SKIP_EDITS=1 AIWIKI_LOAD_VUS=<10|50> \
-go test ./internal/server -run TestLoadCorporatePostgres -count=1 -v
+AIWIKI_LOAD_DURATION=60s AIWIKI_LOAD_ARTICLES=500 AIWIKI_LOAD_USERS=5 AIWIKI_LOAD_VUS=<10|50> go test ./internal/server -run TestLoadCorporatePostgres -count=1 -v
 ```
 
-Two deviations from the contract mix, both forced by the product:
+One deviation from a real deployment: a persistent key is limited to 120
+requests per minute (`mcpPersistentRateLimit`), i.e. 2 req/s per key; without a
+workaround the test gets HTTP 429 for almost everything. The limiter stays in the
+request path (one atomic `UPDATE mcp_credentials` per request), but the test
+zeroes `rate_requests` from the owner connection every 25 ms. The extra UPDATE
+on the same rows adds some contention that real use would not have.
 
-1. `AIWIKI_LOAD_SKIP_EDITS=1`: the 10 % edit share is executed as search instead,
-   because `wiki_edit` through a persistent write key currently always fails (see
-   "Defect found" below). Without the variable the test fails on those errors.
-   The edit and conflict path is therefore not measured in (b); (a) covers it.
-2. A persistent key is limited to 120 requests per minute
-   (`mcpPersistentRateLimit`), i.e. 2 req/s per key; without a workaround the
-   test gets HTTP 429 for almost everything. The limiter stays in the request path
-   (one atomic `UPDATE mcp_credentials` per request), but the test zeroes
-   `rate_requests` from the owner connection every 25 ms. The extra UPDATE on the
-   same rows adds some contention that real use would not have.
+The runs below include the fix for editing through write keys (see "Defect
+found"); the full mix, edits included, was executed.
 
-### 10 VUs, 60 s: 11717 requests, 194.9 req/s, 0 errors
+### 10 VUs, 60 s: 12384 requests, 206.2 req/s, 0 errors, 1 revision conflict
 
 | op | count | p50 ms | p95 ms | p99 ms | max ms |
 |---|---:|---:|---:|---:|---:|
-| search (incl. replaced edit share) | 6512 | 79.3 | 109.1 | 130.0 | 201.7 |
-| read_outline | 2374 | 11.4 | 17.9 | 32.5 | 84.6 |
-| read_section | 2374 | 11.3 | 17.3 | 28.6 | 43.8 |
-| edit_append | 0 | - | - | - | - |
-| create | 457 | 23.2 | 34.9 | 52.4 | 96.1 |
+| search | 6020 | 76.1 | 102.9 | 142.5 | 277.5 |
+| read_outline | 2475 | 13.3 | 35.2 | 90.9 | 214.8 |
+| read_section | 2475 | 13.0 | 29.2 | 61.8 | 215.9 |
+| edit_append | 949 | 28.8 | 49.5 | 93.0 | 255.1 |
+| create | 465 | 23.2 | 45.4 | 109.3 | 217.7 |
 
-### 50 VUs, 60 s: 14867 requests, 246.5 req/s, 0 errors
+### 50 VUs, 60 s: 16331 requests, 270.6 req/s, 0 errors, 2 revision conflicts
 
 | op | count | p50 ms | p95 ms | p99 ms | max ms |
 |---|---:|---:|---:|---:|---:|
-| search (incl. replaced edit share) | 8366 | 240.5 | 395.8 | 490.9 | 657.3 |
-| read_outline | 2961 | 125.4 | 269.0 | 354.3 | 693.0 |
-| read_section | 2961 | 124.2 | 260.1 | 340.3 | 480.6 |
-| edit_append | 0 | - | - | - | - |
-| create | 579 | 142.0 | 277.7 | 351.3 | 421.6 |
+| search | 7812 | 223.0 | 385.8 | 486.8 | 723.4 |
+| read_outline | 3284 | 119.4 | 252.0 | 368.7 | 629.3 |
+| read_section | 3284 | 119.9 | 247.9 | 337.0 | 516.0 |
+| edit_append | 1291 | 143.7 | 293.1 | 425.2 | 551.3 |
+| create | 660 | 134.7 | 258.9 | 322.5 | 408.5 |
 
-## Defect found: wiki_edit fails with a scoped persistent write key
+## Defect found and fixed: wiki_edit failed with a scoped persistent write key
 
-With `AIWIKI_LOAD_SKIP_EDITS` unset (10 VUs, 10 s), every `wiki_edit` returned
-`database error` (208 of 208); the run fails. Cause, found by temporarily logging
-the underlying error in `commitUpdate` (reverted afterwards):
-`ERROR: new row violates row-level security policy "mcp_scope_article_fts_update"
-(USING expression) for table "article_fts" (SQLSTATE 42501)`. `indexArticle`
-(model.go) writes the full-text row with `INSERT ... ON CONFLICT (article_id) DO
-UPDATE`; `mcp_scope.sql` creates a restrictive UPDATE policy on `article_fts`
-(`NOT corporate_mcp_scope_active()`), while `mcp_persistent.sql` relaxes only the
-`article_fts` insert and delete policies, not the update one. Creating articles
-works (no conflict), updating any existing article through a scoped key does not.
-Not fixed here; server code was left untouched.
+The first runs failed: every `wiki_edit` through a persistent write key returned
+`database error` (208 of 208 in 10 s). The underlying error was
+`new row violates row-level security policy "mcp_scope_article_fts_update"`:
+`indexArticle` wrote the full-text row with `INSERT ... ON CONFLICT DO UPDATE`,
+and the MCP scope policies allow write keys to insert and delete `article_fts`
+rows but not to update them. Creating articles worked, updating did not. Fixed by
+replacing the row with delete and insert (as SQLite already did), with an
+end-to-end regression test (m2xim/aiwiki#20). `AIWIKI_LOAD_SKIP_EDITS=1` remains
+available to measure a build without the fix.
 
 ## Interpretation
 
@@ -149,15 +142,15 @@ Not fixed here; server code was left untouched.
   5.5 s at 50 VUs) but no request failed or timed out.
 * **Edit conflicts are rare in this mix.** One revision conflict in 4272 requests
   at 50 VUs over 500 articles; the client re-reads the revision after a conflict.
-* **Corporate PostgreSQL scales further** (195 req/s at 10 VUs, 247 at 50 VUs,
+* **Corporate PostgreSQL scales further** (206 req/s at 10 VUs, 271 at 50 VUs,
   with a smaller per-user corpus), with a connection pool of 20 and 5 idle.
-  Reads stay about 11 ms at 10 VUs. Search is again the most expensive operation
-  (p50 79 ms at 10 VUs, 240 ms at 50) and is where throughput saturates between
-  10 and 50 VUs; request counts grow only 27 % for 5x the VUs, so beyond about 10
+  Reads stay about 13 ms and edits about 29 ms at 10 VUs. Search is again the most expensive operation
+  (p50 76 ms at 10 VUs, 223 ms at 50) and is where throughput saturates between
+  10 and 50 VUs; request counts grow only 32 % for 5x the VUs, so beyond about 10
   VUs the server, the database and the load generator share one machine and
   compete for CPU. The `mcp_credentials` counter UPDATE per request and the audit
   insert per MCP call are on the path of every request; their share was not
   profiled separately, so no claim is made about it.
 * The numbers cannot be compared directly between (a) and (b): different
-  databases, corpus per search (500 vs about 100), edit share replaced in (b), and
+  databases, corpus per search (500 vs about 100), and
   the generator in the same process family as the server.
