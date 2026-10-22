@@ -64,6 +64,8 @@ Moving between containers is done only through the access-impact preview (`POST 
 
 In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. Optional [OAuth resource discovery](MCP-OAUTH.md) binds tokens to the canonical MCP resource and `aiwiki:mcp` scope, with Keycloak as the authorization server. It also supports [temporary project-scoped read-only keys](MCP-TEMPORARY-ACCESS.md), tied to a live browser session, and [persistent personal/service keys](MCP-PERSISTENT-ACCESS.md). Provider bearer requests are rate-limited per subject (per process) before introspection and audited per request, see the Limits section of that page. Browser cookies do not authorize MCP. Real client login and the actual AD federation remain pilot checks.
 
+Interactive artifacts (versioned HTML/JS objects with sandboxed rendering, public links and an administrator switch) are described in [ARTIFACTS.md](ARTIFACTS.md); they add a migration component `artifacts`, FORCE RLS tables and startup checks.
+
 ## Verification
 
 The management interface is a separate page at `/?view=admin&tab=catalog` (or `projects`, `teams`, `users`). Its URL survives refresh and supports browser Back/Forward; the return button opens the previous wiki view. Team and user management are restricted to system administrators, while space/project owners and managers use the same page for their own resources. Server authorization is enforced independently of the visible navigation.

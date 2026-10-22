@@ -37,7 +37,10 @@ func (s *Server) migrateCorporate() error {
 	if err := s.migrateMCPScope(ctx); err != nil {
 		return err
 	}
-	return s.migrateCorporateMoves(ctx)
+	if err := s.migrateCorporateMoves(ctx); err != nil {
+		return err
+	}
+	return s.migrateArtifacts(ctx)
 }
 
 // splitCorporateSQL separates commands while preserving function bodies,
@@ -152,6 +155,8 @@ func (s *Server) corporateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/access/effective", s.corporateEffectiveAccess)
 	mux.HandleFunc("GET /api/catalog", s.corporateCatalog)
 	mux.HandleFunc("POST /api/corporate/spaces", s.corporateSpaceCreate)
+	mux.HandleFunc("GET /api/admin/settings", s.adminSettingsGet)
+	mux.HandleFunc("PUT /api/admin/settings", s.adminSettingsPut)
 	s.registerMoveRoutes(mux)
 }
 

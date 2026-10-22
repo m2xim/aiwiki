@@ -38,7 +38,7 @@ func mcpScopedTool(p *Principal, name string) bool {
 		return false
 	}
 	switch name {
-	case "wiki_write", "wiki_edit", "wiki_comment", "wiki_restore":
+	case "wiki_write", "wiki_edit", "wiki_comment", "wiki_restore", "wiki_artifact_write":
 		return true
 	}
 	return false

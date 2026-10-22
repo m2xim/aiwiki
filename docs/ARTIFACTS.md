@@ -1,9 +1,11 @@
 # Interactive artifacts
 
-Status: contract for implementation (2026-10-22). Owner decisions: artifacts are
-arbitrary HTML/JS run in a sandbox plus a built-in kit of ready blocks; a public
-link opens without sign-in and a system administrator can disable public links
-organisation-wide; an artifact is a versioned object of a space or project.
+Status: implemented on the server (2026-10-22); the application interface and the
+block kit are built separately. Owner decisions: artifacts are arbitrary HTML/JS run
+in a sandbox plus a built-in kit of ready blocks; a public link opens without sign-in
+and a system administrator can disable public links organisation-wide; an artifact is
+a versioned object of a space or project. Deviations found while implementing are
+listed in "Implementation notes" at the end.
 
 ## Model
 
@@ -43,7 +45,7 @@ in this stage).
 | list, view, read files, history | reader+ on container | owner |
 | create | editor+ on container | editor+ on container |
 | update files/title/description | editor+ | owner |
-| change visibility | owner or manager+ | owner |
+| change visibility | owner (see notes) | owner |
 | delete / restore (soft) | editor+ | owner |
 | create / revoke public links | owner or manager+ | owner |
 
@@ -91,7 +93,8 @@ The artifact never runs on the application's origin with application privileges.
 1. `POST /view` (or a valid public token) yields a capability: a URL
    `/artifact-frame/<cap>/index.html`, where `<cap>` = base64url(payload) + "." +
    base64url(HMAC-SHA256(secret, payload)), payload = artifact id, revision, expiry
-   (≤ 15 minutes), kind (`user`|`public`). Secret: `AIWIKI_ARTIFACT_SECRET`
+   (≤ 15 minutes), kind (`user`|`public`); a `public` payload also carries the id of
+   its link, so that revoking exactly that link ends the capability at once. Secret: `AIWIKI_ARTIFACT_SECRET`
    (required for several instances) or a random per-process value. The frame
    path is the authorisation; cookies are neither needed nor used.
 2. `GET /artifact-frame/<cap>/<path>` verifies the HMAC and expiry, re-checks that
@@ -102,9 +105,25 @@ The artifact never runs on the application's origin with application privileges.
    'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:;
    connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'`,
    `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
-   `Cross-Origin-Resource-Policy: same-origin`, `Permissions-Policy` denying camera,
+   `Cross-Origin-Resource-Policy: cross-origin`, `Permissions-Policy` denying camera,
    microphone, geolocation, payment, usb and clipboard-read, and
-   `Cache-Control: private, max-age=<seconds left>`.
+   `Cache-Control: private, max-age=<seconds left>`. The policy is `cross-origin`,
+   not `same-origin`, because the sandboxed document has the opaque origin `null`:
+   for the browser every request it makes is cross-origin, so a `same-origin` policy
+   blocks its own scripts, styles and images (verified in Edge/Chromium 155: the
+   artifact rendered as bare HTML). The files of a frame are protected by the
+   capability in the path; `/artifact-runtime/*` is public code.
+   Module scripts and fonts of the frame send `Origin: null`; for `GET`/`HEAD` of
+   `/artifact-frame/` and `/artifact-runtime/` the server answers
+   `Access-Control-Allow-Origin: *` to that origin (all other paths still refuse it).
+   Query strings are ignored: `frame_url` may carry `?theme=light|dark`, which the
+   kit reads; relative paths inside the artifact do not inherit it.
+   For the served `index.html` (text/html, that file only) the server inserts
+   `<script src="/artifact-runtime/resize.js"></script>` before the last `</body>`
+   (at the end if there is none) so artifacts built without the kit report their
+   height. The stored file, its size and sha256 are unchanged; `resize.js` is
+   embedded in the binary, does nothing when `window.AIWiki` exists at
+   `DOMContentLoaded`, and sends `aiwiki:resize` only inside a frame.
 3. The application embeds it as `<iframe sandbox="allow-scripts allow-modals"
    referrerpolicy="no-referrer" src="<frame_url>">` (never `allow-same-origin`,
    `allow-top-navigation`, `allow-popups`, `allow-forms`). Verified on 2026-10-22
@@ -155,3 +174,95 @@ headers and first rows of CSV/JSON; at most 100 KB) feeds `q` search. MCP tools:
 `max_chars`/`offset` continuation pinned to a revision) and `wiki_artifact_write`
 (create, or partial file changes with `base_revision`). MCP cannot share,
 change visibility or delete.
+
+## Implementation notes
+
+Code: `internal/server/artifacts*.go`, SQL in `artifacts.sql` (component `artifacts`
+v1, after `corporate_moves`), tests in `artifacts_test.go` (SQLite) and
+`artifacts_postgres_test.go` (PostgreSQL).
+
+Additions to the tables above. `artifacts` also has `file_count`, `projection`
+(JSON: text of each file of the current revision) and `search_text` (lower-cased
+title + description + projection, at most 100 KB, searched by `q` as AND of
+substrings; lower-casing happens in Go so Cyrillic works in both databases);
+`artifact_revisions` has `file_count`. A delete or restore is a revision too
+(same manifest, `base_revision` required, message "Удаление артефакта" /
+"Восстановление артефакта"). An update that changes nothing records no revision and
+returns the current state. Request bodies are decoded strictly (unknown fields are
+`400`), up to 28 MB; a stale `base_revision` answers `409` with
+`{"error", "current_revision"}`. Paths are stricter than the pattern: any `..` is
+refused, names are unique case-insensitively, a path cannot be both file and
+directory. Bytes are stored under the key `art-<sha256>`; they are written before the
+database transaction and read back with a size and sha256 check; unreferenced
+objects (failed commits, deleted artifacts) are not collected in this stage.
+`artifact_blobs` is written by the server but cannot be read or changed by the
+runtime role at all (no SELECT policy; duplicates are detected through a savepoint).
+MCP requests are limited to about 3 MB by the existing MCP body limit.
+
+Rights, as enforced (RLS policies, a guard trigger, and the same rules in the API):
+
+- `private` is the owner's alone, and only while the owner keeps reader (view) or
+  editor (write) access to the container; managers, container owners and system
+  administrators see nothing, not even in lists or search.
+- **Deviation:** only the owner changes visibility. The table said "owner or
+  manager+", but a manager who made an artifact private would lose sight of it, and
+  PostgreSQL requires the updated row to stay visible to the updating session, so
+  that cannot work with the "managers get no access" rule. `can_manage` equals
+  "owner and editor+"; `can_share` = owner, or manager+ for `inherit` artifacts.
+- Creation needs editor+ on the container; the creator becomes the owner
+  (`owner_id`, in trusted mode the empty string). Container, owner and creation
+  time are immutable (guard trigger); a project that holds artifacts cannot be moved
+  to another space (the move is refused, private and deleted artifacts counted), as
+  artifacts do not move in this stage.
+- Soft deletion revokes all links in the same transaction (a trigger in PostgreSQL,
+  so an editor who cannot manage links still revokes them); restore does not revive
+  them. New links are refused (`409`) for deleted artifacts and while public links
+  are disabled; listing and revoking still work. The token appears only in the
+  `201` response as `"url": "/s/<token>"` (relative); the UI composes the address.
+- `GET /api/artifacts/{id}` also returns deleted artifacts to those who may restore
+  them, and accepts `?revision=`. The list excludes deleted ones.
+
+PostgreSQL: `artifacts`, `artifact_revisions`, `artifact_blobs`, `artifact_shares`,
+`app_settings` have ENABLE + FORCE RLS and no DELETE policy (hard deletes and
+`TRUNCATE` are impossible for the runtime role). Restrictive `mcp_scope_*` policies
+keep MCP-scoped sessions from sharing, changing settings or writing in read mode; a
+trigger refuses MCP visibility and delete changes. `app_settings` is readable by all
+and writable only through a policy that calls `artifact_is_admin(...)` (a
+SECURITY DEFINER lookup of `users.admin`), on top of the API check. Unauthenticated
+requests (frame, public page) run on a connection whose session carries
+`app.artifact_view` / `app.share_id` / `app.share_token_hash`, set only after the
+capability was verified or the token hashed; policies grant exactly that live
+artifact, link and its revisions. Two narrow SECURITY DEFINER triggers
+(`artifact_revoke_shares`, `artifact_guard_project_move`) read and update rows
+through a probe predicate (`current_user <> session_user` and
+`app.artifact_probe`), which only definer code can satisfy. Startup
+(`validateRuntimeSchema` → `validateArtifactSchema`) refuses to run when the tables
+lack FORCE RLS or a separate owner, expected policies or triggers are missing, any
+delete/ALL policy exists, `app_settings` writes are not admin-only, or the helper
+functions are executable by PUBLIC. Audit events (`artifact.create|update|delete|
+restore|visibility|share.create|share.revoke`, `settings.update`) are written in
+the same transaction without file content or titles; scoped MCP requests are not
+written there (the table is closed to them) but are audited per request as
+before. Trusted mode has no audit table.
+
+Rendering: the capability payload is JSON `{a, r, e, k[, s]}`; it is verified in
+constant time and must expire within 15 minutes (+30 s). `AIWIKI_ARTIFACT_SECRET`
+(at least 16 bytes) is read at start, otherwise a random per-process secret is used.
+The frame CSP comes from one function (`artifactFrameCSP`) and the whole string is
+tested. Every frame request re-checks deletion, link revocation and the global
+switch; the user capability does not depend on the switch. `/s/<token>` is a
+server-rendered page with a per-request CSP nonce, no cookies, `no-store`, `noindex`,
+and one identical `404` page for malformed, unknown, revoked, deleted and disabled
+cases. Rate limits are in memory per process: 300 requests/min per client address
+(`RemoteAddr`; behind a reverse proxy that is the proxy, so tune or add limits
+there) and 60/min per link, answered `429`. A public page open longer than 15
+minutes cannot load further sub-files of its frame (reload the page).
+`AIWIKI_ARTIFACT_ORIGIN` serves frames and the runtime from that origin only
+(other paths there answer `404`), `frame_url` becomes absolute, and the frame
+`frame-ancestors` also allows the application origin (set with `-allowed-origin`).
+Not covered by tests against a real second host.
+
+Settings: `GET|PUT /api/admin/settings` exist in corporate mode only and need a
+system administrator (the other users get `403`); trusted mode has no endpoint and
+links are always allowed. Not implemented: artifact content in `GET /api/export`,
+the `artifact` block rendering in articles (interface), object garbage collection.
