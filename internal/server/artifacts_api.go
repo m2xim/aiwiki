@@ -501,6 +501,11 @@ func (s *Server) createArtifact(ctx context.Context, in artifactCreateIn) (artif
 	if err != nil {
 		return artifactDetail{}, err
 	}
+	newArtifactID := newID()
+	quotaItems := artifactQuotaItems(newArtifactID, blobs)
+	if err := s.quotaPrecheck(s.DB, in.SpaceID, in.ProjectID, quotaItems); err != nil {
+		return artifactDetail{}, err
+	}
 	rs, done, err := s.artifactStoreBlobs(ctx, blobs)
 	if err != nil {
 		return artifactDetail{}, err
@@ -526,8 +531,11 @@ func (s *Server) createArtifact(ctx context.Context, in artifactCreateIn) (artif
 	if rs.principal != nil {
 		owner = rs.principal.ID
 	}
+	if err = rs.quotaAdmit(tx, in.SpaceID, in.ProjectID, quotaItems); err != nil {
+		return artifactDetail{}, err
+	}
 	ts := stamp()
-	a := artifactMeta{ID: newID(), SpaceID: in.SpaceID, ProjectID: in.ProjectID, Title: title, Description: desc, Visibility: in.Visibility, OwnerID: owner, Revision: 1, Author: rs.changeAuthor("human"), CreatedAt: ts, UpdatedAt: ts, FileCount: len(files)}
+	a := artifactMeta{ID: newArtifactID, SpaceID: in.SpaceID, ProjectID: in.ProjectID, Title: title, Description: desc, Visibility: in.Visibility, OwnerID: owner, Revision: 1, Author: rs.changeAuthor("human"), CreatedAt: ts, UpdatedAt: ts, FileCount: len(files)}
 	proj := artifactProjectionSet{}.next(files, blobs, nil)
 	projRaw, _ := json.Marshal(proj)
 	manifest, _ := json.Marshal(files)
@@ -827,6 +835,10 @@ func (s *Server) commitArtifact(ctx context.Context, id string, ch artifactChang
 	if err := s.artifactCheckChange(s.DB, cur, ch); err != nil {
 		return artifactDetail{}, err
 	}
+	quotaItems := artifactQuotaItems(id, ch.blobs)
+	if err := s.quotaPrecheck(s.DB, cur.SpaceID, cur.ProjectID, quotaItems); err != nil {
+		return artifactDetail{}, err
+	}
 	rs, done, err := s.artifactStoreBlobs(ctx, ch.blobs)
 	if err != nil {
 		return artifactDetail{}, err
@@ -908,6 +920,9 @@ func (s *Server) commitArtifact(ctx context.Context, id string, ch artifactChang
 	proj := parseProjectionSet(projRaw).next(files, ch.blobs, ch.deletes)
 	newProj, _ := json.Marshal(proj)
 	manifest, _ := json.Marshal(files)
+	if err := rs.quotaAdmit(tx, cur.SpaceID, cur.ProjectID, quotaItems); err != nil {
+		return artifactDetail{}, err
+	}
 	// The revision row goes first so that its policy sees the artifact in its
 	// previous state.
 	if _, err := tx.Exec(`INSERT INTO artifact_revisions(artifact_id,revision,author,message,created_at,manifest,file_count) VALUES(?,?,?,?,?,?,?)`, id, next.Revision, next.Author, message, ts, string(manifest), len(files)); err != nil {

@@ -21,6 +21,9 @@ func OpenCorporate(ctx context.Context, cfg CorporateConfig, dataDir, webDir str
 	if cfg.DatabaseURL == "" || cfg.IssuerURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.RedirectURL == "" {
 		return nil, errors.New("corporate mode requires database and complete OIDC configuration")
 	}
+	if cfg.SpaceQuotaBytes < 0 {
+		return nil, errors.New("space storage quota must not be negative")
+	}
 	if err := os.MkdirAll(filepath.Join(dataDir, "files"), 0755); err != nil {
 		return nil, err
 	}
@@ -50,7 +53,7 @@ func OpenCorporate(ctx context.Context, cfg CorporateConfig, dataDir, webDir str
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{DB: db, DataDir: dataDir, WebDir: webDir}
+	s := &Server{DB: db, DataDir: dataDir, WebDir: webDir, spaceQuotaDefault: cfg.SpaceQuotaBytes}
 	if s.art, err = newArtifactState(); err != nil {
 		db.Close()
 		return nil, err

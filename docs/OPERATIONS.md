@@ -108,7 +108,10 @@ through the existing administration API; nobody else can change it.
 
 * **Counted:** the bytes of distinct stored objects referenced by the space —
   attachments of its articles and the files of all revisions of its artifacts,
-  deleted (restorable) ones included, each content hash once per space.
+  deleted (restorable) ones included. An artifact file hash is counted once per
+  artifact (across all its revisions), not once per space: crediting content held by
+  another, possibly private, artifact would let an editor test whether an exact file
+  exists there.
 * **Enforced** on attachment upload and on artifact create/update (HTTP and
   `wiki_artifact_write`). The check and the insert happen in one transaction
   under `pg_advisory_xact_lock` keyed on the space, so two parallel uploads
@@ -124,3 +127,32 @@ through the existing administration API; nobody else can change it.
 * Moves (`docs/MOVES.md`) are not blocked by quotas; a space may end up above
   its limit after a move and then only accepts deletions until it is below.
 * Trusted (single-user SQLite) mode has no quotas.
+
+### Implementation notes
+
+* Migration component `storage_quotas` v1 (`internal/server/storage_quotas.sql`) adds
+  `spaces.storage_quota_bytes`, a trigger that refuses any change of it except by
+  `space_set_storage_quota` (system administrators; no role in the space needed) or the
+  table owner role, and the `SECURITY DEFINER` functions `space_storage_used`,
+  `space_storage_override`, `space_storage_admit` and `space_set_storage_quota`
+  (fixed `search_path=pg_catalog, public, pg_temp`, catalog objects schema-qualified, `EXECUTE` revoked from `PUBLIC`, checked at startup). Usage and
+  override are returned only to managers/owners of the space and administrators (NULL
+  otherwise); `space_storage_admit` answers one boolean and needs the editor role in the
+  container. Rows hidden by RLS are reached through probe policies that pass only while
+  `current_user <> session_user` and the function has set `app.quota_probe`.
+* Object identity: an artifact file is the pair (artifact, `sha256`) over all revisions
+  (sizes from the manifests); an attachment is its stored object (`stored_name`;
+  attachments are not content-addressed, so equal files uploaded twice count twice).
+  Admission credits only a hash already stored in the same artifact being updated; a
+  create gets no credit, and two artifacts with identical files each count them.
+* Check: `used + (bytes of the objects not yet stored in the space) <= limit`, so
+  re-using content of the same artifact costs nothing, but an over-limit space refuses every write that
+  carries files. Operations that add no files (title/description edits, delete, restore)
+  are not checked. An early check without bytes sent runs before the object store is
+  written; the binding one runs in the writing transaction.
+* API: `GET /api/spaces/{id}/storage` returns `{"used","limit","override","default"}`
+  (`limit` 0 = unlimited) to managers, owners and administrators and an identical `403
+  {"error":"forbidden"}` to everybody else, existing space or not;
+  `PATCH /api/spaces/{id}` accepts `storage_quota_bytes` (`null` = default, `0` =
+  unlimited, administrators only). MCP `wiki_artifact_write` returns the tool error
+  `{"error":"space storage quota exceeded"}`.

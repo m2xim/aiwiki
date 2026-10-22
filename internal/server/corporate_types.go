@@ -19,6 +19,8 @@ type CorporateConfig struct {
 	RolesClaim           string
 	SessionTTL           time.Duration
 	AllowInsecureHTTP    bool
+	// SpaceQuotaBytes is the default storage limit per space; 0 means unlimited.
+	SpaceQuotaBytes int64
 }
 
 type Principal struct {
