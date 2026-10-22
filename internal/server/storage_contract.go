@@ -14,6 +14,8 @@ type objectStore interface {
 	// List returns the objects whose key (relative to the store prefix) starts
 	// with the given prefix. Only the offline storage check uses it.
 	List(context.Context, string) ([]objectInfo, error)
+	// Stat returns the current size and modification time of one object, or errObjectNotFound.
+	Stat(context.Context, string) (objectInfo, error)
 }
 
 // objectInfo describes one stored object; Key is relative to the store prefix.

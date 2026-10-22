@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -31,13 +32,13 @@ import (
 // starts with "aiwiki-drill-". It needs a real PostgreSQL (with podman to run
 // pg_dump/pg_restore inside the container) and a real S3-compatible bucket.
 //
-//	AIWIKI_TEST_POSTGRES_OWNER   migration owner  (aiwiki_owner)
-//	AIWIKI_TEST_POSTGRES         runtime role     (aiwiki_app)
-//	AIWIKI_TEST_DRILL_BACKUP     backup role URL  (BYPASSRLS, pg_read_all_data)
-//	AIWIKI_TEST_DRILL_ADMIN      superuser URL of the maintenance database "postgres"
-//	AIWIKI_TEST_DRILL_PG         PostgreSQL container name (aiwiki-drill-*)
-//	AIWIKI_TEST_S3_ENDPOINT, AIWIKI_TEST_S3_BUCKET (+ AWS_* credentials)
-//	AIWIKI_TEST_DRILL_BINARY     optional: built aiwiki binary for exit-code checks
+//	AIWIKI_DRILL_PG_OWNER   migration owner  (aiwiki_owner)
+//	AIWIKI_DRILL_PG_APP         runtime role     (aiwiki_app)
+//	AIWIKI_DRILL_PG_BACKUP     backup role URL  (BYPASSRLS, pg_read_all_data)
+//	AIWIKI_DRILL_PG_ADMIN      superuser URL of the maintenance database "postgres"
+//	AIWIKI_DRILL_PG_CONTAINER         PostgreSQL container name (aiwiki-drill-*)
+//	AIWIKI_DRILL_S3_ENDPOINT, AIWIKI_DRILL_S3_BUCKET (+ AWS_* credentials)
+//	AIWIKI_DRILL_BINARY     optional: built aiwiki binary for exit-code checks
 
 func drillPodman(t *testing.T, container string, env []string, args ...string) string {
 	t.Helper()
@@ -177,9 +178,9 @@ func drillRowCounts(t *testing.T, backupURL string) map[string]int {
 	return out
 }
 
-func drillRun(t *testing.T, binary string, env []string) (int, string) {
+func drillRun(t *testing.T, binary string, env []string, args ...string) (int, string) {
 	t.Helper()
-	cmd := exec.Command(binary, "check-storage", "-verify-hashes")
+	cmd := exec.Command(binary, append([]string{"check-storage"}, args...)...)
 	cmd.Env = append(os.Environ(), env...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -195,15 +196,28 @@ func drillRun(t *testing.T, binary string, env []string) (int, string) {
 }
 
 func TestBackupDrillPostgresS3(t *testing.T) {
-	ownerURL, appURL := os.Getenv("AIWIKI_TEST_POSTGRES_OWNER"), os.Getenv("AIWIKI_TEST_POSTGRES")
-	backupURL, adminURL := os.Getenv("AIWIKI_TEST_DRILL_BACKUP"), os.Getenv("AIWIKI_TEST_DRILL_ADMIN")
-	container := os.Getenv("AIWIKI_TEST_DRILL_PG")
-	endpoint, bucket := os.Getenv("AIWIKI_TEST_S3_ENDPOINT"), os.Getenv("AIWIKI_TEST_S3_BUCKET")
+	ownerURL, appURL := os.Getenv("AIWIKI_DRILL_PG_OWNER"), os.Getenv("AIWIKI_DRILL_PG_APP")
+	backupURL, adminURL := os.Getenv("AIWIKI_DRILL_PG_BACKUP"), os.Getenv("AIWIKI_DRILL_PG_ADMIN")
+	container := os.Getenv("AIWIKI_DRILL_PG_CONTAINER")
+	endpoint, bucket := os.Getenv("AIWIKI_DRILL_S3_ENDPOINT"), os.Getenv("AIWIKI_DRILL_S3_BUCKET")
 	if ownerURL == "" || appURL == "" || backupURL == "" || adminURL == "" || container == "" || endpoint == "" || bucket == "" {
-		t.Skip("set the AIWIKI_TEST_DRILL_* , AIWIKI_TEST_POSTGRES* and AIWIKI_TEST_S3_* variables to run the backup drill (see scripts/backup-drill.mjs)")
+		t.Skip("set the AIWIKI_DRILL_PG_* and AIWIKI_DRILL_S3_* variables to run the backup drill (see scripts/backup-drill.mjs)")
 	}
 	if !strings.HasPrefix(container, "aiwiki-drill-") {
 		t.Fatal("the drill destroys its database: the container name must start with aiwiki-drill-")
+	}
+	if !strings.HasPrefix(bucket, "aiwiki-drill") {
+		t.Fatal("the drill wipes a bucket prefix: the bucket name must start with aiwiki-drill")
+	}
+	// Every database URL must point at the cluster of the drill container.
+	want := strings.TrimSpace(drillPodman(t, container, nil, "psql", "-U", "postgres", "-d", "postgres", "-tA", "-c", "SELECT system_identifier FROM pg_control_system()"))
+	if want == "" {
+		t.Fatal("cannot read the system identifier of the drill container")
+	}
+	for name, u := range map[string]string{"owner": ownerURL, "app": appURL, "backup": backupURL, "admin": adminURL} {
+		if got := drillSystemID(t, u); got != want {
+			t.Fatalf("%s URL points at another cluster (system_identifier mismatch): refusing to destroy anything", name)
+		}
 	}
 	ctx := context.Background()
 	const prefix = "drill/"
@@ -352,16 +366,48 @@ func TestBackupDrillPostgresS3(t *testing.T) {
 
 	// ---- 3. disaster: drop the database and wipe the bucket --------------------
 	s1.Close()
-	{
+	recreateDB := func() {
+		t.Helper()
 		cfg, _ := pgx.ParseConfig(adminURL)
 		adm := stdlib.OpenDB(*cfg)
-		for _, q := range []string{`DROP DATABASE aiwiki_ci WITH (FORCE)`, `CREATE DATABASE aiwiki_ci OWNER aiwiki_owner`} {
-			if _, err = adm.Exec(q); err != nil {
+		defer adm.Close()
+		for _, q := range []string{`DROP DATABASE IF EXISTS aiwiki_ci WITH (FORCE)`, `CREATE DATABASE aiwiki_ci OWNER aiwiki_owner`} {
+			if _, err := adm.Exec(q); err != nil {
 				t.Fatalf("%s: %v", q, err)
 			}
 		}
-		adm.Close()
 	}
+	recreateDB()
+	// Wrong-database guard: a freshly migrated, EMPTY schema next to the bucket
+	// that still holds all objects. Deleting orphans must be refused (exit 2),
+	// and nothing may be removed.
+	{
+		empty := open()
+		empty.Close()
+		objsBefore, _ := store.List(ctx, "")
+		cfg := checkCfg
+		cfg.Out = io.Discard
+		cfg.DeleteOrphans, cfg.Yes = true, true
+		rep, err := CheckStorage(ctx, cfg)
+		var refused errDeleteRefused
+		if !errors.As(err, &refused) || rep == nil || rep.OrphansDeleted != 0 {
+			t.Fatalf("delete against an empty migrated database was not refused: %+v %v", rep, err)
+		}
+		if after, _ := store.List(ctx, ""); len(after) != len(objsBefore) || len(after) == 0 {
+			t.Fatalf("objects changed: %d -> %d", len(objsBefore), len(after))
+		}
+		if binary := os.Getenv("AIWIKI_DRILL_BINARY"); binary != "" {
+			env := []string{"AIWIKI_BACKUP_DATABASE_URL=" + backupURL, "AIWIKI_S3_BUCKET=" + bucket, "AIWIKI_S3_REGION=us-east-1", "AIWIKI_S3_ENDPOINT=" + endpoint, "AIWIKI_S3_PREFIX=" + prefix, "AIWIKI_S3_PATH_STYLE=1", "AIWIKI_ALLOW_INSECURE_LOOPBACK=1"}
+			code, out := drillRun(t, binary, env, "-delete-orphans", "-yes")
+			if code != 2 || !strings.Contains(out, "refusing to delete orphans") {
+				t.Fatalf("aiwiki check-storage -delete-orphans -yes on an empty database: exit %d\n%s", code, out)
+			}
+		}
+		if after, _ := store.List(ctx, ""); len(after) != len(objsBefore) {
+			t.Fatal("objects removed by the refused command")
+		}
+	}
+	recreateDB() // the disaster: the migrated empty schema is destroyed as well
 	wipeBucket()
 	if objs, _ := store.List(ctx, ""); len(objs) != 0 {
 		t.Fatal("bucket not empty")
@@ -459,10 +505,10 @@ func TestBackupDrillPostgresS3(t *testing.T) {
 		t.Fatalf("unexpected orphan %q", rep.Orphans[0].Key)
 	}
 	_ = artifactObjects
-	binary := os.Getenv("AIWIKI_TEST_DRILL_BINARY")
+	binary := os.Getenv("AIWIKI_DRILL_BINARY")
 	cliEnv := []string{"AIWIKI_BACKUP_DATABASE_URL=" + backupURL, "AIWIKI_S3_BUCKET=" + bucket, "AIWIKI_S3_REGION=us-east-1", "AIWIKI_S3_ENDPOINT=" + endpoint, "AIWIKI_S3_PREFIX=" + prefix, "AIWIKI_S3_PATH_STYLE=1", "AIWIKI_ALLOW_INSECURE_LOOPBACK=1"}
 	if binary != "" {
-		if code, out := drillRun(t, binary, cliEnv); code != 0 {
+		if code, out := drillRun(t, binary, cliEnv, "-verify-hashes"); code != 0 {
 			t.Fatalf("aiwiki check-storage exit %d on a healthy restore:\n%s", code, out)
 		}
 	}
@@ -480,7 +526,7 @@ func TestBackupDrillPostgresS3(t *testing.T) {
 		t.Fatalf("the lost attachment still downloads: %d", code)
 	}
 	if binary != "" {
-		code, out := drillRun(t, binary, cliEnv)
+		code, out := drillRun(t, binary, cliEnv, "-verify-hashes")
 		if code != 1 || !strings.Contains(out, lostKey) || !strings.Contains(out, "RESULT: FAILED") {
 			t.Fatalf("aiwiki check-storage exit %d for a lost object:\n%s", code, out)
 		}
@@ -516,4 +562,19 @@ func TestBackupDrillPostgresS3(t *testing.T) {
 	}
 	t.Logf("drill OK: %d table row counts identical, %d references, %d objects", len(after), refsBefore, objsBefore)
 	wipeBucket()
+}
+
+func drillSystemID(t *testing.T, dsn string) string {
+	t.Helper()
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal("invalid drill database URL")
+	}
+	db := stdlib.OpenDB(*cfg)
+	defer db.Close()
+	var id string
+	if err = db.QueryRow(`SELECT system_identifier::text FROM pg_control_system()`).Scan(&id); err != nil {
+		t.Fatalf("cannot read the system identifier: %v", err)
+	}
+	return id
 }

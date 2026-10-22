@@ -85,7 +85,7 @@ Compares object references in the database with the objects in the bucket (under
 
 | Variable | Meaning |
 | --- | --- |
-| `AIWIKI_BACKUP_DATABASE_URL` | database URL of a role that bypasses row security; falls back to `AIWIKI_MIGRATION_DATABASE_URL`, which only works if that role is a superuser or `BYPASSRLS` (the normal owner role is neither, see above) |
+| `AIWIKI_BACKUP_DATABASE_URL` | database URL of the backup role (superuser or `BYPASSRLS`). There is deliberately no fallback to `AIWIKI_MIGRATION_DATABASE_URL`: the owner role must stay `NOBYPASSRLS` (the server refuses to run otherwise), so it can never read the rows |
 | `AIWIKI_S3_*`, `AIWIKI_ALLOW_INSECURE_LOOPBACK` | same as the server; standard AWS credential chain |
 
 It collects references from `attachments.stored_name` (including soft-deleted rows), `artifact_blobs.stored_name` and the `sha256` values in `artifact_revisions` manifests (the only places where objects are referenced). The bucket needs list permission for the prefix for this command, which the server itself does not use.
@@ -96,9 +96,15 @@ Report:
 * **SIZE MISMATCH**: the object has a different size than the database records. Exit code 1.
 * **HASH MISMATCH** (`-verify-hashes`): the bytes of an artifact object do not hash to the key/recorded value. Exit code 1. This reads every artifact object; run it after restores, not every minute. An unreadable object during this pass is reported as UNVERIFIED and also fails.
 * **Orphans**: in the bucket, not in the database. Information. Typical causes: an upload whose database insert failed and whose cleanup failed, or an object copy newer than the dump.
-* Exit code 2: the check itself could not run (wrong role, unreachable database or bucket). The command never prints `OK` in that case.
+* Exit code 2: the check could not run or was refused (wrong role, unreachable database or bucket, or an unsafe `-delete-orphans`, see below). The command never prints `OK` in that case.
 
-Orphan clean-up is explicit: `-delete-orphans -yes`. Without `-yes` it only reports. Orphans younger than 24 hours are never deleted (they may belong to an upload in progress; `-orphan-min-age` can only raise this limit), and the references are read again just before deleting. Do not delete orphans right after a restore that you have not yet verified.
+Orphan clean-up is explicit: `-delete-orphans -yes`. Without `-yes` it only reports. Orphans younger than 24 hours are never deleted (they may belong to an upload in progress; `-orphan-min-age` can only raise this limit). Safeguards, all of which end with exit code 2 and no deletion at all:
+
+* the report has missing, size-mismatched or corrupted objects (fix them first);
+* the database references no objects while the bucket has some: the typical signature of an empty or wrong database. Only `-allow-empty-database` overrides this, for the case that you really want to empty the bucket;
+* every object in the bucket is an orphan.
+
+Because artifact objects are content-addressed, an upload can recreate an orphan's key between listing and deleting. Deletion therefore works in batches of 100: the references are re-read before each batch, and every object is checked with HEAD right before its DELETE and skipped if it changed since listing or is younger than the minimum age. Keys that the server cannot have written (for example containing `/`) are listed as "skipped" and never touched. Do not delete orphans right after a restore that you have not yet verified.
 
 ## Secrets and in-memory state
 
@@ -121,6 +127,7 @@ No numbers are promised here; they depend on your setup. Measure them:
 `node scripts/backup-drill.mjs` starts its own disposable PostgreSQL and SeaweedFS containers (`aiwiki-drill-*`, ports 55440 and 39100 by default), then runs the Go test `TestBackupDrillPostgresS3` against them and removes the containers. It needs podman and Go. The test skips itself unless its environment variables are set, so ordinary `go test` is unaffected.
 
 The scenario: create a space, an article with two revisions, two attachments (one soft-deleted), two artifacts with byte-identical files (one stored object), a second artifact revision and a public link; `pg_dump -Fc` with the backup role, then an upload (to demonstrate the ordering), then an object copy through the S3 API; drop the database and wipe the bucket prefix; restore as described above; start the server with `OpenCorporate` on the restored data; verify through HTTP: article and history, attachment bytes, artifact files of current and old revisions, the artifact frame, the public link and its frame, and that old sessions are rejected; run `check-storage` (also as the built binary, checking exit codes). Two negative cases follow: a deleted object is reported as MISSING with exit code 1, and a same-size corrupted artifact object is only found with `-verify-hashes`.
+Before the disaster step the drill also points `check-storage -delete-orphans -yes` at a freshly migrated, empty schema next to the full bucket and checks that it is refused (exit code 2) and nothing is deleted. The drill refuses to start unless the container name and the bucket name start with `aiwiki-drill` and every database URL reports the same PostgreSQL `system_identifier` as the container. It reads only its own `AIWIKI_DRILL_*` variables, never the ones used by the ordinary CI tests.
 
 ## Trusted-network (SQLite) edition
 

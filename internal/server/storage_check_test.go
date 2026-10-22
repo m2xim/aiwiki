@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,34 +150,172 @@ func TestCheckStorageReport(t *testing.T) {
 	if strings.Contains(text, "good bytes") || strings.Contains(text, "corrupted") {
 		t.Fatal("report printed object content")
 	}
-
-	// Deleting orphans: needs -yes, spares young ones and anything a fresh read now references.
-	if rep, _ = checkStorage(ctx, load, store, StorageCheckConfig{DeleteOrphans: true}); rep.OrphansDeleted != 0 {
-		t.Fatal("deleted without confirmation")
+	// Missing objects forbid deletion altogether.
+	rep, err = checkStorage(ctx, load, store, StorageCheckConfig{DeleteOrphans: true, Yes: true})
+	var refused errDeleteRefused
+	if !errors.As(err, &refused) || rep == nil || rep.OrphansDeleted != 0 {
+		t.Fatalf("delete with missing objects: %+v %v", rep, err)
 	}
+	if _, err = ms.Get(ctx, "old-orphan"); err != nil {
+		t.Fatal("orphan deleted although objects are missing")
+	}
+}
+
+// storeAt is a memStore with controllable modification times.
+type storeAt struct {
+	*memStore
+	mod    map[string]time.Time
+	onStat func(key string)
+}
+
+func newStoreAt(ages map[string]time.Duration) *storeAt {
+	s := &storeAt{memStore: newMemStore(), mod: map[string]time.Time{}}
+	for k, a := range ages {
+		s.mod[k] = time.Now().Add(-a).Truncate(time.Second)
+	}
+	return s
+}
+
+func (s *storeAt) put(t *testing.T, k, data string) {
+	t.Helper()
+	if err := s.memStore.Put(context.Background(), k, strings.NewReader(data), int64(len(data)), ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (s *storeAt) when(k string) time.Time {
+	if m, ok := s.mod[k]; ok {
+		return m
+	}
+	return time.Now()
+}
+
+func (s *storeAt) List(ctx context.Context, prefix string) ([]objectInfo, error) {
+	objs, err := s.memStore.List(ctx, prefix)
+	for i := range objs {
+		objs[i].Modified = s.when(objs[i].Key)
+	}
+	return objs, err
+}
+
+func (s *storeAt) Stat(ctx context.Context, key string) (objectInfo, error) {
+	if s.onStat != nil {
+		s.onStat(key)
+	}
+	o, err := s.memStore.Stat(ctx, key)
+	o.Modified = s.when(key)
+	return o, err
+}
+
+func TestCheckStorageDeleteGuards(t *testing.T) {
+	ctx := context.Background()
+	const day = 48 * time.Hour
+	mk := func(refKeys []string, orphans ...string) (*storeAt, func(context.Context) ([]storageRef, error)) {
+		ages := map[string]time.Duration{}
+		st := newStoreAt(ages)
+		var refs []storageRef
+		for _, k := range refKeys {
+			st.mod[k] = time.Now().Add(-day)
+			st.put(t, k, "data")
+			refs = append(refs, storageRef{Key: k, Size: 4})
+		}
+		for _, k := range orphans {
+			st.mod[k] = time.Now().Add(-day)
+			st.put(t, k, "junk")
+		}
+		return st, func(context.Context) ([]storageRef, error) { return refs, nil }
+	}
+	del := StorageCheckConfig{DeleteOrphans: true, Yes: true}
+	has := func(st *storeAt, k string) bool { _, err := st.memStore.Get(ctx, k); return err == nil }
+
+	// Healthy: the orphan goes, referenced objects stay.
+	st, load := mk([]string{"a", "b"}, "o1")
+	rep, err := checkStorage(ctx, load, st, del)
+	if err != nil || rep.OrphansDeleted != 1 || has(st, "o1") || !has(st, "a") {
+		t.Fatalf("healthy delete: %+v %v", rep, err)
+	}
+
+	// Without -yes nothing is deleted.
+	st, load = mk([]string{"a"}, "o1")
+	if rep, err = checkStorage(ctx, load, st, StorageCheckConfig{DeleteOrphans: true}); err != nil || rep.OrphansDeleted != 0 || !has(st, "o1") {
+		t.Fatalf("no -yes: %+v %v", rep, err)
+	}
+
+	// Empty database (migrated schema) + bucket with old objects: refused.
+	st, load = mk(nil, "o1", "o2", "o3")
+	rep, err = checkStorage(ctx, load, st, del)
+	var refused errDeleteRefused
+	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "no objects at all") || rep == nil || rep.OrphansDeleted != 0 || !has(st, "o1") || !has(st, "o3") {
+		t.Fatalf("empty database: %+v %v", rep, err)
+	}
+	// ...unless explicitly allowed.
+	allow := del
+	allow.AllowEmptyDatabase = true
+	if rep, err = checkStorage(ctx, load, st, allow); err != nil || rep.OrphansDeleted != 3 {
+		t.Fatalf("allowed empty database: %+v %v", rep, err)
+	}
+
+	// A database that shares nothing with the bucket (wrong database): its
+	// references are missing, so deletion is refused. (The related "every object
+	// is an orphan" rule is a second line of defence and cannot fire without
+	// missing objects, so it has no separate case.)
+	st, _ = mk(nil, "o1", "o2")
+	foreign := func(context.Context) ([]storageRef, error) { return []storageRef{{Key: "other", Size: -1}}, nil }
+	rep, err = checkStorage(ctx, foreign, st, del)
+	if !errors.As(err, &refused) || rep.OrphansDeleted != 0 || !has(st, "o1") || !has(st, "o2") {
+		t.Fatalf("foreign database: %+v %v", rep, err)
+	}
+
+	// Race: the object is overwritten between listing and deletion.
+	st, load = mk([]string{"a"}, "o1", "o2")
+	st.onStat = func(k string) {
+		if k == "o1" {
+			st.mod["o1"] = time.Now() // a new upload of the same key
+		}
+	}
+	rep, err = checkStorage(ctx, load, st, del)
+	if err != nil || rep.OrphansDeleted != 1 || rep.OrphansSkipped != 1 || !has(st, "o1") || has(st, "o2") {
+		t.Fatalf("overwrite race: %+v %v", rep, err)
+	}
+
+	// Race: a row for the orphan appears before its batch is deleted.
+	st, _ = mk([]string{"a"}, "o1")
 	calls := 0
-	racing := func(c context.Context) ([]storageRef, error) {
+	racing := func(context.Context) ([]storageRef, error) {
 		calls++
 		if calls > 1 {
-			return append(append([]storageRef{}, refs...), storageRef{Key: "old-orphan", Size: -1}), nil
+			return []storageRef{{Key: "a", Size: 4}, {Key: "o1", Size: -1}}, nil
 		}
-		return refs, nil
+		return []storageRef{{Key: "a", Size: 4}}, nil
 	}
-	if rep, _ = checkStorage(ctx, racing, store, StorageCheckConfig{DeleteOrphans: true, Yes: true}); rep.OrphansDeleted != 0 {
-		t.Fatal("deleted an object that gained a reference")
+	if rep, err = checkStorage(ctx, racing, st, del); err != nil || rep.OrphansDeleted != 0 || !has(st, "o1") {
+		t.Fatalf("new reference race: %+v %v", rep, err)
 	}
-	rep, err = checkStorage(ctx, load, store, StorageCheckConfig{DeleteOrphans: true, Yes: true})
-	if err != nil || rep.OrphansDeleted != 1 {
-		t.Fatalf("delete: %+v %v", rep, err)
+
+	// Batches: references are re-read before every batch of orphanDeleteBatch.
+	many := make([]string, 0, 250)
+	for i := 0; i < 250; i++ {
+		many = append(many, fmt.Sprintf("m%03d", i))
 	}
-	if _, err = ms.Get(ctx, "old-orphan"); err != errObjectNotFound {
-		t.Fatal("old orphan not deleted")
+	st, _ = mk([]string{"a"}, many...)
+	calls = 0
+	counting := func(context.Context) ([]storageRef, error) { calls++; return []storageRef{{Key: "a", Size: 4}}, nil }
+	if rep, err = checkStorage(ctx, counting, st, del); err != nil || rep.OrphansDeleted != 250 || calls != 1+3 {
+		t.Fatalf("batches: deleted %d, loads %d, %v", rep.OrphansDeleted, calls, err)
 	}
-	if _, err = ms.Get(ctx, "new-orphan"); err != nil {
-		t.Fatal("young orphan deleted")
+
+	// Keys that the server could not have written are reported, not checked or deleted.
+	st, load = mk([]string{"a"}, "o1")
+	st.put(t, "nested/obj", "x")
+	st.mod["nested/obj"] = time.Now().Add(-day)
+	rep, err = checkStorage(ctx, load, st, del)
+	if err != nil || len(rep.Foreign) != 1 || rep.Objects != 2 || rep.OrphansDeleted != 1 || !has(st, "nested/obj") {
+		t.Fatalf("foreign key: %+v %v", rep, err)
 	}
-	if _, err = ms.Get(ctx, "att-ok"); err != nil {
-		t.Fatal("referenced object deleted")
+	var out bytes.Buffer
+	rep.write(&out)
+	if !strings.Contains(out.String(), "nested/obj") {
+		t.Fatal(out.String())
 	}
 }
 
@@ -195,5 +335,47 @@ func TestCheckStorageCleanAndLocalStore(t *testing.T) {
 	rep.write(&out)
 	if !strings.Contains(out.String(), "RESULT: OK") {
 		t.Fatal(out.String())
+	}
+}
+
+func TestStoreStatAndListPrefixValidation(t *testing.T) {
+	s3Env(t)
+	_, srv := newFakeS3(t)
+	st, err := newS3Store(context.Background(), S3Config{Bucket: "wiki", Region: "us-east-1", Endpoint: srv.URL, Prefix: "p", PathStyle: true, AllowInsecureLoopback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err = st.Put(ctx, "x0key", strings.NewReader("hello"), 5, ""); err != nil {
+		t.Fatal(err)
+	}
+	info, err := st.Stat(ctx, "x0key")
+	if err != nil || info.Size != 5 || info.Modified.Year() != 2020 {
+		t.Fatalf("stat: %+v %v", info, err)
+	}
+	if _, err = st.Stat(ctx, "nokey"); err != errObjectNotFound {
+		t.Fatalf("stat missing: %v", err)
+	}
+	// 'x' and '0' are ordinary characters; NUL and backslash are rejected.
+	for _, ok := range []string{"x", "0", "x0", "x0k"} {
+		if _, err = st.List(ctx, ok); err != nil {
+			t.Fatalf("prefix %q rejected: %v", ok, err)
+		}
+	}
+	if got, _ := st.List(ctx, "x0"); len(got) != 1 {
+		t.Fatalf("prefix x0: %v", got)
+	}
+	for _, bad := range []string{"a\x00b", "\x00", "a" + string(rune(92)) + "b"} {
+		if _, err = st.List(ctx, bad); err == nil {
+			t.Fatalf("prefix %q accepted", bad)
+		}
+	}
+	ls := localStore{dir: t.TempDir()}
+	if _, err = ls.Stat(ctx, "nokey"); err != errObjectNotFound {
+		t.Fatal(err)
+	}
+	_ = ls.Put(ctx, "k", strings.NewReader("abc"), 3, "")
+	if fi, err := ls.Stat(ctx, "k"); err != nil || fi.Size != 3 || fi.Modified.IsZero() {
+		t.Fatalf("local stat: %+v %v", fi, err)
 	}
 }

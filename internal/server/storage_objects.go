@@ -330,7 +330,7 @@ func sniffMIME(f io.ReadSeeker) (string, error) {
 
 // List pages through ListObjectsV2 under the store prefix plus the key prefix.
 func (s *s3Store) List(ctx context.Context, prefix string) ([]objectInfo, error) {
-	if strings.ContainsAny(prefix, "\\x00") || len(s.prefix)+len(prefix) > s3MaxKeyBytes {
+	if strings.ContainsAny(prefix, "\\\x00") || len(s.prefix)+len(prefix) > s3MaxKeyBytes {
 		return nil, errors.New("invalid object prefix")
 	}
 	var out []objectInfo
@@ -382,4 +382,45 @@ func (l localStore) List(ctx context.Context, prefix string) ([]objectInfo, erro
 		out = append(out, objectInfo{Key: e.Name(), Size: fi.Size(), Modified: fi.ModTime()})
 	}
 	return out, nil
+}
+
+// Stat issues HEAD for one object (size and LastModified).
+func (s *s3Store) Stat(ctx context.Context, key string) (objectInfo, error) {
+	k, err := s.objectKey(key)
+	if err != nil {
+		return objectInfo{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, s3DeleteTimeout)
+	defer cancel()
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: k})
+	if err != nil {
+		var api smithy.APIError
+		if errors.As(err, &api) && (api.ErrorCode() == "NoSuchKey" || api.ErrorCode() == "NotFound") {
+			return objectInfo{}, errObjectNotFound
+		}
+		return objectInfo{}, fmt.Errorf("S3 head failed: %s", s3ErrorSummary(err))
+	}
+	info := objectInfo{Key: key, Size: aws.ToInt64(out.ContentLength)}
+	if out.LastModified != nil {
+		info.Modified = *out.LastModified
+	}
+	return info, nil
+}
+
+func (l localStore) Stat(ctx context.Context, key string) (objectInfo, error) {
+	p, err := l.path(key)
+	if err != nil {
+		return objectInfo{}, err
+	}
+	if err = ctx.Err(); err != nil {
+		return objectInfo{}, err
+	}
+	fi, err := os.Stat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return objectInfo{}, errObjectNotFound
+	}
+	if err != nil {
+		return objectInfo{}, err
+	}
+	return objectInfo{Key: key, Size: fi.Size(), Modified: fi.ModTime()}, nil
 }

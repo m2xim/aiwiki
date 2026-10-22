@@ -939,3 +939,13 @@ func (m *memStore) List(_ context.Context, prefix string) ([]objectInfo, error) 
 	}
 	return out, nil
 }
+
+func (m *memStore) Stat(_ context.Context, key string) (objectInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.m[key]
+	if !ok {
+		return objectInfo{}, errObjectNotFound
+	}
+	return objectInfo{Key: key, Size: int64(len(b)), Modified: time.Now()}, nil
+}

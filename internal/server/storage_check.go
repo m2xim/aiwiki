@@ -24,11 +24,13 @@ type StorageCheckConfig struct {
 	// migration owner both see no content rows.
 	DatabaseURL   string
 	S3            S3Config
-	VerifyHashes  bool          // re-read artifact objects and compare sha256 with the database
-	DeleteOrphans bool          // with Yes: remove orphans older than OrphanMinAge
-	Yes           bool          // confirmation for DeleteOrphans
-	OrphanMinAge  time.Duration // default 24h
-	Out           io.Writer
+	VerifyHashes  bool // re-read artifact objects and compare sha256 with the database
+	DeleteOrphans bool // with Yes: remove orphans older than OrphanMinAge
+	Yes           bool // confirmation for DeleteOrphans
+	// AllowEmptyDatabase lets DeleteOrphans proceed when the database references no objects.
+	AllowEmptyDatabase bool
+	OrphanMinAge       time.Duration // default 24h
+	Out                io.Writer
 }
 
 // storageRef is one object that the database says must exist.
@@ -49,7 +51,9 @@ type StorageReport struct {
 	Orphans        []objectInfo
 	YoungOrphans   int
 	OrphansDeleted int
-	Unverified     int // objects that could not be read for the hash check
+	OrphansSkipped int      // candidates that changed or reappeared before deletion
+	Foreign        []string // keys under the prefix that the server could never have written
+	Unverified     int      // objects that could not be read for the hash check
 }
 
 // Failed reports data loss: referenced objects that are absent or damaged.
@@ -66,7 +70,7 @@ func CheckStorage(ctx context.Context, cfg StorageCheckConfig) (*StorageReport, 
 		cfg.Out = io.Discard
 	}
 	if cfg.DatabaseURL == "" {
-		return nil, errors.New("database URL required (AIWIKI_BACKUP_DATABASE_URL or AIWIKI_MIGRATION_DATABASE_URL)")
+		return nil, errors.New("database URL required (AIWIKI_BACKUP_DATABASE_URL)")
 	}
 	if cfg.DeleteOrphans && !cfg.Yes {
 		fmt.Fprintln(cfg.Out, "note: -delete-orphans without -yes only reports; nothing is deleted")
@@ -95,11 +99,10 @@ func CheckStorage(ctx context.Context, cfg StorageCheckConfig) (*StorageReport, 
 		return nil, err
 	}
 	rep, err := checkStorage(ctx, func(ctx context.Context) ([]storageRef, error) { return loadStorageRefs(ctx, db) }, store, cfg)
-	if err != nil {
-		return nil, err
+	if rep != nil {
+		rep.write(cfg.Out)
 	}
-	rep.write(cfg.Out)
-	return rep, nil
+	return rep, err
 }
 
 // loadStorageRefs reads every object reference from the database.
@@ -129,7 +132,7 @@ func loadStorageRefs(ctx context.Context, db *sql.DB) ([]storageRef, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT stored_name,size,deleted_at IS NOT NULL FROM attachments`)
+	rows, err := tx.QueryContext(ctx, `SELECT stored_name,size,deleted_at IS NOT NULL FROM public.attachments`)
 	if err != nil {
 		return nil, fmt.Errorf("reading attachments: %w", err)
 	}
@@ -153,7 +156,7 @@ func loadStorageRefs(ctx context.Context, db *sql.DB) ([]storageRef, error) {
 	if err != nil {
 		return nil, err
 	}
-	if rows, err = tx.QueryContext(ctx, `SELECT stored_name,size,sha256 FROM artifact_blobs`); err != nil {
+	if rows, err = tx.QueryContext(ctx, `SELECT stored_name,size,sha256 FROM public.artifact_blobs`); err != nil {
 		return nil, fmt.Errorf("reading artifact_blobs: %w", err)
 	}
 	for rows.Next() {
@@ -173,7 +176,7 @@ func loadStorageRefs(ctx context.Context, db *sql.DB) ([]storageRef, error) {
 	}
 	// Revision manifests name blobs too; an entry without a blob row would be a
 	// database inconsistency that still ends in a missing object.
-	if rows, err = tx.QueryContext(ctx, `SELECT manifest FROM artifact_revisions`); err != nil {
+	if rows, err = tx.QueryContext(ctx, `SELECT manifest FROM public.artifact_revisions`); err != nil {
 		return nil, fmt.Errorf("reading artifact_revisions: %w", err)
 	}
 	for rows.Next() {
@@ -205,9 +208,20 @@ func loadStorageRefs(ctx context.Context, db *sql.DB) ([]storageRef, error) {
 	return out, nil
 }
 
+// orphanDeleteBatch is how many candidates are deleted between two re-reads
+// of the references.
+const orphanDeleteBatch = 100
+
+// errDeleteRefused is returned (together with the report) when -delete-orphans
+// -yes would be unsafe; nothing has been deleted.
+type errDeleteRefused string
+
+func (e errDeleteRefused) Error() string { return "refusing to delete orphans: " + string(e) }
+
 // checkStorage is the comparison itself, independent of PostgreSQL.
 // References are read before the listing: an upload writes the object before
 // its row, so every object referenced at read time exists when we list.
+// On errDeleteRefused the report is returned as well.
 func checkStorage(ctx context.Context, load func(context.Context) ([]storageRef, error), store objectStore, cfg StorageCheckConfig) (*StorageReport, error) {
 	if cfg.OrphanMinAge <= 0 {
 		cfg.OrphanMinAge = 24 * time.Hour
@@ -216,15 +230,26 @@ func checkStorage(ctx context.Context, load func(context.Context) ([]storageRef,
 	if err != nil {
 		return nil, err
 	}
-	objs, err := store.List(ctx, "")
+	listed, err := store.List(ctx, "")
 	if err != nil {
 		return nil, err
 	}
+	rep := &StorageReport{References: len(refs)}
+	objs := listed[:0:0]
+	for _, o := range listed {
+		// The server only writes single-segment keys; anything else under the
+		// prefix belongs to someone else and cannot be addressed by the store.
+		if !validObjectKey(o.Key) {
+			rep.Foreign = append(rep.Foreign, o.Key)
+			continue
+		}
+		objs = append(objs, o)
+	}
+	rep.Objects = len(objs)
 	byKey := make(map[string]objectInfo, len(objs))
 	for _, o := range objs {
 		byKey[o.Key] = o
 	}
-	rep := &StorageReport{References: len(refs), Objects: len(objs)}
 	known := make(map[string]bool, len(refs))
 	for _, r := range refs {
 		known[r.Key] = true
@@ -261,21 +286,52 @@ func checkStorage(ctx context.Context, load func(context.Context) ([]storageRef,
 		}
 	}
 	sort.Slice(rep.Orphans, func(i, j int) bool { return rep.Orphans[i].Key < rep.Orphans[j].Key })
-	if cfg.DeleteOrphans && cfg.Yes && len(candidates) > 0 {
-		// Re-read the references: a row may have appeared since the first read.
+	if !cfg.DeleteOrphans || !cfg.Yes {
+		return rep, nil
+	}
+	// Guard against the wrong database: deleting is allowed only when the
+	// database plausibly belongs to this bucket.
+	switch {
+	case rep.Failed():
+		return rep, errDeleteRefused("objects referenced by the database are missing or damaged; fix that first")
+	case rep.References == 0 && rep.Objects > 0 && !cfg.AllowEmptyDatabase:
+		return rep, errDeleteRefused("the database references no objects at all (empty or wrong database?); use -allow-empty-database only if the bucket really is meant to be emptied")
+	case rep.References > 0 && rep.Objects > 0 && len(rep.Orphans) == rep.Objects:
+		return rep, errDeleteRefused("none of the objects in the bucket is referenced by the database (wrong database or bucket?)")
+	}
+	if len(candidates) == 0 {
+		return rep, nil
+	}
+	for start := 0; start < len(candidates); start += orphanDeleteBatch {
+		end := min(start+orphanDeleteBatch, len(candidates))
+		// Re-read the references right before each batch: a row may have appeared.
 		fresh, err := load(ctx)
 		if err != nil {
-			return nil, err
+			return rep, err
 		}
+		inUse := make(map[string]bool, len(fresh))
 		for _, r := range fresh {
-			known[r.Key] = true
+			inUse[r.Key] = true
 		}
-		for _, o := range candidates {
-			if known[o.Key] {
+		for _, o := range candidates[start:end] {
+			if inUse[o.Key] {
+				continue
+			}
+			// An upload of the same (content-addressed) key replaces the object
+			// and moves its modification time: HEAD again right before DELETE.
+			cur, err := store.Stat(ctx, o.Key)
+			if errors.Is(err, errObjectNotFound) {
+				continue
+			}
+			if err != nil {
+				return rep, fmt.Errorf("checking orphan %s: %w", o.Key, err)
+			}
+			if !cur.Modified.Equal(o.Modified) || time.Since(cur.Modified) < cfg.OrphanMinAge {
+				rep.OrphansSkipped++
 				continue
 			}
 			if err := store.Delete(ctx, o.Key); err != nil {
-				return nil, fmt.Errorf("deleting orphan %s: %w", o.Key, err)
+				return rep, fmt.Errorf("deleting orphan %s: %w", o.Key, err)
 			}
 			rep.OrphansDeleted++
 		}
@@ -329,8 +385,18 @@ func (r *StorageReport) write(w io.Writer) {
 		}
 		fmt.Fprintf(w, "  %s  size=%d\n", o.Key, o.Size)
 	}
-	if r.OrphansDeleted > 0 {
-		fmt.Fprintf(w, "orphans deleted: %d\n", r.OrphansDeleted)
+	if len(r.Foreign) > 0 {
+		fmt.Fprintf(w, "skipped %d object(s) under the prefix whose key the server cannot have written (not checked, never deleted):\n", len(r.Foreign))
+		for i, k := range r.Foreign {
+			if i == storageReportListCap {
+				fmt.Fprintf(w, "  ... and %d more\n", len(r.Foreign)-i)
+				break
+			}
+			fmt.Fprintf(w, "  %s\n", k)
+		}
+	}
+	if r.OrphansDeleted > 0 || r.OrphansSkipped > 0 {
+		fmt.Fprintf(w, "orphans deleted: %d (skipped because they changed or reappeared: %d)\n", r.OrphansDeleted, r.OrphansSkipped)
 	}
 	if r.Failed() {
 		fmt.Fprintln(w, "RESULT: FAILED (objects referenced by the database are missing or damaged)")

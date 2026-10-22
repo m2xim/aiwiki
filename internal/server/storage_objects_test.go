@@ -46,6 +46,14 @@ func newFakeS3(t *testing.T) (*fakeS3, *httptest.Server) {
 			b, _ := io.ReadAll(r.Body)
 			f.objects[path] = b
 			f.types[path] = r.Header.Get("Content-Type")
+		case r.Method == http.MethodHead && strings.HasPrefix(path, "wiki/"):
+			b, ok := f.objects[path]
+			if !ok {
+				w.WriteHeader(404)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+			w.Header().Set("Last-Modified", "Thu, 02 Jan 2020 03:04:05 GMT")
 		case r.Method == http.MethodGet && path == "wiki" && r.URL.Query().Get("list-type") == "2":
 			f.lists++
 			var keys []string

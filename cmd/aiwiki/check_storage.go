@@ -16,6 +16,7 @@ func runCheckStorage(args []string) int {
 	verify := fs.Bool("verify-hashes", false, "re-read artifact objects and compare their sha256 with the database (reads every artifact object)")
 	del := fs.Bool("delete-orphans", false, "delete bucket objects that no database row references (needs -yes; objects younger than -orphan-min-age are kept)")
 	yes := fs.Bool("yes", false, "confirm -delete-orphans")
+	allowEmpty := fs.Bool("allow-empty-database", false, "let -delete-orphans proceed although the database references no objects at all (normally a sign of the wrong database)")
 	minAge := fs.Duration("orphan-min-age", 24*time.Hour, "orphans younger than this may belong to an upload in progress and are never deleted")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -25,15 +26,12 @@ func runCheckStorage(args []string) int {
 		return 2
 	}
 	url := os.Getenv("AIWIKI_BACKUP_DATABASE_URL")
-	if url == "" {
-		url = os.Getenv("AIWIKI_MIGRATION_DATABASE_URL")
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	rep, err := server.CheckStorage(ctx, server.StorageCheckConfig{
 		DatabaseURL:  url,
 		S3:           s3ConfigFromEnv(),
-		VerifyHashes: *verify, DeleteOrphans: *del, Yes: *yes, OrphanMinAge: *minAge,
+		VerifyHashes: *verify, DeleteOrphans: *del, Yes: *yes, AllowEmptyDatabase: *allowEmpty, OrphanMinAge: *minAge,
 		Out: os.Stdout,
 	})
 	if err != nil {
