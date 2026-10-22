@@ -538,11 +538,15 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 		}
 		return moveRoleRank[derefRole(access[i].After)] < moveRoleRank[derefRole(access[j].After)]
 	})
-	if losing > 0 {
-		warnings = append(warnings, fmt.Sprintf("Доступ потеряют пользователей: %d.", losing))
+	// Counts are shown by the client from users_gaining/users_losing; warn only
+	// when someone who had no access before can now read the moved content.
+	newReaders := false
+	for _, row := range access {
+		if row.Before == nil && row.After != nil {
+			newReaders = true
+		}
 	}
-	if gaining > 0 {
-		warnings = append(warnings, fmt.Sprintf("Доступ получат пользователей: %d.", gaining))
+	if newReaders {
 		warnings = append(warnings, "Новым участникам станут видны комментарии и вложения перемещаемых статей; прежние версии останутся видны только тем, у кого был доступ к прежнему месту.")
 	}
 	if warnings == nil {

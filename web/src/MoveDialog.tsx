@@ -155,7 +155,8 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
   };
 
   const titleId = `${uid}-title`;
-  const loses = Boolean(preview && (preview.users_losing > 0 || preview.access.some(row => describeAccessChange(row.before, row.after) === 'lose')));
+  // Red confirmation only when someone loses access entirely; a narrower role is shown in the table.
+  const loses = Boolean(preview && preview.access.some(row => describeAccessChange(row.before, row.after) === 'lose'));
   const name = article ? article.title || 'Без названия' : project?.name || '';
 
   const targetStep = <>
