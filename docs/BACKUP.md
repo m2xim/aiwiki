@@ -132,3 +132,7 @@ Before the disaster step the drill also points `check-storage -delete-orphans -y
 ## Trusted-network (SQLite) edition
 
 The data directory holds `wiki.db` (SQLite in WAL mode, so also `wiki.db-wal`/`wiki.db-shm` while running) and `files/` (attachments and artifact objects, same rules as above: written once, never overwritten). Back up consistently by stopping the service and copying the directory ([DEPLOYMENT.md](DEPLOYMENT.md)), or with the SQLite `.backup` command for the database followed by a copy of `files/` afterwards (database first, objects second, for the same reason as above). `aiwiki check-storage` supports only the PostgreSQL edition.
+
+## Personal mode
+
+`scripts/personal-backup.sh` runs this procedure for `compose.personal.yaml` (dump first, then objects, rotation of dumps). The object copy is `aiwiki backup-objects -dir <path>` (bucket to a directory, then a check of the directory against the database; needs the same BYPASSRLS/superuser role as `check-storage`), the way back is `aiwiki restore-objects -dir <path>`. Both only add missing objects and never overwrite or delete one. See the Backups section of [PERSONAL.md](PERSONAL.md).

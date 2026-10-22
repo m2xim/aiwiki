@@ -110,3 +110,25 @@ services:
       - ${AIWIKI_IMPORT_SOURCE:-./data}:/source:ro
     command: ["migrate-from-sqlite", "-from", "/source"]
     restart: "no"
+
+  # Copies the bucket into ${AIWIKI_BACKUP_DIR}/objects and checks the copy
+  # against the database; run it AFTER the database dump (scripts/personal-backup.sh
+  # does both). Restore: `... --profile backup run --rm backup restore-objects -dir /backup/objects`.
+  # Like import, it uses the PostgreSQL superuser (it must read rows despite FORCE RLS).
+  backup:
+    profiles: ["backup"]
+    image: aiwiki:personal
+    # Writes as the host user so the copy is not root-owned; the static binary needs no root.
+    user: "${AIWIKI_BACKUP_UID:-1000}:${AIWIKI_BACKUP_GID:-1000}"
+    depends_on:
+      db:
+        condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *wiki-environment
+      AIWIKI_BACKUP_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/aiwiki?sslmode=disable
+    volumes:
+      - ${AIWIKI_BACKUP_DIR:-./backups/personal}/objects:/backup/objects
+    command: ["backup-objects", "-dir", "/backup/objects"]
+    restart: "no"
