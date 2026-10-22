@@ -84,6 +84,9 @@ type AuthService struct {
 	maxSessions   int
 	maxLogins     int
 
+	oauthLimitOnce sync.Once
+	oauthLimit     *mcpOAuthLimiter
+
 	mu          sync.Mutex
 	sessions    map[[32]byte]*authSession
 	logins      map[[32]byte]*authLogin
@@ -102,7 +105,44 @@ type authLogin struct {
 	binder   [32]byte
 	nonce    string
 	verifier string
+	returnTo string // validated in-app address to open after sign-in, "" means "/"
 	expires  time.Time
+}
+
+const authReturnMax = 2048
+
+// authReturnTarget validates the optional `return` parameter of /auth/login.
+// The shell is a single page, so only the path "/" with its own query and
+// fragment is accepted; anything else (other paths, absolute or
+// protocol-relative URLs, backslashes, control characters, encoded path
+// tricks such as /%2F%2Fevil) yields "" and the caller falls back to "/".
+// Bytes outside printable ASCII are percent-encoded so the Location header is
+// always plain ASCII.
+func authReturnTarget(raw string) string {
+	if raw == "" || len(raw) > authReturnMax || raw[0] != '/' {
+		return ""
+	}
+	if len(raw) > 1 && (raw[1] == '/' || raw[1] == '\\') {
+		return ""
+	}
+	for i := 0; i < len(raw); i++ {
+		if c := raw[i]; c < 0x20 || c == 0x7f || c == '\\' {
+			return ""
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" || u.Path != "/" {
+		return ""
+	}
+	var b strings.Builder
+	for i := 0; i < len(raw); i++ {
+		if c := raw[i]; c <= 0x20 || c >= 0x7f {
+			fmt.Fprintf(&b, "%%%02X", c)
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // authUsers is the persistence the auth slice needs from the users table.
@@ -413,6 +453,15 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	if typ, _ := claims["typ"].(string); strings.EqualFold(typ, "ID") {
 		return deny(http.StatusUnauthorized, "invalid token")
 	}
+	// The signature and claims are verified, so the subject is authentic: charge
+	// the per-process limiter BEFORE asking the identity provider.
+	if tok.Subject == "" {
+		return deny(http.StatusUnauthorized, "invalid token")
+	}
+	if !a.oauthLimiter().allow(a.cfg.IssuerURL+"\x00"+tok.Subject, a.clock()) {
+		w.Header().Set("Retry-After", "60")
+		return deny(http.StatusTooManyRequests, "rate limit exceeded")
+	}
 	info, err := a.introspectAudience(r.Context(), raw, audience)
 	if err == nil && info.subject != tok.Subject {
 		err = errAuthTokenInactive
@@ -432,7 +481,25 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	if fail != 0 {
 		return deny(fail, authFailText(fail))
 	}
+	p.MCPBearer = true
+	p.MCPClientID = mcpOAuthClientID(claims, info.claims)
 	return p, true
+}
+
+func (a *AuthService) oauthLimiter() *mcpOAuthLimiter {
+	a.oauthLimitOnce.Do(func() {
+		if a.oauthLimit == nil {
+			a.oauthLimit = newMCPOAuthLimiter()
+		}
+	})
+	return a.oauthLimit
+}
+
+func (a *AuthService) clock() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
 }
 
 const (
@@ -778,6 +845,7 @@ func (a *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 		binder:   authHash(binder),
 		nonce:    nonce,
 		verifier: verifier,
+		returnTo: authReturnTarget(r.URL.Query().Get("return")),
 		expires:  now.Add(authLoginTTL),
 	}
 	a.mu.Unlock()
@@ -797,6 +865,25 @@ func (a *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
+// loginErrorCode maps a refusal status from resolve to the fixed code the
+// browser shell understands. Only the code travels in the URL, never details.
+func loginErrorCode(status int) string {
+	switch {
+	case status == http.StatusForbidden:
+		return "denied"
+	case status >= 500:
+		return "unavailable"
+	}
+	return "failed"
+}
+
+// loginRedirect sends the browser back to the shell with a fixed error code
+// instead of a bare JSON body; the shell renders the explanation.
+func loginRedirect(w http.ResponseWriter, r *http.Request, code string) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, "/?login_error="+code, http.StatusSeeOther)
+}
+
 func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	q := r.URL.Query()
@@ -804,7 +891,7 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 	c, cerr := r.Cookie(a.loginCookie)
 	a.setCookie(w, a.loginCookie, "", -1) // browser binding is single use too
 	if state == "" {
-		authError(w, http.StatusBadRequest, "invalid login state")
+		loginRedirect(w, r, "expired")
 		return
 	}
 	key := authHash(state)
@@ -818,12 +905,12 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if lg == nil || cerr != nil || c.Value == "" || !a.now().Before(lg.expires) ||
 		subtle.ConstantTimeCompare(bound[:], lg.binder[:]) != 1 {
-		authError(w, http.StatusBadRequest, "invalid login state")
+		loginRedirect(w, r, "expired")
 		return
 	}
 	code := q.Get("code")
 	if q.Get("error") != "" || code == "" {
-		authError(w, http.StatusBadRequest, "login failed")
+		loginRedirect(w, r, "failed")
 		return
 	}
 
@@ -831,33 +918,33 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 	tok, err := a.oauth.Exchange(ctx, code, oauth2.VerifierOption(lg.verifier))
 	if err != nil {
 		log.Printf("auth: code exchange failed: %v", err)
-		authError(w, http.StatusUnauthorized, "login failed")
+		loginRedirect(w, r, "failed")
 		return
 	}
 	rawID, _ := tok.Extra("id_token").(string)
 	idt, err := a.verifier.Verify(ctx, rawID)
 	if err != nil || !authEqual(idt.Nonce, lg.nonce) {
-		authError(w, http.StatusUnauthorized, "login failed")
+		loginRedirect(w, r, "failed")
 		return
 	}
 	var idClaims map[string]any
 	if err := idt.Claims(&idClaims); err != nil {
-		authError(w, http.StatusUnauthorized, "login failed")
+		loginRedirect(w, r, "failed")
 		return
 	}
 	info, err := a.introspect(ctx, tok.AccessToken)
 	if err != nil || info.subject != idt.Subject {
 		if err != nil && !errors.Is(err, errAuthTokenInactive) {
 			log.Printf("auth: introspection unavailable: %v", err)
-			authError(w, http.StatusServiceUnavailable, "authentication unavailable")
+			loginRedirect(w, r, "unavailable")
 			return
 		}
-		authError(w, http.StatusUnauthorized, "login failed")
+		loginRedirect(w, r, "failed")
 		return
 	}
 	p, fail := a.resolve(ctx, info, nil, authName(idClaims, nil, idt.Subject), authSyncLogin)
 	if fail != 0 {
-		authError(w, fail, authFailText(fail))
+		loginRedirect(w, r, loginErrorCode(fail))
 		return
 	}
 
@@ -870,12 +957,12 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 		expires = tok.Expiry
 	}
 	if !expires.After(now) {
-		authError(w, http.StatusUnauthorized, "login failed")
+		loginRedirect(w, r, "failed")
 		return
 	}
 	csrf, err := authRandom(32)
 	if err != nil {
-		authError(w, http.StatusInternalServerError, "login unavailable")
+		loginRedirect(w, r, "unavailable")
 		return
 	}
 	secret, ok := a.newSession(&authSession{
@@ -886,11 +973,15 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 		expires:     expires,
 	})
 	if !ok {
-		authError(w, http.StatusServiceUnavailable, "login unavailable")
+		loginRedirect(w, r, "unavailable")
 		return
 	}
 	a.setCookie(w, a.sessionCookie, secret, int(expires.Sub(now).Seconds()))
-	http.Redirect(w, r, "/", http.StatusSeeOther) // never caller-controlled
+	dest := "/"
+	if lg.returnTo != "" {
+		dest = lg.returnTo // validated at login: in-app "/" only
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
 func (a *AuthService) handleMe(w http.ResponseWriter, r *http.Request) {

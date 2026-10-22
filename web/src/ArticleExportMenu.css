@@ -1,0 +1,7 @@
+.export-menu{position:relative;display:inline-block}
+.export-menu-list{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:220px;background:var(--panel,#fff);border:1px solid var(--line,#eeedf3);border-radius:10px;box-shadow:0 8px 24px #28263a22;padding:4px;display:flex;flex-direction:column}
+.export-menu-list button{display:flex;align-items:center;gap:8px;border:0;background:none;text-align:left;padding:8px 10px;border-radius:7px;font-size:14px;white-space:nowrap}
+.export-menu-list button:hover,.export-menu-list button:focus-visible{background:var(--purple-light,#f0edff);outline:none}
+.export-menu-note{position:absolute;right:0;top:calc(100% + 6px);z-index:30;width:min(340px,80vw);background:var(--panel,#fff);border:1px solid var(--line,#eeedf3);border-radius:10px;box-shadow:0 8px 24px #28263a22;padding:10px 34px 10px 12px;font-size:13px;line-height:1.4}
+.export-menu-note ul{margin:6px 0 0;padding-left:18px;max-height:200px;overflow:auto}
+.export-menu-note .icon-button{position:absolute;right:6px;top:6px}

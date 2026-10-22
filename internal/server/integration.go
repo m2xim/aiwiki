@@ -187,6 +187,19 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.principal != nil && s.principal.MCPBearer && s.principal.MCPDelegationID == "" {
+		method, tool := q.Method, ""
+		_ = json.Unmarshal(q.Params["name"], &tool)
+		client := s.principal.MCPClientID
+		if client == "" {
+			client = "unknown"
+		}
+		// Fail closed: no audit row, no method. The token is never recorded.
+		if _, err := s.DB.Exec(`SELECT corporate_mcp_oauth_audit(?,?,?)`, client, mcpAuditName(method), mcpAuditName(tool)); err != nil {
+			apiErr(w, 503, "audit unavailable")
+			return
+		}
+	}
 	var result any
 	switch q.Method {
 	case "initialize":
