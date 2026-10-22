@@ -3,6 +3,8 @@ import { Archive, ArrowLeft, ChevronDown, ChevronRight, Pencil, Plus, RefreshCw,
 import { AccessGrant, CatalogSpace, client, Project, Team, TeamMember, UserAccessSnapshot } from './api';
 import MCPDelegations from './MCPDelegations';
 import MCPPersistentAccess from './MCPPersistentAccess';
+import { CatalogKind, CatalogSort, DEFAULT_CATALOG_QUERY, catalogQueryString, parseCatalogQuery } from './catalogQuery';
+import { replaceUrl } from './nav';
 import './AdminPanel.css';
 
 type UserRow = { id: string; name: string; disabled: boolean; admin: boolean };
@@ -27,6 +29,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }: { onClose: () => void; userId: string; isAdmin: boolean; activeTab: AdminTab; onTabChange: (tab: AdminTab) => void }) {
   const tab = !isAdmin && (activeTab === 'teams' || activeTab === 'users') ? 'catalog' : activeTab;
   const setTab = onTabChange;
+  const initialCatalog = tab === 'catalog' ? parseCatalogQuery(location.search) : DEFAULT_CATALOG_QUERY;
   const [spaces, setSpaces] = useState<CatalogSpace[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -37,7 +40,8 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
   const [accessLoading, setAccessLoading] = useState(false);
   const [accessError, setAccessError] = useState('');
   const [selectedTeam, setSelectedTeam] = useState('');
-  const [selectedSpace, setSelectedSpace] = useState('');
+  const [selectedSpace, setSelectedSpace] = useState(initialCatalog.space);
+  const [pickedSpace, setPickedSpace] = useState(initialCatalog.space); // chosen explicitly (kept in the URL), unlike the automatic first space
   const [selectedProject, setSelectedProject] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -50,8 +54,9 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
   const [role, setRole] = useState<Role>('reader');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [catalogFilter, setCatalogFilter] = useState('');
-  const [catalogSort, setCatalogSort] = useState<'recent' | 'name' | 'count'>('recent');
+  const [catalogFilter, setCatalogFilter] = useState(initialCatalog.q);
+  const [catalogSort, setCatalogSort] = useState<CatalogSort>(initialCatalog.sort);
+  const [catalogKind, setCatalogKind] = useState<CatalogKind>(initialCatalog.kind);
   const [editProject, setEditProject] = useState<EditDraft | null>(null);
   const [editTeam, setEditTeam] = useState<EditDraft | null>(null);
   const [editError, setEditError] = useState('');
@@ -83,6 +88,7 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
         setSpaces(visibleSpaces);
         setProjects([...catalogProjects.values()]);
         setSelectedSpace(current => spaceIds.includes(current) ? current : spaceIds[0] || '');
+        setPickedSpace(current => spaceIds.includes(current) ? current : '');
         setProjectSpace(current => spaceIds.includes(current) ? current : spaceIds[0] || '');
         setProjectSpaceFilter(current => !current || spaceIds.includes(current) ? current : '');
       } else errors.push(`Каталог: ${message(catalogResult.reason)}`);
@@ -104,6 +110,32 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
       setError(errors.join(' · '));
     } finally { if (seq === refreshSeq.current) setBusy(false); }
   };
+  // Catalog state lives in the URL: re-read it on entering the tab (a fresh visit has none) and on Back / Forward.
+  const applyCatalogUrl = () => {
+    const next = parseCatalogQuery(location.search);
+    setCatalogFilter(next.q); setCatalogSort(next.sort); setCatalogKind(next.kind); setPickedSpace(next.space);
+    if (next.space) setSelectedSpace(next.space);
+  };
+  useEffect(() => { if (tab === 'catalog') applyCatalogUrl(); }, [tab]);
+  useEffect(() => {
+    const onPop = () => { const params = new URLSearchParams(location.search); if (params.get('view') === 'admin' && readAdminTab() === 'catalog') applyCatalogUrl(); };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const urlQ = useRef(catalogFilter);
+  useEffect(() => {
+    if (tab !== 'catalog') return;
+    const typed = urlQ.current !== catalogFilter; urlQ.current = catalogFilter;
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams(location.search);
+      if (params.get('view') !== 'admin' || readAdminTab() !== 'catalog') return;
+      const query = catalogQueryString({ q: catalogFilter, sort: catalogSort, kind: catalogKind, space: pickedSpace }, params);
+      const url = `${location.pathname}?${query}${location.hash}`;
+      if (url !== `${location.pathname}${location.search}${location.hash}`) replaceUrl(url);
+    }, typed ? 300 : 0);
+    return () => clearTimeout(timer);
+  }, [tab, catalogFilter, catalogSort, catalogKind, pickedSpace]);
+
   useEffect(() => {
     setEditProject(null); setEditTeam(null); setEditError(''); setName(''); setDescription(''); setTargetId(''); setMemberPick('');
     if (tab !== 'tokens') void refresh();
@@ -247,12 +279,14 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
     }
   };
   const openResource = (type: ResourceType, id: string) => {
-    if (type === 'space') { setSelectedSpace(id); setTab('catalog'); }
+    if (type === 'space') { setSelectedSpace(id); setPickedSpace(id); setTab('catalog'); }
     else { setSelectedProject(id); setProjectSpaceFilter(''); setTab('projects'); }
   };
 
   const catalogSpaces = spaces.filter(space => {
     const needle = catalogFilter.trim().toLocaleLowerCase();
+    if (catalogKind === 'personal' && !space.personal) return false;
+    if (catalogKind === 'team' && space.personal) return false;
     if (!needle) return true;
     return [space.name, ...(space.projects || []).flatMap(project => [project.name, ...(project.tags || [])]), ...(space.tags || [])].join(' ').toLocaleLowerCase().includes(needle);
   }).sort((a, b) => catalogSort === 'name'
@@ -330,9 +364,11 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
         {tab === 'tokens' && <><MCPPersistentAccess/><MCPDelegations/></>}
         {tab === 'catalog' && <>
           <form className="corp-admin-create" onSubmit={submit(() => void create())}><input aria-label="Название пространства" value={name} onChange={e => setName(e.target.value)} placeholder="Название пространства"/><input aria-label="Описание пространства" value={description} onChange={e => setDescription(e.target.value)} placeholder="Описание (необязательно)"/><select aria-label="Тип пространства" value={personal ? 'personal' : 'team'} onChange={e => setPersonal(e.target.value === 'personal')}><option value="personal">Личное</option>{isAdmin && <option value="team">Командное</option>}</select><button type="submit" disabled={busy || !name.trim()}><Plus size={15}/>Создать</button></form>
-          <div className="corp-admin-catalog-tools"><input value={catalogFilter} onChange={e => setCatalogFilter(e.target.value)} placeholder="Поиск по пространствам, проектам и тегам" aria-label="Фильтр каталога"/><select value={catalogSort} onChange={e => setCatalogSort(e.target.value as typeof catalogSort)} aria-label="Сортировка каталога"><option value="recent">Сначала недавно изменённые</option><option value="name">По названию</option><option value="count">По числу документов</option></select></div>
-          {catalogSpaces.map(space => <article className="corp-admin-catalog-entry" key={space.id}><button type="button" className="corp-admin-project" onClick={() => setSelectedSpace(space.id)} aria-pressed={selectedSpace === space.id}><strong title={space.name}>{space.name}</strong><small>{space.limited ? 'Ограниченный доступ' : space.personal ? 'Личное' : 'Командное'}{space.archived_at ? ' · В архиве' : ''} · {space.article_count ?? 0} документов · {space.projects?.length ?? 0} проектов{space.last_updated ? ` · Изменено ${new Date(space.last_updated).toLocaleDateString()}` : ''}</small><span className="corp-admin-tags">{(space.tags || []).map(tag => <span key={tag}>{tag}</span>)}</span></button>{(space.projects || []).length > 0 && <div className="corp-admin-child-projects"><small>Проекты</small>{(space.projects || []).map(project => <button type="button" key={project.id} onClick={() => { setSelectedProject(project.id); setProjectSpaceFilter(''); setTab('projects'); }}><span>{project.name}</span><small>{project.archived_at ? 'В архиве · ' : ''}{project.article_count ?? 0} документов{project.last_updated ? ` · ${new Date(project.last_updated).toLocaleDateString()}` : ''}</small><span className="corp-admin-tags">{(project.tags || []).map(tag => <span key={tag}>{tag}</span>)}</span></button>)}</div>}</article>)}
-          {!catalogSpaces.length && <p className="corp-admin-empty">Подходящих пространств не найдено.</p>}
+          <div className="corp-admin-catalog-tools"><input value={catalogFilter} onChange={e => setCatalogFilter(e.target.value)} placeholder="Поиск по пространствам, проектам и тегам" aria-label="Фильтр каталога"/><select value={catalogSort} onChange={e => setCatalogSort(e.target.value as typeof catalogSort)} aria-label="Сортировка каталога"><option value="recent">Сначала недавно изменённые</option><option value="name">По названию</option><option value="count">По числу документов</option></select><select value={catalogKind} onChange={e => setCatalogKind(e.target.value as CatalogKind)} aria-label="Тип пространств"><option value="all">Все</option><option value="personal">Личные</option><option value="team">Командные</option></select></div>
+          {catalogSpaces.map(space => <article className="corp-admin-catalog-entry" key={space.id}><button type="button" className="corp-admin-project" onClick={() => { setSelectedSpace(space.id); setPickedSpace(space.id); }} aria-pressed={selectedSpace === space.id}><strong title={space.name}>{space.name}</strong><small>{space.limited ? 'Ограниченный доступ' : space.personal ? 'Личное' : 'Командное'}{space.archived_at ? ' · В архиве' : ''} · {space.article_count ?? 0} документов · {space.projects?.length ?? 0} проектов{space.last_updated ? ` · Изменено ${new Date(space.last_updated).toLocaleDateString()}` : ''}</small><span className="corp-admin-tags">{(space.tags || []).map(tag => <span key={tag}>{tag}</span>)}</span></button>{(space.projects || []).length > 0 && <div className="corp-admin-child-projects"><small>Проекты</small>{(space.projects || []).map(project => <button type="button" key={project.id} onClick={() => { setSelectedProject(project.id); setProjectSpaceFilter(''); setTab('projects'); }}><span>{project.name}</span><small>{project.archived_at ? 'В архиве · ' : ''}{project.article_count ?? 0} документов{project.last_updated ? ` · ${new Date(project.last_updated).toLocaleDateString()}` : ''}</small><span className="corp-admin-tags">{(project.tags || []).map(tag => <span key={tag}>{tag}</span>)}</span></button>)}</div>}</article>)}
+          {!catalogSpaces.length && (spaces.length > 0 && (catalogFilter.trim() || catalogKind !== 'all')
+            ? <div className="corp-admin-empty corp-admin-empty-filter" role="status"><p>Ничего не найдено</p><button type="button" className="button ghost" onClick={() => { setCatalogFilter(''); setCatalogKind('all'); }}>Сбросить фильтры</button></div>
+            : <p className="corp-admin-empty">Подходящих пространств не найдено.</p>)}
           {selectedSpaceEntry && !selectedSpaceEntry.limited && !canManage(selectedSpaceEntry.effective_role) && <p className="corp-admin-empty">Управление доступом к «{selectedSpaceEntry.name}» доступно менеджерам и владельцам.</p>}
           {accessAllowed && accessType === 'space' && grantEditor(!!selectedSpaceEntry?.archived_at)}
         </>}
