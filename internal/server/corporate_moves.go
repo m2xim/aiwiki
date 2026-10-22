@@ -20,6 +20,8 @@ import (
 const (
 	moveMaxArticles = 500
 	moveMaxProjects = 100
+	// moveMaxArtifacts bounds the artifacts visible to the actor in a moved subtree.
+	moveMaxArtifacts = 2000
 )
 
 type moveTarget struct {
@@ -56,6 +58,7 @@ type movePreview struct {
 	Fingerprint  string        `json:"fingerprint"`
 	Articles     int           `json:"articles"`
 	Projects     int           `json:"projects"`
+	Artifacts    int           `json:"artifacts"`
 	Source       moveContainer `json:"source"`
 	Target       moveContainer `json:"target"`
 	Access       []moveAccess  `json:"access"`
@@ -90,6 +93,12 @@ type moveArticle struct {
 	Deleted  bool
 }
 
+// moveArtifact is an artifact of a moved project subtree that the actor can see.
+type moveArtifact struct {
+	ID       string
+	Revision int
+}
+
 type moveProject struct {
 	ID       string
 	ParentID string
@@ -102,10 +111,12 @@ type movePlan struct {
 	actor    string
 	articles []moveArticle // article kind: root first; project kind: articles whose space changes
 	projects []moveProject // project kind: parents before children
-	preview  movePreview
-	root     Article
-	project  corporateProject
-	access   []moveAccess
+	// artifacts: project kind, space change only; visible to the actor (their RLS)
+	artifacts []moveArtifact
+	preview   movePreview
+	root      Article
+	project   corporateProject
+	access    []moveAccess
 }
 
 var moveRoleRank = map[string]int{"": 0, "reader": 1, "commenter": 2, "editor": 3, "manager": 4, "owner": 5}
@@ -478,6 +489,36 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 		if len(plan.articles) > moveMaxArticles {
 			return nil, moveFail(400, "move too large")
 		}
+		if p.SpaceID != t.SpaceID {
+			// Artifacts follow their project. Only those the actor can see are listed
+			// (ordinary RLS), so hidden private ones are neither counted nor disclosed.
+			// The warning does not depend on what the actor sees.
+			xrows, err := tx.Query(`WITH RECURSIVE sub(id,depth,path) AS (
+			SELECT id,0,ARRAY[id]::text[] FROM projects WHERE id=?
+			UNION ALL
+			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<64
+		) SELECT a.id,a.revision FROM artifacts a WHERE a.project_id IN (SELECT id FROM sub) ORDER BY a.id LIMIT ?`, req.ID, moveMaxArtifacts+1)
+			if err != nil {
+				return nil, moveDBFail(err)
+			}
+			for xrows.Next() {
+				var item moveArtifact
+				if err = xrows.Scan(&item.ID, &item.Revision); err != nil {
+					xrows.Close()
+					return nil, moveFail(500, "database error")
+				}
+				plan.artifacts = append(plan.artifacts, item)
+			}
+			err = xrows.Err()
+			xrows.Close()
+			if err != nil {
+				return nil, moveFail(500, "database error")
+			}
+			if len(plan.artifacts) > moveMaxArtifacts {
+				return nil, moveFail(400, "move too large")
+			}
+			warnings = append(warnings, "Артефакты проекта переедут вместе с ним. Авторы личных артефактов сохранят к ним доступ, только если у них есть права в новом месте; их публичные ссылки перестанут работать, если прав не будет.")
+		}
 		plan.project = p
 		tcontainer = t.ParentID
 		sourceInfo = moveContainerInfo(tx, actor, p.SpaceID, p.ParentID)
@@ -553,7 +594,7 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 		warnings = []string{}
 	}
 	plan.access = access
-	plan.preview = movePreview{Articles: len(plan.articles), Projects: len(plan.projects), Source: sourceInfo, Target: targetInfo,
+	plan.preview = movePreview{Articles: len(plan.articles), Projects: len(plan.projects), Artifacts: len(plan.artifacts), Source: sourceInfo, Target: targetInfo,
 		Access: access, UsersGaining: gaining, UsersLosing: losing, Warnings: warnings}
 	plan.preview.Fingerprint = moveFingerprint(plan)
 	return plan, nil
@@ -585,6 +626,11 @@ func moveFingerprint(plan *movePlan) string {
 		projects = append(projects, item{ID: p.ID, A: p.ParentID, B: p.SpaceID})
 	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].ID < projects[j].ID })
+	artifacts := make([]item, 0, len(plan.artifacts))
+	for _, a := range plan.artifacts {
+		artifacts = append(artifacts, item{ID: a.ID, A: fmt.Sprint(a.Revision)})
+	}
+	sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].ID < artifacts[j].ID })
 	grants := make([]grant, 0, len(plan.access))
 	for _, g := range plan.access {
 		b, a := "", ""
@@ -603,18 +649,19 @@ func moveFingerprint(plan *movePlan) string {
 		return grants[i].I < grants[j].I
 	})
 	raw, _ := json.Marshal(struct {
-		V        int        `json:"v"`
-		Kind     string     `json:"kind"`
-		ID       string     `json:"id"`
-		Target   moveTarget `json:"target"`
-		Actor    string     `json:"actor"`
-		Base     int        `json:"base"`
-		Articles []item     `json:"articles"`
-		Projects []item     `json:"projects"`
-		Grants   []grant    `json:"grants"`
-		Gaining  int        `json:"gaining"`
-		Losing   int        `json:"losing"`
-	}{1, plan.req.Kind, plan.req.ID, plan.req.Target, plan.actor, plan.req.BaseRevision, articles, projects, grants, plan.preview.UsersGaining, plan.preview.UsersLosing})
+		V         int        `json:"v"`
+		Kind      string     `json:"kind"`
+		ID        string     `json:"id"`
+		Target    moveTarget `json:"target"`
+		Actor     string     `json:"actor"`
+		Base      int        `json:"base"`
+		Articles  []item     `json:"articles"`
+		Projects  []item     `json:"projects"`
+		Artifacts []item     `json:"artifacts"`
+		Grants    []grant    `json:"grants"`
+		Gaining   int        `json:"gaining"`
+		Losing    int        `json:"losing"`
+	}{1, plan.req.Kind, plan.req.ID, plan.req.Target, plan.actor, plan.req.BaseRevision, articles, projects, artifacts, grants, plan.preview.UsersGaining, plan.preview.UsersLosing})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
@@ -735,7 +782,16 @@ func (s *Server) moveApplyProject(tx *transaction, plan *movePlan) (map[string]a
 			return nil, merr
 		}
 	}
-	if err := corporateAudit(tx, plan.actor, "move.project", "project", plan.req.ID, moveAuditDetails(plan)); err != nil {
+	// Artifacts of the whole subtree (inherit, private and deleted ones, also
+	// those the actor cannot see) follow in the same transaction. The database
+	// function reads the target space from the projects and counts what it moved.
+	var artifactsMoved int
+	if err := tx.QueryRow(`SELECT artifact_follow_project_move(?)`, plan.req.ID).Scan(&artifactsMoved); err != nil {
+		return nil, moveDBFail(err)
+	}
+	details := moveAuditDetails(plan)
+	details["artifacts"] = artifactsMoved
+	if err := corporateAudit(tx, plan.actor, "move.project", "project", plan.req.ID, details); err != nil {
 		return nil, moveFail(500, "database error")
 	}
 	var root corporateProject
@@ -744,7 +800,8 @@ func (s *Server) moveApplyProject(tx *transaction, plan *movePlan) (map[string]a
 		return nil, moveFail(500, "database error")
 	}
 	root.InheritACL = inherit != 0
-	return map[string]any{"articles": len(plan.articles), "projects": len(plan.projects), "root": root}, nil
+	// "artifacts" is the number visible to the actor, as in the preview.
+	return map[string]any{"articles": len(plan.articles), "projects": len(plan.projects), "artifacts": len(plan.artifacts), "root": root}, nil
 }
 
 // moveLoadArticle reads an article without FOR UPDATE: the row lock would need

@@ -495,37 +495,6 @@ func TestArtifactsPostgresRowLevelSecurity(t *testing.T) {
 	}
 }
 
-func TestArtifactsPostgresProjectMoveGuard(t *testing.T) {
-	e := newArtEnv(t)
-	b := e.movesEnv.space("alice")
-	top := e.project(e.space, "", "Top", true)
-	empty := e.project(e.space, "", "Empty", true)
-	d := e.create("alice", map[string]any{"project_id": top})
-	_ = d
-	// a project without artifacts still moves
-	pv := e.call("alice", "/api/moves/preview", projectMove(empty, b, ""))
-	if pv.Code != 200 {
-		t.Fatalf("preview: %d %s", pv.Code, pv.Raw)
-	}
-	if r := e.call("alice", "/api/moves/apply", withFingerprint(projectMove(empty, b, ""), pv.preview(t).Fingerprint)); r.Code != 200 {
-		t.Fatalf("empty project move: %d %s", r.Code, r.Raw)
-	}
-	// a project holding an artifact (even a private one the mover cannot see) does not
-	e.create("editor", map[string]any{"project_id": e.other, "visibility": "private"})
-	for _, proj := range []string{top, e.other} {
-		pv = e.call("alice", "/api/moves/preview", projectMove(proj, b, ""))
-		if pv.Code != 200 {
-			t.Fatalf("preview: %d %s", pv.Code, pv.Raw)
-		}
-		if r := e.call("alice", "/api/moves/apply", withFingerprint(projectMove(proj, b, ""), pv.preview(t).Fingerprint)); r.Code == 200 {
-			t.Errorf("project %s with artifacts moved", proj)
-		}
-	}
-	if e.status("alice", "GET", "/api/artifacts/"+d.ID, nil) != 200 {
-		t.Error("artifact lost after refused move")
-	}
-}
-
 func TestArtifactsPostgresSchemaGuard(t *testing.T) {
 	e := newArtEnv(t)
 	if err := e.root.DB.validateRuntimeSchema(); err != nil {

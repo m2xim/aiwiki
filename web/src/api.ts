@@ -30,7 +30,7 @@ export type MoveTarget = { space_id: string; project_id?: string; parent_id?: st
 export type MoveRequest = { kind: 'article' | 'project'; id: string; base_revision?: number; target: MoveTarget; fingerprint?: string };
 export type MovePlace = { space_id: string; space_name: string; project_id: string; project_name: string };
 export type MoveAccessChange = { subject_type: 'user' | 'team' | 'other'; subject_id: string; name: string; before: AccessGrant['role'] | null; after: AccessGrant['role'] | null; users?: number };
-export type MovePreview = { fingerprint: string; articles: number; projects: number; source: MovePlace; target: MovePlace; access: MoveAccessChange[]; users_gaining: number; users_losing: number; warnings: string[] };
+export type MovePreview = { fingerprint: string; articles: number; projects: number; artifacts?: number; source: MovePlace; target: MovePlace; access: MoveAccessChange[]; users_gaining: number; users_losing: number; warnings: string[] };
 export type MoveApplyResult = { conflict: false; articles: number; projects: number; root: Article | Project } | { conflict: true; preview: MovePreview };
 export type ArtifactSummary = {
   id: string; space_id: string; project_id?: string; title: string; description: string; visibility: Visibility;

@@ -36,14 +36,16 @@ export function plural(n: number, one: string, few: string, many: string): strin
 
 export const countArticles = (n: number) => `${n} ${plural(n, 'статья', 'статьи', 'статей')}`;
 export const countProjects = (n: number) => `${n} ${plural(n, 'проект', 'проекта', 'проектов')}`;
+export const countArtifacts = (n: number) => `${n} ${plural(n, 'артефакт', 'артефакта', 'артефактов')}`;
 export const countUsers = (n: number) => `${n} ${plural(n, 'пользователь', 'пользователя', 'пользователей')}`;
 /** «у 1 пользователя», «у 2 пользователей», «у 21 пользователя» (genitive after a preposition). */
 export const countUsersOf = (n: number) => `${n} ${Math.abs(n) % 10 === 1 && Math.abs(n) % 100 !== 11 ? 'пользователя' : 'пользователей'}`;
 export const countMembers = (n: number) => `${n} ${plural(n, 'участник', 'участника', 'участников')}`;
 
 /** Summary lines for a preview: what moves and who gains or loses access. */
-export function summarizePreview(p: Pick<MovePreview, 'articles' | 'projects' | 'users_gaining' | 'users_losing'>): string[] {
-  const lines = [p.projects > 0 ? `Будет перемещено: ${countProjects(p.projects)}, ${countArticles(p.articles)}` : `Будет перемещено: ${countArticles(p.articles)}`];
+export function summarizePreview(p: Pick<MovePreview, 'articles' | 'projects' | 'artifacts' | 'users_gaining' | 'users_losing'>): string[] {
+  const parts = [...(p.projects > 0 ? [countProjects(p.projects)] : []), countArticles(p.articles), ...((p.artifacts ?? 0) > 0 ? [countArtifacts(p.artifacts!)] : [])];
+  const lines = [`Будет перемещено: ${parts.join(', ')}`];
   const gaining = p.users_gaining || 0, losing = p.users_losing || 0;
   if (gaining) lines.push(`Права расширятся у: ${countUsersOf(gaining)}`);
   if (losing) lines.push(`Права сузятся или пропадут у: ${countUsersOf(losing)}`);
