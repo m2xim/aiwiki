@@ -1,0 +1,7 @@
+.favorites-page .favorites-filters { grid-template-columns: minmax(200px, 2fr) repeat(3, minmax(130px, 1fr)); }
+.favorites-hint { margin: 0; max-width: 380px; font-size: 13px; }
+.favorites-unstar { color: #d9a21b; }
+.favorites-unstar:hover { color: #b9840b; }
+.favorites-unstar:disabled { opacity: .5; }
+@media (max-width: 900px) { .favorites-page .favorites-filters { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .favorites-page .favorites-filters { grid-template-columns: 1fr; } }

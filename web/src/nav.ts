@@ -94,3 +94,14 @@ export function useSidebarWidth(active = true) {
   const reset = useCallback(() => { commit(null); }, [commit]);
   return { width, handleLeft: box ? box.right : null, shownWidth: width ?? Math.round(box?.width || SIDEBAR_DEFAULT), dragging, sidebarRef, workspaceRef, onPointerDown, onKeyDown, reset, current };
 }
+
+export type NavMode = 'open' | 'rail' | 'hidden';
+const navKey = 'aiwiki.leftNav';
+const readNav = (): NavMode => { try { const v = localStorage.getItem(navKey); return v === 'rail' || v === 'hidden' ? v : 'open'; } catch { return 'open'; } };
+
+/** Collapsible side panels (Confluence style): left panel: open / narrow rail / hidden. Remembered per browser. */
+export function useLayoutPrefs() {
+  const [nav, setNavState] = useState<NavMode>(readNav);
+  const setNav = useCallback((mode: NavMode) => { setNavState(mode); try { if (mode === 'open') localStorage.removeItem(navKey); else localStorage.setItem(navKey, mode); } catch { /* lasts for this session only */ } }, []);
+  return { nav, setNav };
+}

@@ -114,3 +114,55 @@ export function relativeDayRu(value: string, now: Date = new Date()): string {
   if (diff <= 30) return `${diff} ${pluralRu(diff, 'день', 'дня', 'дней')} назад`;
   return '';
 }
+
+// ---- "Избранное" page (?view=favorites) ----
+
+export type FavoritesSort = 'added' | 'changed' | 'title';
+export type FavoritesQuery = { q: string; space: string; kind: string; sort: FavoritesSort };
+export const DEFAULT_FAVORITES_QUERY: FavoritesQuery = { q: '', space: '', kind: '', sort: 'added' };
+// The space filter lives in "fspace": plain "space" is the app's own route parameter.
+const FAVORITES_KEYS = ['q', 'fspace', 'kind', 'sort'] as const;
+
+/** Reads the favourites filters from a query string; unknown or malformed values fall back to the defaults. */
+export function parseFavoritesQuery(search: string): FavoritesQuery {
+  const params = new URLSearchParams(search);
+  const sort = params.get('sort');
+  const q = params.get('q') || '';
+  const space = params.get('fspace') || '';
+  const kind = params.get('kind') || '';
+  return {
+    q: q.length <= MAX_LEN ? q : q.slice(0, MAX_LEN),
+    space: space.length <= MAX_LEN ? space : '',
+    kind: kind.length <= 50 ? kind : '',
+    sort: sort === 'changed' || sort === 'title' ? sort : 'added',
+  };
+}
+
+/** Returns the query string (without "?") for `base` with the favourites parameters replaced; defaults are omitted and foreign parameters are kept. */
+export function favoritesQueryString(state: FavoritesQuery, base: URLSearchParams): string {
+  const params = new URLSearchParams(base);
+  FAVORITES_KEYS.forEach(key => params.delete(key));
+  if (state.q.trim()) params.set('q', state.q.slice(0, MAX_LEN));
+  if (state.space) params.set('fspace', state.space);
+  if (state.kind) params.set('kind', state.kind);
+  if (state.sort === 'changed' || state.sort === 'title') params.set('sort', state.sort);
+  return params.toString();
+}
+
+export type DirectoryFavorite = { id: string; title: string; space_id: string; kind: string; summary: string; updated_at: string; favorited_at: string };
+
+/** Filters and sorts favourites; the input is not mutated. `spaceNames` lets the text search match the space name too. */
+export function filterFavorites<T extends DirectoryFavorite>(items: T[], state: FavoritesQuery, spaceNames: Map<string, string> = new Map()): T[] {
+  const needle = state.q.trim().toLocaleLowerCase('ru');
+  const result = items.filter(item => {
+    if (state.space && item.space_id !== state.space) return false;
+    if (state.kind && item.kind !== state.kind) return false;
+    if (!needle) return true;
+    return [item.title, item.summary || '', spaceNames.get(item.space_id) || ''].join('\n').toLocaleLowerCase('ru').includes(needle);
+  });
+  const byTitle = (a: T, b: T) => (a.title || '').localeCompare(b.title || '', 'ru');
+  if (state.sort === 'title') result.sort(byTitle);
+  else if (state.sort === 'changed') result.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '') || byTitle(a, b));
+  else result.sort((a, b) => (b.favorited_at || '').localeCompare(a.favorited_at || '') || byTitle(a, b));
+  return result;
+}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { parseCatalogQuery, catalogQueryString, DEFAULT_CATALOG_QUERY, parseSpacesQuery, spacesQueryString, DEFAULT_SPACES_QUERY, filterSpaces, pluralRu, relativeDayRu } from '../web/src/catalogQuery.ts';
+import { parseCatalogQuery, catalogQueryString, DEFAULT_CATALOG_QUERY, parseSpacesQuery, spacesQueryString, DEFAULT_SPACES_QUERY, filterSpaces, pluralRu, relativeDayRu, parseFavoritesQuery, favoritesQueryString, DEFAULT_FAVORITES_QUERY, filterFavorites } from '../web/src/catalogQuery.ts';
 
 const base = new URLSearchParams('view=admin&tab=catalog');
 
@@ -94,4 +94,25 @@ assert.equal(relativeDayRu(new Date(2026, 4, 1).toISOString(), now), '');
 assert.equal(relativeDayRu('', now), '');
 assert.equal(relativeDayRu('garbage', now), '');
 assert.equal(relativeDayRu(new Date(2026, 5, 20).toISOString(), now), '');
+
+// Favourites page: defaults omitted, garbage ignored, "space" (route parameter) untouched, round trip, filter + sort.
+const fbase = new URLSearchParams('view=favorites&space=s1');
+assert.equal(favoritesQueryString(DEFAULT_FAVORITES_QUERY, fbase), 'view=favorites&space=s1');
+assert.deepEqual(parseFavoritesQuery('?view=favorites&sort=bogus&kind=&fspace='), DEFAULT_FAVORITES_QUERY);
+const fstate = { q: 'Привет мир', space: 'пр-1', kind: 'plan', sort: 'title' };
+assert.deepEqual(parseFavoritesQuery('?' + favoritesQueryString(fstate, fbase)), fstate);
+assert.equal(new URLSearchParams(favoritesQueryString(fstate, fbase)).get('space'), 's1');
+const favs = [
+  { id: 'a', title: 'Beta', space_id: 's1', kind: 'plan', summary: 'про кошек', updated_at: '2026-01-02', favorited_at: '2026-03-01' },
+  { id: 'b', title: 'Alpha', space_id: 's2', kind: 'article', summary: '', updated_at: '2026-02-02', favorited_at: '2026-04-01' },
+  { id: 'c', title: 'Gamma', space_id: 's1', kind: 'article', summary: '', updated_at: '2026-03-02', favorited_at: '2026-02-01' },
+];
+const favIds = (state) => filterFavorites(favs, { ...DEFAULT_FAVORITES_QUERY, ...state }, new Map([['s2', 'Инженерия']])).map(f => f.id).join('');
+assert.equal(favIds({}), 'bac');
+assert.equal(favIds({ sort: 'changed' }), 'cba');
+assert.equal(favIds({ sort: 'title' }), 'bac');
+assert.equal(favIds({ space: 's1' }), 'ac');
+assert.equal(favIds({ kind: 'article' }), 'bc');
+assert.equal(favIds({ q: 'КОШЕК' }), 'a');
+assert.equal(favIds({ q: 'инженер' }), 'b');
 console.log('Catalog query checks passed: defaults omitted, garbage ignored, Cyrillic/space round trip, foreign params kept.');

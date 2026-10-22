@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderPlus, LayoutGrid, RotateCw, Search, User, Users } from 'lucide-react';
+import { Archive, ArrowRight, FolderPlus, LayoutGrid, Pencil, RotateCw, Search, User, Users } from 'lucide-react';
 import { CatalogSpace, client } from './api';
 import { CatalogSort, DEFAULT_SPACES_QUERY, SpacesAccess, SpacesQuery, filterSpaces, parseSpacesQuery, pluralRu, relativeDayRu, spacesQueryString } from './catalogQuery';
 import { replaceUrl } from './nav';
@@ -10,9 +10,9 @@ const MAX_TAGS = 5;
 const fullDate = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('ru-RU', { dateStyle: 'full', timeStyle: 'short' }).format(date); };
 const shortDate = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium' }).format(date); };
 
-type Props = { trusted: boolean; currentSpaceId: string; onOpenSpace: (id: string) => void; onCreate: () => void };
+type Props = { trusted: boolean; admin?: boolean; currentSpaceId: string; reloadKey?: number; archivedCount?: number; onOpenSpace: (id: string) => void; onEdit: (id: string) => void; onOpenArchive?: () => void; onCreate: () => void };
 
-export function SpacesDirectory({ trusted, currentSpaceId, onOpenSpace, onCreate }: Props) {
+export function SpacesDirectory({ trusted, admin = false, currentSpaceId, reloadKey = 0, archivedCount = 0, onOpenSpace, onEdit, onOpenArchive, onCreate }: Props) {
   const [spaces, setSpaces] = useState<CatalogSpace[] | null>(null);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
@@ -24,7 +24,7 @@ export function SpacesDirectory({ trusted, currentSpaceId, onOpenSpace, onCreate
     setError('');
     client.catalog().then(list => { if (current === request.current) setSpaces(list || []); })
       .catch(e => { if (current === request.current) setError((e as Error).message || 'Неизвестная ошибка'); });
-  }, [reload]);
+  }, [reload, reloadKey]);
 
   // Filters live in the URL: Back / Forward re-read them.
   useEffect(() => {
@@ -58,7 +58,7 @@ export function SpacesDirectory({ trusted, currentSpaceId, onOpenSpace, onCreate
   const total = spaces?.length || 0;
 
   return <section className="spaces-dir">
-    <div className="spaces-dir-top"><span className="eyebrow">ПРОСТРАНСТВА</span></div>
+    <div className="spaces-dir-top"><span className="eyebrow">ПРОСТРАНСТВА</span>{archivedCount > 0 && onOpenArchive && <button className="spaces-dir-archive" onClick={onOpenArchive}><Archive size={14}/>Архив ({archivedCount})</button>}</div>
     <div className="spaces-dir-title"><h1>Все пространства</h1>{spaces && total > 0 && <span className="spaces-dir-count" aria-live="polite">{shown.length} из {total}</span>}</div>
     <p className="spaces-dir-note">Пространства, к которым у вас есть доступ.</p>
     {error && !spaces ? <div className="spaces-dir-state spaces-dir-error" role="alert"><p>Не удалось загрузить пространства: {error}</p><button className="button ghost" onClick={() => setReload(v => v + 1)}><RotateCw size={15}/>Повторить</button></div>
@@ -73,12 +73,12 @@ export function SpacesDirectory({ trusted, currentSpaceId, onOpenSpace, onCreate
         </div>
         {error && <div className="spaces-dir-more-error" role="alert">Не удалось обновить список: {error} <button onClick={() => setReload(v => v + 1)}>Повторить</button></div>}
         {shown.length === 0 ? <div className="spaces-dir-state"><strong>Ничего не найдено</strong>{filtered && <button className="button ghost" onClick={() => setState(DEFAULT_SPACES_QUERY)}>Сбросить фильтры</button>}</div>
-          : <ul className="spaces-dir-list">{shown.map(space => <SpaceCard key={space.id} space={space} trusted={trusted} current={space.id === currentSpaceId} onOpen={openSpace}/>)}</ul>}
+          : <ul className="spaces-dir-list">{shown.map(space => <SpaceCard key={space.id} space={space} trusted={trusted} canManage={trusted || admin || (!space.limited && (space.effective_role === 'owner' || space.effective_role === 'manager'))} current={space.id === currentSpaceId} onOpen={openSpace} onEdit={onEdit}/>)}</ul>}
       </>}
   </section>;
 }
 
-function SpaceCard({ space, trusted, current, onOpen }: { space: CatalogSpace; trusted: boolean; current: boolean; onOpen: (id: string) => void }) {
+function SpaceCard({ space, trusted, canManage, current, onOpen, onEdit }: { space: CatalogSpace; trusted: boolean; canManage: boolean; current: boolean; onOpen: (id: string) => void; onEdit: (id: string) => void }) {
   const description = (space.description || '').trim();
   const count = space.article_count || 0;
   const projects = space.projects?.length || 0;
@@ -87,7 +87,7 @@ function SpaceCard({ space, trusted, current, onOpen }: { space: CatalogSpace; t
   const relative = relativeDayRu(updated);
   const role = trusted ? 'Полный доступ' : ROLE_LABELS[space.effective_role || ''] || '';
   return <li className={`spaces-dir-card${current ? ' is-current' : ''}`}>
-    <button className="spaces-dir-open" onClick={() => onOpen(space.id)} aria-current={current ? 'true' : undefined}>
+    <div className="spaces-dir-open">
       <span className="spaces-dir-head">
         <strong className="spaces-dir-name">{space.name}</strong>
         {current && <span className="spaces-dir-badge is-current">Выбрано</span>}
@@ -102,6 +102,10 @@ function SpaceCard({ space, trusted, current, onOpen }: { space: CatalogSpace; t
         {updated && fullDate(updated) ? <span title={fullDate(updated)}>Изменено {relative || shortDate(updated)}</span> : <span>Нет изменений</span>}
       </span>
       {tags.length > 0 && <span className="spaces-dir-tags">{tags.slice(0, MAX_TAGS).map(tag => <span key={tag} className="spaces-dir-tag">{tag}</span>)}{tags.length > MAX_TAGS && <span className="spaces-dir-tag is-more" title={tags.slice(MAX_TAGS).join(', ')}>+{tags.length - MAX_TAGS}</span>}</span>}
-    </button>
+      <span className="spaces-dir-actions">
+        {canManage && <button className="icon-button spaces-dir-edit" onClick={() => onEdit(space.id)} title="Изменить пространство" aria-label={`Изменить пространство ${space.name}`}><Pencil size={15}/></button>}
+        <button className="button ghost small spaces-dir-go" onClick={() => onOpen(space.id)} aria-label={`Перейти в пространство ${space.name}`} aria-current={current ? 'true' : undefined}>Перейти<ArrowRight size={14}/></button>
+      </span>
+    </div>
   </li>;
 }
