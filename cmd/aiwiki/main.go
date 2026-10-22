@@ -37,7 +37,7 @@ func run() error {
 	issuer := os.Getenv("AIWIKI_OIDC_ISSUER")
 	corporate := databaseURL != "" || issuer != "" || os.Getenv("AIWIKI_OIDC_CLIENT_ID") != "" || os.Getenv("AIWIKI_OIDC_CLIENT_SECRET") != "" || os.Getenv("AIWIKI_MIGRATION_DATABASE_URL") != ""
 	for _, setting := range os.Environ() {
-		if strings.HasPrefix(setting, "AIWIKI_OIDC_") || strings.HasPrefix(setting, "AIWIKI_S3_") || strings.HasPrefix(setting, "AIWIKI_KEYCLOAK_") {
+		if strings.HasPrefix(setting, "AIWIKI_OIDC_") || strings.HasPrefix(setting, "AIWIKI_S3_") || strings.HasPrefix(setting, "AIWIKI_KEYCLOAK_") || strings.HasPrefix(setting, "AIWIKI_MCP_RESOURCE_URL=") || strings.HasPrefix(setting, "AIWIKI_MCP_INTROSPECTION_") {
 			corporate = true
 		}
 	}
@@ -45,6 +45,7 @@ func run() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		s, err = server.OpenCorporate(ctx, server.CorporateConfig{
+			MCPOAuth:    server.MCPOAuthConfig{ResourceURL: os.Getenv("AIWIKI_MCP_RESOURCE_URL"), IntrospectionClientID: os.Getenv("AIWIKI_MCP_INTROSPECTION_CLIENT_ID"), IntrospectionClientSecret: os.Getenv("AIWIKI_MCP_INTROSPECTION_CLIENT_SECRET")},
 			Admission:   server.KeycloakAdmissionConfig{AdminURL: os.Getenv("AIWIKI_KEYCLOAK_ADMIN_URL"), ClientID: os.Getenv("AIWIKI_KEYCLOAK_ADMISSION_CLIENT_ID"), ClientSecret: os.Getenv("AIWIKI_KEYCLOAK_ADMISSION_CLIENT_SECRET")},
 			S3:          server.S3Config{Bucket: os.Getenv("AIWIKI_S3_BUCKET"), Region: os.Getenv("AIWIKI_S3_REGION"), Endpoint: os.Getenv("AIWIKI_S3_ENDPOINT"), Prefix: os.Getenv("AIWIKI_S3_PREFIX"), PathStyle: os.Getenv("AIWIKI_S3_PATH_STYLE") == "1", AllowInsecureLoopback: os.Getenv("AIWIKI_ALLOW_INSECURE_LOOPBACK") == "1"},
 			DatabaseURL: databaseURL, MigrationDatabaseURL: os.Getenv("AIWIKI_MIGRATION_DATABASE_URL"), RuntimeRole: os.Getenv("AIWIKI_DATABASE_ROLE"),

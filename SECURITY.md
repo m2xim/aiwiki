@@ -23,6 +23,8 @@ PostgreSQL/OIDC mode is separate and must be configured completely; it never sil
 
 The application does not terminate TLS itself, provide comprehensive production rate limits/quotas or prove your Keycloak/AD federation configuration. Deploy behind TLS, restrict direct backend access, set a short Keycloak access-token lifetime, protect database/object credentials and back up PostgreSQL and S3 together. Local disable/grant revocation is checked per request/statement; directory changes may lag until Keycloak invalidates or expires an OIDC token. Optional [persistent native MCP keys](docs/MCP-PERSISTENT-ACCESS.md) instead require current user/role checks through a separate read-only machine client on every request. Their freshness still depends on Keycloak's directory synchronization. Emergency private-content access remains separate work.
 
+Optional [MCP OAuth discovery](docs/MCP-OAUTH.md) uses the existing Keycloak issuer and a separate resource audience plus `aiwiki:mcp` scope. That scope permits the user's current content rights, including writes; it is not a read-only or project-limited grant. Use native scoped keys for narrower access. OAuth bearer requests introspect at the issuer on every request; budget proxy and identity-provider capacity before production rollout.
+
 ## Supported versions
 
 Only the latest commit on the default branch is supported. There are no versioned releases yet.

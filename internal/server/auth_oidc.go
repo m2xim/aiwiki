@@ -20,7 +20,8 @@ package server
 // the next request.
 //
 // /mcp accepts only an OIDC access token (Authorization: Bearer). Its JWT
-// signature, issuer, audience (the configured client ID) and expiry are
+// signature, issuer, audience (the client ID, or the resource URL when MCP
+// OAuth discovery is enabled) and expiry are
 // verified, then it is introspected and the local user is checked. Browser
 // cookies never authenticate /mcp, and bearer tokens never authenticate any
 // other path.
@@ -72,6 +73,7 @@ type AuthService struct {
 	cfg           CorporateConfig
 	users         authUsers
 	verifier      *oidc.IDTokenVerifier
+	mcpVerifier   *oidc.IDTokenVerifier
 	oauth         *oauth2.Config
 	introspectURL string
 	client        *http.Client
@@ -212,6 +214,9 @@ func newAuthServiceWithUsers(ctx context.Context, users authUsers, cfg Corporate
 		a.sessionCookie = "__Host-aiwiki_session"
 		a.loginCookie = "__Host-aiwiki_login"
 	}
+	if cfg.MCPOAuth.ResourceURL != "" {
+		a.mcpVerifier = provider.Verifier(&oidc.Config{ClientID: cfg.MCPOAuth.ResourceURL})
+	}
 	admission, err := newKeycloakAdmissionProvider(cfg, endpoint.TokenURL, client)
 	if err != nil {
 		return nil, err
@@ -251,7 +256,7 @@ func normalizeAuthConfig(cfg CorporateConfig) (CorporateConfig, error) {
 	case cfg.SessionTTL < 0 || cfg.SessionTTL > authMaxSessionTTL:
 		return cfg, fmt.Errorf("auth: session TTL must be within (0, %s]", authMaxSessionTTL)
 	}
-	return cfg, nil
+	return normalizeMCPOAuthConfig(cfg)
 }
 
 // authCheckEndpoint requires HTTPS; plain HTTP is accepted only when
@@ -296,6 +301,7 @@ func (t *authGuardTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 func (a *AuthService) routes(mux *http.ServeMux) {
+	a.mcpOAuthRoutes(mux)
 	mux.HandleFunc("GET /auth/login", a.handleLogin)
 	mux.HandleFunc("GET /auth/callback", a.handleCallback)
 	mux.HandleFunc("POST /auth/logout", a.handleLogout)
@@ -367,14 +373,14 @@ func (a *AuthService) authenticateSession(w http.ResponseWriter, r *http.Request
 func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request) (Principal, bool) {
 	deny := func(status int, msg string) (Principal, bool) {
 		if status == http.StatusUnauthorized {
-			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+			w.Header().Set("WWW-Authenticate", a.mcpBearerChallenge("invalid_token"))
 		}
 		authError(w, status, msg)
 		return Principal{}, false
 	}
 	h := r.Header.Get("Authorization")
 	if len(h) < 8 || !strings.EqualFold(h[:7], "bearer ") {
-		w.Header().Set("WWW-Authenticate", "Bearer")
+		w.Header().Set("WWW-Authenticate", a.mcpBearerChallenge(""))
 		authError(w, http.StatusUnauthorized, "bearer token required")
 		return Principal{}, false
 	}
@@ -388,7 +394,14 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	if strings.HasPrefix(raw, mcpPersistentPrefix) {
 		return a.authenticatePersistent(w, r, raw)
 	}
-	tok, err := a.verifier.Verify(r.Context(), raw)
+	verifier, audience := a.verifier, a.cfg.ClientID
+	if a.cfg.MCPOAuth.ResourceURL != "" {
+		verifier, audience = a.mcpVerifier, a.cfg.MCPOAuth.ResourceURL
+	}
+	if verifier == nil {
+		return deny(http.StatusServiceUnavailable, "authentication unavailable")
+	}
+	tok, err := verifier.Verify(r.Context(), raw)
 	if err != nil {
 		return deny(http.StatusUnauthorized, "invalid token")
 	}
@@ -400,7 +413,7 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	if typ, _ := claims["typ"].(string); strings.EqualFold(typ, "ID") {
 		return deny(http.StatusUnauthorized, "invalid token")
 	}
-	info, err := a.introspect(r.Context(), raw)
+	info, err := a.introspectAudience(r.Context(), raw, audience)
 	if err == nil && info.subject != tok.Subject {
 		err = errAuthTokenInactive
 	}
@@ -410,6 +423,10 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 		}
 		log.Printf("auth: introspection unavailable: %v", err)
 		return deny(http.StatusServiceUnavailable, "authentication unavailable")
+	}
+	if a.cfg.MCPOAuth.ResourceURL != "" && (!authScopeContains(claims["scope"], mcpOAuthScope) || !authScopeContains(info.claims["scope"], mcpOAuthScope)) {
+		w.Header().Set("WWW-Authenticate", a.mcpBearerChallenge("insufficient_scope"))
+		return deny(http.StatusForbidden, "insufficient scope")
 	}
 	p, fail := a.resolve(r.Context(), info, claims, "", authSyncLazy)
 	if fail != 0 {
@@ -576,6 +593,18 @@ type authTokenInfo struct {
 // active. errAuthTokenInactive means the token is definitively refused; any
 // other error is an outage and callers must fail closed.
 func (a *AuthService) introspect(ctx context.Context, token string) (*authTokenInfo, error) {
+	return a.introspectWithCredentials(ctx, token, a.cfg.ClientID, a.cfg.ClientID, a.cfg.ClientSecret)
+}
+
+func (a *AuthService) introspectAudience(ctx context.Context, token, audience string) (*authTokenInfo, error) {
+	id, secret := a.cfg.ClientID, a.cfg.ClientSecret
+	if audience == a.cfg.MCPOAuth.ResourceURL && a.cfg.MCPOAuth.IntrospectionClientID != "" {
+		id, secret = a.cfg.MCPOAuth.IntrospectionClientID, a.cfg.MCPOAuth.IntrospectionClientSecret
+	}
+	return a.introspectWithCredentials(ctx, token, audience, id, secret)
+}
+
+func (a *AuthService) introspectWithCredentials(ctx context.Context, token, audience, clientID, clientSecret string) (*authTokenInfo, error) {
 	form := url.Values{"token": {token}, "token_type_hint": {"access_token"}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.introspectURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -583,7 +612,7 @@ func (a *AuthService) introspect(ctx context.Context, token string) (*authTokenI
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.SetBasicAuth(url.QueryEscape(a.cfg.ClientID), url.QueryEscape(a.cfg.ClientSecret))
+	req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("introspection request: %w", err)
@@ -605,7 +634,7 @@ func (a *AuthService) introspect(ctx context.Context, token string) (*authTokenI
 	if iss, _ := m["iss"].(string); iss != a.cfg.IssuerURL {
 		return nil, errAuthTokenInactive
 	}
-	if !authAudContains(m["aud"], a.cfg.ClientID) {
+	if audience == "" || !authAudContains(m["aud"], audience) {
 		return nil, errAuthTokenInactive
 	}
 	sub, _ := m["sub"].(string)

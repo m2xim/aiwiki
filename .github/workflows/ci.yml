@@ -72,6 +72,7 @@ jobs:
     env:
       AIWIKI_TEST_POSTGRES_OWNER: postgres://aiwiki_owner:owner-ci-only@127.0.0.1:5432/aiwiki_ci?sslmode=disable
       AIWIKI_TEST_POSTGRES: postgres://aiwiki_app:app-ci-only@127.0.0.1:5432/aiwiki_ci?sslmode=disable
+      AIWIKI_TEST_KEYCLOAK_ISSUER: http://127.0.0.1:58080/realms/aiwiki-oauth-test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -84,5 +85,21 @@ jobs:
           CREATE ROLE aiwiki_app LOGIN PASSWORD 'app-ci-only' NOSUPERUSER NOBYPASSRLS;
           ALTER DATABASE aiwiki_ci OWNER TO aiwiki_owner;
           GRANT ALL ON SCHEMA public TO aiwiki_owner;"
-      - name: Corporate PostgreSQL, signed OIDC and object storage checks
-        run: go test ./internal/server -run 'TestCorporate|TestAuth|TestStorage|TestS3|TestMCPDelegation|TestMCPScope|TestMCPPersistent|TestKeycloakAdmission' -count=1 -v
+      - name: Start disposable Keycloak 26.8.0 with the OAuth test realm
+        run: |
+          docker run -d --name keycloak-oauth -p 127.0.0.1:58080:8080 \
+            -v "$GITHUB_WORKSPACE/internal/server/testdata/keycloak-oauth-realm.json:/opt/keycloak/data/import/aiwiki-oauth-test-realm.json:ro" \
+            quay.io/keycloak/keycloak:26.8.0 start-dev --import-realm \
+            --features=resource-indicators --hostname=http://127.0.0.1:58080
+          for i in $(seq 1 45); do
+            if curl -fsS -o /dev/null --max-time 2 "$AIWIKI_TEST_KEYCLOAK_ISSUER/.well-known/openid-configuration"; then
+              echo "Keycloak ready on attempt $i"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Keycloak did not become ready within 45 attempts (at most about 180 seconds)" >&2
+          docker logs keycloak-oauth >&2 || true
+          exit 1
+      - name: Corporate PostgreSQL, signed OIDC, object storage and Keycloak OAuth checks
+        run: go test ./internal/server -run 'TestCorporate|TestAuth|TestStorage|TestS3|TestMCPDelegation|TestMCPScope|TestMCPPersistent|TestKeycloakAdmission|TestMCPOAuth' -count=1 -v
