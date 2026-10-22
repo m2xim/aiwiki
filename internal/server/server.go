@@ -122,6 +122,7 @@ func (s *Server) routes() http.Handler {
 		s.corporateRoutes(mux)
 	} else {
 		mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"mode": "trusted"}) })
+		mux.HandleFunc("GET /api/catalog", s.trustedCatalog)
 	}
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
 	mux.HandleFunc("/api/spaces", s.spaces)
