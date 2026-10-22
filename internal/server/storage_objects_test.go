@@ -3,12 +3,15 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +23,7 @@ type fakeS3 struct {
 	types   map[string]string
 	auths   []string
 	heads   int
+	lists   int
 	failPut bool
 }
 
@@ -42,6 +46,44 @@ func newFakeS3(t *testing.T) (*fakeS3, *httptest.Server) {
 			b, _ := io.ReadAll(r.Body)
 			f.objects[path] = b
 			f.types[path] = r.Header.Get("Content-Type")
+		case r.Method == http.MethodHead && strings.HasPrefix(path, "wiki/"):
+			b, ok := f.objects[path]
+			if !ok {
+				w.WriteHeader(404)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+			w.Header().Set("Last-Modified", "Thu, 02 Jan 2020 03:04:05 GMT")
+		case r.Method == http.MethodGet && path == "wiki" && r.URL.Query().Get("list-type") == "2":
+			f.lists++
+			var keys []string
+			for k := range f.objects {
+				if strings.HasPrefix(k, "wiki/"+r.URL.Query().Get("prefix")) {
+					keys = append(keys, k)
+				}
+			}
+			sort.Strings(keys)
+			start := 0
+			if tok := r.URL.Query().Get("continuation-token"); tok != "" {
+				start, _ = strconv.Atoi(tok)
+			}
+			end, more := start+2, true // two keys per page exercises pagination
+			if end >= len(keys) {
+				end, more = len(keys), false
+			}
+			var sb strings.Builder
+			sb.WriteString(`<?xml version="1.0"?><ListBucketResult><Name>wiki</Name>`)
+			for _, k := range keys[start:end] {
+				fmt.Fprintf(&sb, "<Contents><Key>%s</Key><LastModified>2020-01-02T03:04:05.000Z</LastModified><Size>%d</Size></Contents>", k[len("wiki/"):], len(f.objects[k]))
+			}
+			if more {
+				fmt.Fprintf(&sb, "<IsTruncated>true</IsTruncated><NextContinuationToken>%d</NextContinuationToken>", end)
+			} else {
+				sb.WriteString("<IsTruncated>false</IsTruncated>")
+			}
+			sb.WriteString("</ListBucketResult>")
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, sb.String())
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "wiki/"):
 			b, ok := f.objects[path]
 			if !ok {

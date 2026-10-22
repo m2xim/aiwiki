@@ -927,3 +927,25 @@ func TestArtifactResizeScriptServed(t *testing.T) {
 		t.Errorf("missing runtime file: %d", code)
 	}
 }
+
+func (m *memStore) List(_ context.Context, prefix string) ([]objectInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []objectInfo
+	for k, v := range m.m {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, objectInfo{Key: k, Size: int64(len(v)), Modified: time.Now()})
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) Stat(_ context.Context, key string) (objectInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.m[key]
+	if !ok {
+		return objectInfo{}, errObjectNotFound
+	}
+	return objectInfo{Key: key, Size: int64(len(b)), Modified: time.Now()}, nil
+}

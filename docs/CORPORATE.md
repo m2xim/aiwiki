@@ -81,6 +81,8 @@ The application checks the existing bucket and never creates it, changes its pol
 
 Soft deletion retains the object for the existing recovery/retention behavior. If upload succeeds but database insertion fails, the application attempts to remove the new orphan object; database and object storage are not one distributed transaction. Operators need a retention/orphan-reconciliation policy before the production pilot. Database backups alone do not back up attachment bytes.
 
+Backup, restore order and `aiwiki check-storage` (missing/orphaned object report): [BACKUP.md](BACKUP.md).
+
 Authorized recovery views can still download attachments of a soft-deleted article; new uploads to deleted articles are rejected. Local storage tests exercise the real AWS SDK against a signed mock endpoint, including revocation before any object request. They do not replace a pilot against the selected S3/MinIO service.
 
 Local integration tests may explicitly permit HTTP endpoints on loopback; production endpoints require TLS. Primary reference: [AWS SDK v2 configuration and credential providers](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-gosdk.html), consulted 2026-10-22.

@@ -24,6 +24,7 @@ const (
 	s3PutTimeout     = 5 * time.Minute
 	s3GetTimeout     = 5 * time.Minute
 	s3DeleteTimeout  = 30 * time.Second
+	s3ListTimeout    = time.Minute // per page
 	s3MaxAttempts    = 3
 	s3MaxKeyBytes    = 900
 )
@@ -325,4 +326,101 @@ func sniffMIME(f io.ReadSeeker) (string, error) {
 		return "", err
 	}
 	return http.DetectContentType(buf[:n]), nil
+}
+
+// List pages through ListObjectsV2 under the store prefix plus the key prefix.
+func (s *s3Store) List(ctx context.Context, prefix string) ([]objectInfo, error) {
+	if strings.ContainsAny(prefix, "\\\x00") || len(s.prefix)+len(prefix) > s3MaxKeyBytes {
+		return nil, errors.New("invalid object prefix")
+	}
+	var out []objectInfo
+	var token *string
+	for {
+		pctx, cancel := context.WithTimeout(ctx, s3ListTimeout)
+		page, err := s.client.ListObjectsV2(pctx, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(s.prefix + prefix), ContinuationToken: token})
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("S3 list failed: %s", s3ErrorSummary(err))
+		}
+		for _, o := range page.Contents {
+			info := objectInfo{Key: strings.TrimPrefix(aws.ToString(o.Key), s.prefix), Size: aws.ToInt64(o.Size)}
+			if o.LastModified != nil {
+				info.Modified = *o.LastModified
+			}
+			if info.Key != "" {
+				out = append(out, info)
+			}
+		}
+		if !aws.ToBool(page.IsTruncated) || page.NextContinuationToken == nil {
+			return out, nil
+		}
+		token = page.NextContinuationToken
+	}
+}
+
+// List walks the (flat) files directory.
+func (l localStore) List(ctx context.Context, prefix string) ([]objectInfo, error) {
+	entries, err := os.ReadDir(l.dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []objectInfo
+	for _, e := range entries {
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !e.Type().IsRegular() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, objectInfo{Key: e.Name(), Size: fi.Size(), Modified: fi.ModTime()})
+	}
+	return out, nil
+}
+
+// Stat issues HEAD for one object (size and LastModified).
+func (s *s3Store) Stat(ctx context.Context, key string) (objectInfo, error) {
+	k, err := s.objectKey(key)
+	if err != nil {
+		return objectInfo{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, s3DeleteTimeout)
+	defer cancel()
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: k})
+	if err != nil {
+		var api smithy.APIError
+		if errors.As(err, &api) && (api.ErrorCode() == "NoSuchKey" || api.ErrorCode() == "NotFound") {
+			return objectInfo{}, errObjectNotFound
+		}
+		return objectInfo{}, fmt.Errorf("S3 head failed: %s", s3ErrorSummary(err))
+	}
+	info := objectInfo{Key: key, Size: aws.ToInt64(out.ContentLength)}
+	if out.LastModified != nil {
+		info.Modified = *out.LastModified
+	}
+	return info, nil
+}
+
+func (l localStore) Stat(ctx context.Context, key string) (objectInfo, error) {
+	p, err := l.path(key)
+	if err != nil {
+		return objectInfo{}, err
+	}
+	if err = ctx.Err(); err != nil {
+		return objectInfo{}, err
+	}
+	fi, err := os.Stat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return objectInfo{}, errObjectNotFound
+	}
+	if err != nil {
+		return objectInfo{}, err
+	}
+	return objectInfo{Key: key, Size: fi.Size(), Modified: fi.ModTime()}, nil
 }

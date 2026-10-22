@@ -21,6 +21,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "check-storage" {
+		os.Exit(runCheckStorage(os.Args[2:]))
+	}
 	addr := flag.String("addr", "127.0.0.1:8090", "HTTP listen address")
 	data := flag.String("data", "data", "SQLite and attachment directory")
 	web := flag.String("web", "web/dist", "Built frontend directory")
@@ -47,7 +50,7 @@ func run() error {
 		s, err = server.OpenCorporate(ctx, server.CorporateConfig{
 			MCPOAuth:    server.MCPOAuthConfig{ResourceURL: os.Getenv("AIWIKI_MCP_RESOURCE_URL"), IntrospectionClientID: os.Getenv("AIWIKI_MCP_INTROSPECTION_CLIENT_ID"), IntrospectionClientSecret: os.Getenv("AIWIKI_MCP_INTROSPECTION_CLIENT_SECRET")},
 			Admission:   server.KeycloakAdmissionConfig{AdminURL: os.Getenv("AIWIKI_KEYCLOAK_ADMIN_URL"), ClientID: os.Getenv("AIWIKI_KEYCLOAK_ADMISSION_CLIENT_ID"), ClientSecret: os.Getenv("AIWIKI_KEYCLOAK_ADMISSION_CLIENT_SECRET")},
-			S3:          server.S3Config{Bucket: os.Getenv("AIWIKI_S3_BUCKET"), Region: os.Getenv("AIWIKI_S3_REGION"), Endpoint: os.Getenv("AIWIKI_S3_ENDPOINT"), Prefix: os.Getenv("AIWIKI_S3_PREFIX"), PathStyle: os.Getenv("AIWIKI_S3_PATH_STYLE") == "1", AllowInsecureLoopback: os.Getenv("AIWIKI_ALLOW_INSECURE_LOOPBACK") == "1"},
+			S3:          s3ConfigFromEnv(),
 			DatabaseURL: databaseURL, MigrationDatabaseURL: os.Getenv("AIWIKI_MIGRATION_DATABASE_URL"), RuntimeRole: os.Getenv("AIWIKI_DATABASE_ROLE"),
 			IssuerURL: issuer, ClientID: os.Getenv("AIWIKI_OIDC_CLIENT_ID"), ClientSecret: os.Getenv("AIWIKI_OIDC_CLIENT_SECRET"), RedirectURL: os.Getenv("AIWIKI_OIDC_REDIRECT_URL"),
 			AccessRole: os.Getenv("AIWIKI_OIDC_ACCESS_ROLE"), AdminRole: os.Getenv("AIWIKI_OIDC_ADMIN_ROLE"), RolesClaim: os.Getenv("AIWIKI_OIDC_ROLES_CLAIM"),
