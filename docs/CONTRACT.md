@@ -12,6 +12,7 @@ present. Generic loopback development origins are accepted only for loopback
 request hosts. These guards do not authenticate clients. See SECURITY.md.
 
 - GET /api/health -> {ok:true}
+- GET /api/ready -> {ok:true} (200) or {ok:false} (503); see OPERATIONS.md
 - GET /api/spaces -> active Space[]; `?include_archived=true` includes archived spaces. Space also has optional `archived_at` (UTC timestamp).
 - POST /api/spaces {name,description} -> Space 201. PATCH /api/spaces/{id} {name?,description?,archived?} -> Space; archive with true, restore with false. Archiving preserves articles, revisions, comments and attachments, and is idempotent. All spaces, including built-in ones, can be archived. Archived spaces are excluded from ordinary navigation, unscoped article search and bootstrap; explicit space queries and direct article links remain available. Export includes all spaces and archive state.
 - GET /api/articles?space_id=&q=&tag=&property=key:value&kind=&pinned=true -> Article[] (body may empty on list). Multiple tag/property filters AND (exact match). Without q: updated descending. With q: ranked by relevance (see Search). Default and maximum limit 200 (`limit` 1-199 lowers it), optional offset. REST returns no `total`/`mode`.

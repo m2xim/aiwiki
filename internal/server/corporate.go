@@ -94,6 +94,7 @@ func (s *Server) corporateHandler() http.Handler {
 	public := http.NewServeMux()
 	s.auth.routes(public)
 	public.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
+	public.HandleFunc("GET /api/ready", s.readyHandler)
 	public.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		protected := strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/files/") || authIsMCPPath(r.URL.Path)
 		if !protected {
@@ -121,7 +122,7 @@ func (s *Server) corporateHandler() http.Handler {
 		// A request owns its scope all the way through the in-process MCP proxy.
 		requestServer.routes().ServeHTTP(w, r)
 	}))
-	return public
+	return trackMux(public)
 }
 
 func (s *Server) changeAuthor(proposed string) string {

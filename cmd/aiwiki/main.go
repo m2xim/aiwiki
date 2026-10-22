@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,8 +36,15 @@ func run() error {
 			return err
 		}
 	}
+	accessLog, err := server.ParseAccessLogMode(os.Getenv("AIWIKI_ACCESS_LOG"))
+	if err != nil {
+		return err
+	}
+	metricsAddr, metricsToken := os.Getenv("AIWIKI_METRICS_ADDR"), os.Getenv("AIWIKI_METRICS_TOKEN")
+	if err := server.ValidateMetricsConfig(metricsAddr, metricsToken); err != nil {
+		return err
+	}
 	var s *server.Server
-	var err error
 	databaseURL := os.Getenv("AIWIKI_DATABASE_URL")
 	issuer := os.Getenv("AIWIKI_OIDC_ISSUER")
 	corporate := databaseURL != "" || issuer != "" || os.Getenv("AIWIKI_OIDC_CLIENT_ID") != "" || os.Getenv("AIWIKI_OIDC_CLIENT_SECRET") != "" || os.Getenv("AIWIKI_MIGRATION_DATABASE_URL") != ""
@@ -68,11 +77,30 @@ func run() error {
 			return err
 		}
 	}
+	if accessLog {
+		s.SetAccessLog(os.Stderr)
+	}
 	log.Printf("AI Wiki: http://%s", *addr)
 	srv := &http.Server{Addr: *addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 90 * time.Second}
 	stopped := make(chan os.Signal, 1)
 	signal.Notify(stopped, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stopped)
+	var metricsSrv *http.Server
+	if metricsAddr != "" {
+		// Bind first: a taken port fails startup cleanly, before the main server runs.
+		ln, err := net.Listen("tcp", metricsAddr)
+		if err != nil {
+			return fmt.Errorf("metrics listener: %w", err)
+		}
+		log.Printf("AI Wiki metrics: http://%s/metrics", ln.Addr())
+		metricsSrv = &http.Server{Handler: s.MetricsHandler(metricsToken), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second}
+		// Metrics are non-essential: a later failure is logged, the wiki keeps serving.
+		go func() {
+			if err := metricsSrv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("metrics listener stopped: %v", err)
+			}
+		}()
+	}
 	failure := make(chan error, 1)
 	go func() { failure <- srv.ListenAndServe() }()
 	select {
@@ -83,6 +111,9 @@ func run() error {
 	case <-stopped:
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if metricsSrv != nil {
+			_ = metricsSrv.Shutdown(ctx)
+		}
 		if err := srv.Shutdown(ctx); err != nil {
 			return err
 		}

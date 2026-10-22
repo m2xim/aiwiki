@@ -459,6 +459,7 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 		return deny(http.StatusUnauthorized, "invalid token")
 	}
 	if !a.oauthLimiter().allow(a.cfg.IssuerURL+"\x00"+tok.Subject, a.clock()) {
+		defaultMetrics.rateLimited("mcp_oauth")
 		w.Header().Set("Retry-After", "60")
 		return deny(http.StatusTooManyRequests, "rate limit exceeded")
 	}
@@ -881,6 +882,7 @@ func loginErrorCode(status int) string {
 // instead of a bare JSON body; the shell renders the explanation.
 func loginRedirect(w http.ResponseWriter, r *http.Request, code string) {
 	w.Header().Set("Cache-Control", "no-store")
+	defaultMetrics.login(code)
 	http.Redirect(w, r, "/?login_error="+code, http.StatusSeeOther)
 }
 
@@ -981,6 +983,7 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if lg.returnTo != "" {
 		dest = lg.returnTo // validated at login: in-app "/" only
 	}
+	defaultMetrics.login("ok")
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
