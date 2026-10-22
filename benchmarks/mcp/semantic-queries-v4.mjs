@@ -1,0 +1,53 @@
+// Second held-out set, authored after the v3 run had been inspected and the
+// fusion rule chosen, and frozen before any run against it. Same frozen corpus.
+export function makeSemanticQueriesV4() {
+  const q = (key, category, query, relevantSections, rationale) => ({ key, category, query, relevantSections, rationale });
+  const s = (articleKey, headingTitle, headingOccurrence = 1) => ({ articleKey, headingTitle, headingOccurrence });
+  return {
+    version: "semantic-queries-v4",
+    queries: [
+      q("w01", "cross-lingual-en-ru", "end of shift: what goes into the card for parcels that are still open", [s("shipment-handoff", "Передача")],
+        "English paraphrase of the Russian shipment handoff card contents."),
+      q("w02", "cross-lingual-en-ru", "how often to look at the age of the oldest item waiting in line", [s("queue-watch", "Порог и действие")],
+        "English paraphrase of the ten-minute check of the oldest record."),
+      q("w03", "cross-lingual-ru-en", "у нас в поддержке есть внутренний набор утилит с тем же именем, что у расчётного сервиса — как получить к нему доступ", [s("orbit-tools", "Team context")],
+        "The Support toolbox nicknamed Orbit; the settlement service article is the distractor."),
+      q("w04", "cross-lingual-ru-en", "старый способ выкладки, когда перезапускали всё сразу", [s("deploy-archive", "Historical procedure — obsolete")],
+        "Russian description of the former all-at-once restart; the current canary procedure is the distractor."),
+      q("w05", "paraphrase-ru", "раньше предложения загружали из таблицы руками — где это описано", [s("offers-legacy", "Архивный порядок — НЕ ИСПОЛЬЗОВАТЬ"), s("offers-legacy", "Историческая заметка")],
+        "Paraphrase of the archived manual CSV import; both sections of the legacy article describe it."),
+      q("w06", "cross-lingual-en-ru", "no acknowledgement for five minutes on an offer — whom to hand it to", [s("offers-current", "Эскалация")],
+        "English paraphrase of the escalation rule of the current offers procedure."),
+      q("w07", "cross-lingual-ru-en", "что записать при передаче незавершённой задачи коллеге, чтобы он не перепроверял всё заново", [s("handover-template", "Template"), s("shipment-handoff", "Передача")],
+        "Russian paraphrase of the handover template; the shipment handoff is also defensible."),
+      q("w08", "cross-lingual-ru-en", "почему общая пропускная способность может скрывать один медленный тяжёлый запрос", [s("load-profile", "Profile notes")],
+        "Russian paraphrase of the load profile notes."),
+      q("w09", "cross-lingual-ru-en", "шлюз сохраняет ключ запроса до отправки и при повторе отдаёт прежний ответ", [s("platform-api", "Request lifecycle")],
+        "Russian paraphrase of the request lifecycle; the error catalogue is a close distractor."),
+      q("w10", "cross-lingual-ru-en", "какое поле склеивает связанные участки трассировки", [s("telemetry-fields", "Event fields")],
+        "Russian paraphrase of trace_id joining related spans without naming it."),
+      q("w11", "paraphrase-ru", "куда отправить скриншот ошибки и последнюю удачную операцию при эскалации обращения", [s("support-escalation", "Evidence")],
+        "Paraphrase of the evidence section between the two Escalation sections."),
+      q("w12", "cross-lingual-en-ru", "who confirms a request for access to work tools and how long the access lasts", [s("account-access", "Approval")],
+        "English paraphrase of the Russian access approval section."),
+      q("e05", "exact-identifier", "OFR-7319", [s("offers-backend", "Причина и восстановление")],
+        "Unique incident identifier."),
+      q("e06", "exact-identifier", "ledger-oncall", [s("svc-orbit", "Identity")],
+        "Escalation channel name."),
+      q("e07", "exact-identifier", "TIER-2-RU", [s("support-escalation", "Escalation", 2)],
+        "Unique group marker in the second of two same-titled sections."),
+      q("e08", "exact-identifier", "AUDIT-7Q4M-91ZX", [s("audit-event", "Payload record")],
+        "Unique marker at the start of a very large section."),
+      q("y01", "negative-near-domain", "как настроить двухфакторную аутентификацию для сотрудников", [],
+        "Two-factor authentication is absent; access and credential articles are near-domain distractors."),
+      q("y02", "negative-near-domain", "Kubernetes pod autoscaling thresholds", [],
+        "Autoscaling and Kubernetes are absent; load and deployment articles are near-domain distractors."),
+      q("y03", "negative-near-domain", "график дежурств на новогодние праздники", [],
+        "A holiday schedule is absent; the on-call glossary is a near-domain distractor."),
+      q("y04", "negative-near-domain", "how to issue a refund to a customer's bank card", [],
+        "Card refunds are absent; returns and reimbursement are near-domain distractors."),
+      q("y05", "negative-unrelated", "правила игры в шахматы для начинающих", [],
+        "Unrelated subject."),
+    ],
+  };
+}
