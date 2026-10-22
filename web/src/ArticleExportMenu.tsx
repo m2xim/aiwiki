@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, FileText, Printer, X } from 'lucide-react';
+import { Download, FileText, FileDown, X } from 'lucide-react';
 import type { Article } from './api';
 import './ArticleExportMenu.css';
 
@@ -31,9 +31,15 @@ export function ArticleExportMenu({ article, spaceName }: { article: Article; sp
     try {
       // Loaded on demand: keeps react-dom/server out of the main bundle until the first export.
       const mod = await import('./articleExport');
-      const result = await mod.buildArticleExport(article, spaceName);
-      if (kind === 'html') mod.downloadHtml(article, result.html); else mod.printHtml(result.html);
-      setWarnings(result.warnings);
+      if (kind === 'html') {
+        const result = await mod.buildArticleExport(article, spaceName);
+        mod.downloadHtml(article, result.html);
+        setWarnings(result.warnings);
+      } else {
+        const result = await mod.buildArticlePdf(article, spaceName);
+        mod.downloadPdf(article, result.blob);
+        setWarnings(result.warnings);
+      }
     } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось подготовить экспорт.'); }
     finally { setBusy(false); }
   };
@@ -53,7 +59,7 @@ export function ArticleExportMenu({ article, spaceName }: { article: Article; sp
     </button>
     {open && <div className="export-menu-list" role="menu" aria-label="Экспорт статьи" onKeyDown={onMenuKey}>
       <button type="button" role="menuitem" onClick={() => void run('html')}><FileText size={15}/>HTML-файл</button>
-      <button type="button" role="menuitem" onClick={() => void run('pdf')}><Printer size={15}/>PDF (печать браузера)</button>
+      <button type="button" role="menuitem" onClick={() => void run('pdf')}><FileDown size={15}/>PDF-файл</button>
     </div>}
     {(warnings.length > 0 || error) && <div className="export-menu-note" role="status">
       <button type="button" className="icon-button" aria-label="Закрыть" onClick={() => { setWarnings([]); setError(''); }}><X size={14}/></button>
