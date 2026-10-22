@@ -6,15 +6,16 @@ import MCPDelegations from './MCPDelegations';
 import MCPPersistentAccess from './MCPPersistentAccess';
 import { CatalogKind, CatalogSort, DEFAULT_CATALOG_QUERY, catalogQueryString, parseCatalogQuery } from './catalogQuery';
 import { replaceUrl } from './nav';
+import { ArtifactSettings } from './artifacts/ArtifactSettings';
 import './AdminPanel.css';
 
 type UserRow = { id: string; name: string; disabled: boolean; admin: boolean };
-export type AdminTab = 'catalog' | 'teams' | 'users' | 'projects' | 'tokens';
+export type AdminTab = 'catalog' | 'teams' | 'users' | 'projects' | 'tokens' | 'settings';
 type Tab = AdminTab;
 
 export const readAdminTab = (): AdminTab => {
   const tab = new URLSearchParams(location.search).get('tab');
-  return tab === 'teams' || tab === 'users' || tab === 'projects' || tab === 'tokens' ? tab : 'catalog';
+  return tab === 'teams' || tab === 'users' || tab === 'projects' || tab === 'tokens' || tab === 'settings' ? tab : 'catalog';
 };
 export const adminUrl = (tab: AdminTab = 'catalog') => `/?view=admin&tab=${tab}`;
 type Role = AccessGrant['role'];
@@ -28,7 +29,7 @@ const canManage = (role?: string) => role === 'manager' || role === 'owner';
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }: { onClose: () => void; userId: string; isAdmin: boolean; activeTab: AdminTab; onTabChange: (tab: AdminTab) => void }) {
-  const tab = !isAdmin && (activeTab === 'teams' || activeTab === 'users') ? 'catalog' : activeTab;
+  const tab = !isAdmin && (activeTab === 'teams' || activeTab === 'users' || activeTab === 'settings') ? 'catalog' : activeTab;
   const setTab = onTabChange;
   const initialCatalog = tab === 'catalog' ? parseCatalogQuery(location.search) : DEFAULT_CATALOG_QUERY;
   const [spaces, setSpaces] = useState<CatalogSpace[]>([]);
@@ -364,12 +365,13 @@ export function AdminPanel({ onClose, userId, isAdmin, activeTab, onTabChange }:
   return <div className="corp-admin-page">
     <section className="corp-admin" aria-labelledby="corp-admin-title">
       <header><div><span>AIWIKI · УПРАВЛЕНИЕ</span><h1 id="corp-admin-title">Команды и доступ</h1></div><button type="button" onClick={onClose}><ArrowLeft size={18}/>К базе знаний</button></header>
-      <nav>{([['catalog', 'Пространства'], ['teams', 'Команды'], ['projects', 'Проекты'], ['users', 'Пользователи'], ['tokens', 'MCP-доступ']] as [Tab, string][]).filter(([key]) => isAdmin || key === 'catalog' || key === 'projects' || key === 'tokens').map(([key, label]) => <button type="button" key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}{tab !== 'tokens' && <button type="button" className="corp-admin-refresh" onClick={() => void refresh()} disabled={busy} aria-label="Обновить"><RefreshCw size={15}/></button>}</nav>
+      <nav>{([['catalog', 'Пространства'], ['teams', 'Команды'], ['projects', 'Проекты'], ['users', 'Пользователи'], ['tokens', 'MCP-доступ'], ['settings', 'Настройки']] as [Tab, string][]).filter(([key]) => isAdmin || key === 'catalog' || key === 'projects' || key === 'tokens').map(([key, label]) => <button type="button" key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}{tab !== 'tokens' && tab !== 'settings' && <button type="button" className="corp-admin-refresh" onClick={() => void refresh()} disabled={busy} aria-label="Обновить"><RefreshCw size={15}/></button>}</nav>
       {error && <div className="corp-admin-error" role="alert">{error}</div>}
       {moveNotice && <div className="corp-admin-notice" role="status">{moveNotice}</div>}
       {moveProject && <MoveDialog subject={{ kind: 'project', project: moveProject }} author="" onClose={() => setMoveProject(null)} onDone={() => { const moved = moveProject; setMoveProject(null); setMoveNotice(`Проект «${moved.name}» перемещён`); void refresh(); }}/>}
       <main aria-busy={busy}>
         {tab === 'tokens' && <><MCPPersistentAccess/><MCPDelegations/></>}
+        {tab === 'settings' && isAdmin && <ArtifactSettings/>}
         {tab === 'catalog' && <>
           <form className="corp-admin-create" onSubmit={submit(() => void create())}><input aria-label="Название пространства" value={name} onChange={e => setName(e.target.value)} placeholder="Название пространства"/><input aria-label="Описание пространства" value={description} onChange={e => setDescription(e.target.value)} placeholder="Описание (необязательно)"/><select aria-label="Тип пространства" value={personal ? 'personal' : 'team'} onChange={e => setPersonal(e.target.value === 'personal')}><option value="personal">Личное</option>{isAdmin && <option value="team">Командное</option>}</select><button type="submit" disabled={busy || !name.trim()}><Plus size={15}/>Создать</button></form>
           <div className="corp-admin-catalog-tools"><input value={catalogFilter} onChange={e => setCatalogFilter(e.target.value)} placeholder="Поиск по пространствам, проектам и тегам" aria-label="Фильтр каталога"/><select value={catalogSort} onChange={e => setCatalogSort(e.target.value as typeof catalogSort)} aria-label="Сортировка каталога"><option value="recent">Сначала недавно изменённые</option><option value="name">По названию</option><option value="count">По числу документов</option></select><select value={catalogKind} onChange={e => setCatalogKind(e.target.value as CatalogKind)} aria-label="Тип пространств"><option value="all">Все</option><option value="personal">Личные</option><option value="team">Командные</option></select></div>

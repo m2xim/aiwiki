@@ -53,6 +53,9 @@ jobs:
       - name: History diff checks
         run: node scripts/qa-diff.mjs
 
+      - name: Artifact interface checks
+        run: node scripts/qa-artifacts.mjs
+
       - name: Safe move checks
         run: node scripts/qa-move.mjs
 
