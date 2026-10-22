@@ -121,7 +121,7 @@ c.chart;                                           // the Chart.js instance; c.d
 
 `series` is an object `{name: [numbers]}`, an array of `{label, data, color?}`, or (for a pie) just an array of numbers.
 Options: `title`, `height` (px, default 320), `format`/`currency`/`digits` for axis and tooltip values, `smooth`, `fill`,
-`stacked`, `horizontal`, `legend`, `options` (merged into the Chart.js options). Types registered: line, bar, pie, doughnut,
+`stacked`, `horizontal`, `legend` (default: shown for pie/doughnut and when there is more than one series, re-evaluated on `update()`; `false`/`true` forces it), `options` (merged into the Chart.js options). Types registered: line, bar, pie, doughnut,
 scatter. The target is a container (a canvas is created) or an existing `<canvas>`. Theme, palette, `ru-RU` numbers and
 `prefers-reduced-motion` are applied automatically.
 

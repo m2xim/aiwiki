@@ -9,6 +9,7 @@ import { h, resolve } from './dom.ts';
 import type { Target } from './dom.ts';
 import { DEFAULT_LOCALE, formatValue, toDate } from './core/format.ts';
 import type { FormatSpec } from './core/format.ts';
+import { legendVisible } from './core/legend.ts';
 import { cssVar, onThemeChange } from './theme.ts';
 
 Chart.register(
@@ -155,7 +156,7 @@ function simple(type: 'line' | 'bar' | 'pie' | 'doughnut', target: Target, o: Si
     return d as unknown as ChartDataset;
   });
   const plugins: Record<string, unknown> = {
-    legend: { display: o.legend ?? (circular || series.length > 1), position: circular ? 'right' : 'top' },
+    legend: { display: legendVisible(type, series.length, o.legend), position: circular ? 'right' : 'top' },
     title: { display: !!o.title, text: o.title ?? '', font: { size: 14, weight: '600' } },
     tooltip: { callbacks: { label: (ctx: { dataset: { label?: string }; parsed: unknown; raw: unknown }) => {
       const p = ctx.parsed as number | { x: number; y: number };
@@ -170,8 +171,19 @@ function simple(type: 'line' | 'bar' | 'pie' | 'doughnut', target: Target, o: Si
     options.indexAxis = o.horizontal ? 'y' : 'x';
     options.scales = o.horizontal ? { x: valueAxis, y: catAxis } : { x: catAxis, y: valueAxis };
   }
-  Object.assign(options, o.options);
-  return chart(target, { type, data: { labels: normLabels(o.labels), datasets }, options, height: o.height } as ChartConfiguration & { height?: number });
+  const extra = (o.options ?? {}) as Record<string, unknown>;
+  Object.assign(options, extra, { plugins: { ...plugins, ...((extra.plugins as object) ?? {}) } });
+  const h0 = chart(target, { type, data: { labels: normLabels(o.labels), datasets }, options, height: o.height } as ChartConfiguration & { height?: number });
+  const baseUpdate = h0.update;
+  h0.update = (data) => {
+    if (data && (data.series || data.datasets)) {
+      const n = data.datasets ? data.datasets.length : normSeries(data.series as Series).length;
+      const lg = (h0.chart.options.plugins ??= {}).legend ??= {};
+      if (!((extra.plugins as { legend?: { display?: boolean } } | undefined)?.legend?.display !== undefined)) lg.display = legendVisible(type, n, o.legend);
+    }
+    baseUpdate(data);
+  };
+  return h0;
 }
 
 export const lineChart = (target: Target, o: SimpleChartOptions) => simple('line', target, o);

@@ -12,6 +12,7 @@ import {
   aggregate, cellValue, filterRows, groupRows, inferType, layoutPage, nextSort, normalizeColumns, sortRows, exportMatrix, displayText,
 } from '../web/artifact-kit/src/core/tablelogic.ts';
 import { parseThemeParam } from '../web/artifact-kit/src/core/themeparam.ts';
+import { legendVisible } from '../web/artifact-kit/src/core/legend.ts';
 import { effect, state } from '../web/artifact-kit/src/core/state.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -333,6 +334,17 @@ ok('parseThemeParam', () => {
   assert.equal(parseThemeParam('?theme=DARK'), null);
   assert.equal(parseThemeParam(''), null);
   assert.equal(parseThemeParam('?theme='), null);
+});
+
+ok('legendVisible', () => {
+  assert.equal(legendVisible('line', 1), false);
+  assert.equal(legendVisible('line', 2), true);
+  assert.equal(legendVisible('bar', 5), true);
+  assert.equal(legendVisible('pie', 1), true);
+  assert.equal(legendVisible('doughnut', 1), true);
+  assert.equal(legendVisible('line', 5, false), false);
+  assert.equal(legendVisible('line', 1, true), true);
+  assert.equal(legendVisible('pie', 1, false), false);
 });
 
 // ---- state / effect ----
