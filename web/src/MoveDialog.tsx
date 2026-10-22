@@ -2,15 +2,15 @@ import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowRight, FolderInput, UserRound, Users, X } from 'lucide-react';
 import { Article, CatalogSpace, MovePlace, MovePreview, MoveRequest, Project, client } from './api';
 import { ParentPicker } from './ParentPicker';
-import { AccessChange, countMembers, describeAccessChange, eligibleTargets, isSameContainer, roleLabel, summarizePreview } from './moveCore';
+import { AccessChange, canEditRole, canManageRole, containerRole, countMembers, countUsers, describeAccessChange, eligibleTargets, isSameContainer, roleLabel, summarizePreview } from './moveCore';
 import './MoveDialog.css';
 
 export type MoveSubject = { kind: 'article'; article: Article } | { kind: 'project'; project: Project };
 export type MoveDone = { kind: 'article'; id: string; moved: boolean } | { kind: 'project'; id: string };
 type Props = { subject: MoveSubject; author: string; onClose: () => void; onDone: (done: MoveDone) => void };
 
-const CHANGE_LABELS: Record<AccessChange, string> = { gain: 'Получит доступ', lose: 'Потеряет доступ', upgrade: 'Доступ расширится', downgrade: 'Доступ сузится' };
-const place = (p: MovePlace) => [p.space_name || p.space_id, p.project_name].filter(Boolean).join(' / ');
+const CHANGE_LABELS: Record<AccessChange, string> = { gain: 'Получит доступ', lose: 'Потеряет доступ', upgrade: 'Права расширятся', downgrade: 'Права сузятся' };
+const place = (p: MovePlace) => [p.space_name || '(скрыто)', p.project_name].filter(Boolean).join(' / ');
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function MoveDialog({ subject, author, onClose, onDone }: Props) {
@@ -48,10 +48,14 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
 
   const targets = useMemo(() => catalog ? eligibleTargets(catalog, subject.kind, project?.id || '') : [], [catalog, subject.kind, project?.id]);
   const current = targets.find(t => t.space.id === spaceId);
+  // Editors (not managers) of the article's container may only change the parent inside it.
+  const parentOnly = Boolean(article && catalog && !canManageRole(containerRole(catalog, article)));
+  const noRights = Boolean(article && catalog && !canEditRole(containerRole(catalog, article)));
 
   // Initial selection: the current container when it is allowed, otherwise the first allowed one.
   useEffect(() => {
     if (!catalog || spaceId) return;
+    if (article && parentOnly) { setSpaceId(article.space_id); setProjectId(article.project_id || ''); setParentId(article.parent_id || ''); return; }
     const home = targets.find(t => t.space.id === (article?.space_id || project?.space_id)) || targets[0];
     if (!home) return;
     setSpaceId(home.space.id);
@@ -64,7 +68,7 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
       const cur = project.parent_id || '';
       setParentId(home.space.id === project.space_id && (cur ? home.projects.some(p => p.id === cur) : home.canRoot) ? cur : fallback);
     }
-  }, [catalog, targets, spaceId, article, project]);
+  }, [catalog, targets, spaceId, article, project, parentOnly]);
 
   // Articles of the target space feed the parent picker (articles only).
   useEffect(() => {
@@ -91,7 +95,7 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
 
   const sameContainer = Boolean(article && spaceId && isSameContainer(article, { space_id: spaceId, project_id: projectId }));
   const unchanged = article ? sameContainer && parentId === (article.parent_id || '') : Boolean(project && spaceId === project.space_id && parentId === (project.parent_id || ''));
-  const canNext = Boolean(current) && !unchanged && !busy && (!article || !articlesLoading);
+  const canNext = (Boolean(current) || parentOnly) && !noRights && !unchanged && !busy && (!article || !articlesLoading);
 
   const onSpace = (id: string) => {
     const t = targets.find(x => x.space.id === id);
@@ -157,14 +161,23 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
   const targetStep = <>
     {!catalog && !loadError && <p className="move-note" role="status">Загружаем доступные места…</p>}
     {loadError && <p className="move-error" role="alert">{loadError}</p>}
-    {catalog && !targets.length && <p className="move-note">Нет пространств, куда вы можете переместить {isArticle ? 'статью' : 'проект'}: нужна роль «{roleLabel('manager')}» или «{roleLabel('owner')}».</p>}
-    {catalog && targets.length > 0 && <div className="move-form">
+    {catalog && parentOnly && article && <div className="move-form">
+      {noRights ? <p className="move-note">Недостаточно прав для изменения этой статьи.</p> : <>
+        <p className="move-note">Переносить в другое пространство или проект могут управляющие. Вы можете выбрать другую родительскую статью в этом же месте.</p>
+        <div className="move-field"><span>Родительская статья <small>необязательно</small></span>
+          <ParentPicker options={parentOptions} value={parentId} excludeId={article.id} onChange={id => { setParentId(id); setError(''); }}/>
+          {articlesLoading && <small className="move-hint" role="status">Загружаем статьи…</small>}
+          {articlesError && <small className="move-hint move-hint-error" role="alert">{articlesError}</small>}</div>
+        {unchanged && <p className="move-note">Статья уже находится здесь.</p>}</>}
+    </div>}
+    {catalog && !parentOnly && !targets.length && <p className="move-note">Нет пространств, куда вы можете переместить {isArticle ? 'статью' : 'проект'}: нужна роль «{roleLabel('manager')}» или «{roleLabel('owner')}».</p>}
+    {catalog && !parentOnly && targets.length > 0 && <div className="move-form">
       <label className="move-field"><span>Пространство</span>
-        <select value={spaceId} onChange={e => onSpace(e.target.value)} disabled={Boolean(busy)}>
+        <select aria-label="Пространство" value={spaceId} onChange={e => onSpace(e.target.value)} disabled={Boolean(busy)}>
           {targets.map(t => <option key={t.space.id} value={t.space.id}>{t.space.name}</option>)}
         </select></label>
       {article && <label className="move-field"><span>Проект</span>
-        <select value={projectId} onChange={e => { setProjectId(e.target.value); setParentId(''); setError(''); }} disabled={Boolean(busy)}>
+        <select aria-label="Проект" value={projectId} onChange={e => { setProjectId(e.target.value); setParentId(''); setError(''); }} disabled={Boolean(busy)}>
           {current?.canRoot && <option value="">Без проекта</option>}
           {current?.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select></label>}
@@ -173,7 +186,7 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
         {articlesLoading && <small className="move-hint" role="status">Загружаем статьи…</small>}
         {articlesError && <small className="move-hint move-hint-error" role="alert">{articlesError}</small>}</div>}
       {project && <label className="move-field"><span>Родительский проект</span>
-        <select value={parentId} onChange={e => { setParentId(e.target.value); setError(''); }} disabled={Boolean(busy)}>
+        <select aria-label="Родительский проект" value={parentId} onChange={e => { setParentId(e.target.value); setError(''); }} disabled={Boolean(busy)}>
           {current?.canRoot && <option value="">Корень пространства</option>}
           {current?.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select></label>}
@@ -198,8 +211,8 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
         <thead><tr><th scope="col">Кто</th><th scope="col">Было</th><th scope="col">Станет</th><th scope="col">Что изменится</th></tr></thead>
         <tbody>{preview.access.map(row => {
           const change = describeAccessChange(row.before, row.after);
-          return <tr key={`${row.subject_type}:${row.subject_id}`} className={change ? `move-${change}` : ''}>
-            <th scope="row"><span className="move-subject">{row.subject_type === 'team' ? <Users size={15} aria-label="Команда"/> : <UserRound size={15} aria-label="Пользователь"/>}<span><b>{row.name || row.subject_id}</b>{row.subject_type === 'team' && typeof row.users === 'number' && <small>{countMembers(row.users)}</small>}</span></span></th>
+          return <tr key={`${row.subject_type}:${row.subject_id}:${row.before}:${row.after}`} className={change ? `move-${change}` : ''}>
+            <th scope="row"><span className="move-subject">{row.subject_type === 'user' ? <UserRound size={15} aria-label="Пользователь"/> : <Users size={15} aria-label={row.subject_type === 'team' ? 'Команда' : 'Группа'}/>}<span><b>{row.subject_type === 'other' ? 'Другие участники' : row.name || '(скрыто)'}</b>{row.subject_type === 'team' && typeof row.users === 'number' && <small>{countMembers(row.users)}</small>}{row.subject_type === 'other' && typeof row.users === 'number' && <small>{countUsers(row.users)}</small>}</span></span></th>
             <td className="move-before">{roleLabel(row.before)}</td><td className="move-after">{roleLabel(row.after)}</td>
             <td>{change && <span className={`move-badge move-badge-${change}`}>{CHANGE_LABELS[change]}</span>}</td>
           </tr>;
