@@ -454,7 +454,7 @@ func (s *Server) artifactFrame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rel == "index.html" && file.MIME == "text/html" {
-		data = injectResizeScript(data)
+		data = injectThemeScript(injectResizeScript(data))
 	}
 	s.setArtifactFrameHeaders(w.Header(), file.MIME, time.Unix(c.Expires, 0).Sub(now))
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
@@ -526,13 +526,15 @@ var runtimeTypes = map[string]string{
 // a same-origin policy would block (verified in Chromium).
 func (s *Server) artifactRuntime(w http.ResponseWriter, r *http.Request) {
 	rel := r.PathValue("file")
-	if rel == "resize.js" {
+	if script, ok := map[string][]byte{"resize.js": artifactResizeJS, "theme.js": artifactThemeJS}[rel]; ok {
 		h := w.Header()
 		h.Set("Content-Type", "text/javascript; charset=utf-8")
 		h.Set("Cache-Control", "public, no-cache")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Cross-Origin-Resource-Policy", "cross-origin")
-		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(artifactResizeJS))
+		sum := sha256.Sum256(script) // revalidation answers 304 instead of the body
+		h.Set("ETag", fmt.Sprintf(`"%x"`, sum[:12]))
+		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(script))
 		return
 	}
 	if s.WebDir == "" || rel == "" || strings.ContainsAny(rel, "\\\x00") || strings.HasPrefix(rel, "/") {
@@ -772,6 +774,67 @@ func injectResizeScript(doc []byte) []byte {
 	out = append(out, doc[:i]...)
 	out = append(out, resizeScriptTag...)
 	return append(out, doc[i:]...)
+}
+
+//go:embed artifact_theme.js
+var artifactThemeJS []byte
+
+const themeScriptTag = `<script src="/artifact-runtime/theme.js"></script>`
+
+// injectThemeScript puts the theme applier before any element, so it runs before
+// the first paint. It skips a UTF-8 BOM, whitespace and comments, then a doctype
+// if one follows (a tag before the doctype would switch to quirks mode), and
+// inserts there. Tags are never parsed: the HTML parser opens <html> and <head>
+// for the script itself and merges the attributes of the author's <html> later.
+func injectThemeScript(doc []byte) []byte {
+	i := 0
+	if bytes.HasPrefix(doc, []byte("\xEF\xBB\xBF")) {
+		i = 3
+	}
+	for {
+		for i < len(doc) && (doc[i] == ' ' || doc[i] == '\t' || doc[i] == '\n' || doc[i] == '\r' || doc[i] == '\f') {
+			i++
+		}
+		if !bytes.HasPrefix(doc[i:], []byte("<!--")) {
+			break
+		}
+		end := bytes.Index(doc[i+4:], []byte("-->"))
+		if end < 0 {
+			i = len(doc) // an unclosed comment runs to the end; put the script after it
+			break
+		}
+		i += 4 + end + 3
+	}
+	if len(doc)-i >= 9 && indexFold(doc[i:i+9], "<!doctype") == 0 {
+		if k := bytes.IndexByte(doc[i:], '>'); k >= 0 {
+			i += k + 1
+		}
+	}
+	out := make([]byte, 0, len(doc)+len(themeScriptTag))
+	out = append(out, doc[:i]...)
+	out = append(out, themeScriptTag...)
+	return append(out, doc[i:]...)
+}
+
+// indexFold finds the first ASCII-case-insensitive occurrence of needle (lower case).
+func indexFold(b []byte, needle string) int {
+	for i := 0; i+len(needle) <= len(b); i++ {
+		ok := true
+		for j := 0; j < len(needle); j++ {
+			c := b[i+j]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != needle[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return i
+		}
+	}
+	return -1
 }
 
 // lastIndexFold finds the last ASCII-case-insensitive occurrence of needle
