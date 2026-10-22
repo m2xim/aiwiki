@@ -218,3 +218,6 @@ export function withTheme(frameUrl: string, theme: string): string {
   params.set('theme', value);
   return `${base.slice(0, query)}?${params}${tail}`;
 }
+
+/** True when a code element's class list contains exactly `language-artifact` (not `language-artifacts`). */
+export const isArtifactFence = (className: string | undefined): boolean => (className || '').split(/\s+/).includes('language-artifact');

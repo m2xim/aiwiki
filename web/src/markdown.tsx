@@ -5,6 +5,7 @@ import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import { replaceUrl } from './nav';
 import { ArtifactEmbed } from './artifacts/ArtifactEmbed';
+import { isArtifactFence } from './artifactsCore';
 
 type Heading = { level: number; text: string; id: string };
 type Node = { type: string; depth?: number; value?: string; children?: Node[]; data?: { hProperties?: Record<string, unknown> } };
@@ -134,7 +135,7 @@ export const Markdown = React.memo(function Markdown({ body, onHeading, onNaviga
     };
     return { h1: heading(1), h2: heading(2), h3: heading(3), h4: heading(4), h5: heading(5), h6: heading(6), a: link, pre: ({ children, node: _node, ...props }: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) => {
       const child = React.Children.toArray(children)[0];
-      if (!comment && React.isValidElement<{ className?: string; children?: React.ReactNode }>(child) && /(^|s)language-artifact(s|$)/.test(child.props.className || '')) {
+      if (!comment && React.isValidElement<{ className?: string; children?: React.ReactNode }>(child) && isArtifactFence(child.props.className)) {
         const id = String(child.props.children ?? '').trim();
         if (/^[A-Za-z0-9_-]{1,80}$/.test(id)) return <ArtifactEmbed id={id}/>;
       }
