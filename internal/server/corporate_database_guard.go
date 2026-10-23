@@ -74,6 +74,9 @@ func (d *database) validateRuntimeSchema() error {
 	if err := d.QueryRow(`SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled IN ('O','A') AND ((tgrelid='public.articles'::regclass AND tgname='corporate_articles_no_move' AND tgfoid=to_regprocedure('public.corporate_reject_article_move()')) OR (tgrelid='public.projects'::regclass AND tgname='corporate_projects_no_move' AND tgfoid=to_regprocedure('public.corporate_guard_project_move()')))`).Scan(&count); err != nil || count != 2 {
 		return errors.New("article/project move guard triggers are missing or disabled")
 	}
+	if err := d.QueryRow(`SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled IN ('O','A') AND tgtype=23 AND tgrelid='public.revisions'::regclass AND tgname='revisions_fill_scope' AND tgfoid=to_regprocedure('public.revisions_fill_scope()')`).Scan(&count); err != nil || count != 1 {
+		return errors.New("revision scope trigger is missing or disabled")
+	}
 	var unsafe bool
 	if err := d.QueryRow(`SELECT has_schema_privilege(current_user,'public','CREATE') OR has_table_privilege(current_user,'security_audit','UPDATE,DELETE') OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') AND has_table_privilege(current_user,c.oid,'TRUNCATE,TRIGGER')) OR EXISTS(SELECT 1 FROM pg_roles WHERE rolname=current_user AND (rolsuper OR rolbypassrls OR rolcreaterole))`).Scan(&unsafe); err != nil || unsafe {
 		return errors.New("runtime role has unsafe schema, audit or role privileges")
