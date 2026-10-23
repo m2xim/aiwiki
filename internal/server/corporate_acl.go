@@ -49,7 +49,10 @@ func (s *Server) migrateCorporate() error {
 	if err := s.migrateRevisionColumns(ctx); err != nil {
 		return err
 	}
-	return s.migrateSemantic(ctx)
+	if err := s.migrateSemantic(ctx); err != nil {
+		return err
+	}
+	return s.migrateRoleScope(ctx)
 }
 
 // splitCorporateSQL separates commands while preserving function bodies,
