@@ -16,12 +16,13 @@ export type AuthSession = { mode: 'trusted' } | { mode: 'corporate'; user: AuthU
 export type Article = {
   id: string; space_id: string; project_id?: string; parent_id: string; title: string; summary: string; body: string;
   kind: string; status: string; pinned: boolean; tags: string[]; properties: Record<string, string>;
-  revision: number; created_at: string; updated_at: string; author: string;
+  revision: number; created_at: string; updated_at: string; author: string; author_name?: string; author_kind?: AuthorKind;
   deleted_at?: string;
 };
-export type Revision = { id: string; article_id: string; revision: number; author: string; message: string; created_at: string; snapshot: Article };
+export type AuthorKind = 'user' | 'service' | '';
+export type Revision = { id: string; article_id: string; revision: number; author: string; author_name?: string; author_kind?: AuthorKind; message: string; created_at: string; snapshot: Article };
 export type AuditEvent = { id: number; article_id: string; title: string; revision: number; author: string; message: string; created_at: string; changes: string[]; space_id: string; previous_space_id: string; deleted: boolean };
-export type Comment = { id: string; article_id: string; anchor: string; body: string; author: string; created_at: string; resolved: boolean };
+export type Comment = { id: string; article_id: string; anchor: string; body: string; author: string; author_name?: string; author_kind?: AuthorKind; created_at: string; resolved: boolean };
 export type Attachment = { id: string; article_id: string; name: string; mime: string; size: number; url: string; created_at: string };
 export type Favorite = { id: string; title: string; space_id: string; parent_id: string; kind: string; status: string; summary: string; updated_at: string; favorited_at: string };
 export type SearchMatch = 'title' | 'tags' | 'summary' | 'properties' | 'body';
@@ -38,7 +39,7 @@ export type ArtifactSummary = {
   owner_id?: string; owner_name?: string; author?: string; revision: number; created_at?: string; updated_at: string; file_count: number; deleted_at?: string | null;
 };
 export type ArtifactDetail = ArtifactSummary & { manifest: ManifestFile[]; can_edit: boolean; can_share: boolean; can_manage: boolean };
-export type ArtifactRevisionInfo = { revision: number; author: string; message: string; created_at: string; file_count: number };
+export type ArtifactRevisionInfo = { revision: number; author: string; author_name?: string; author_kind?: AuthorKind; message: string; created_at: string; file_count: number };
 export type ArtifactShare = { id: string; url?: string; revision: number | null; created_by?: string; created_at: string; revoked_at?: string | null };
 export type ArtifactFileInput = { path: string; content: string; encoding: 'utf8' | 'base64' } | { path: string; delete: true };
 export type ArtifactView = { frame_url: string; expires_at: string };
@@ -193,6 +194,7 @@ export const client = {
   updateMCPCredential: (id: string, data: { scope: MCPScopeInput[] }) => api<MCPCredential>(`/api/mcp/credentials/${encodeURIComponent(id)}`, json('PATCH', data)),
   mcpServiceAccounts: () => api<{ enabled: boolean; service_accounts: MCPServiceAccount[] }>('/api/mcp/service-accounts'),
   createMCPServiceAccount: (name: string) => api<MCPServiceAccount>('/api/mcp/service-accounts', json('POST', { name })),
+  renameMCPServiceAccount: (id: string, name: string) => api<MCPServiceAccount>(`/api/mcp/service-accounts/${encodeURIComponent(id)}`, json('PATCH', { name })),
   disableMCPServiceAccount: (id: string) => api<void>(`/api/mcp/service-accounts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   createProject: (data: { name: string; description: string; space_id: string; parent_id?: string; inherit_acl?: boolean }) => api<Project>('/api/projects', json('POST', data)),
   updateProject: (id: string, data: Partial<Pick<Project, 'name' | 'description' | 'archived_at' | 'inherit_acl'>> & { archived?: boolean }) => {

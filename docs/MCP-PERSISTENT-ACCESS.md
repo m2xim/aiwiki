@@ -76,6 +76,15 @@ or compatibility with every client. See [AI-CONNECTION.md](AI-CONNECTION.md).
 
 ## Service accounts and revocation
 
+The sponsor can rename an active service account:
+`PATCH /api/mcp/service-accounts/{id}` with `{name}` returns the updated account
+(same shape as in the list). Errors: 400 for an invalid name (same rules as create),
+404 if not found, and an error for a disabled account. Authors are stored as ids
+(`u_…` users, `svc_…` service accounts); article, revision, comment and artifact
+revision responses add `author_name` (current display name, may be empty) and
+`author_kind` (`user`, `service` or empty), so a rename shows immediately in old
+history too. The UI marks service authors with an «агент» badge.
+
 A service account has a stable actor ID and an immutable human sponsor. Only its
 sponsor manages it. It receives no administrator status or independent ACL grants:
 each request uses current sponsor ACLs intersected with the credential scope (per-element mode).

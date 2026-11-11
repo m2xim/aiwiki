@@ -56,7 +56,7 @@ func (d *database) validateRuntimeSchema() error {
 		return errors.New("MCP access write protection is not initialized")
 	}
 	if err := d.QueryRow(`WITH guards AS (
-	 SELECT p.*,c.relname, CASE WHEN (c.relname,p.polcmd) IN (('articles','a'),('articles','w'),('revisions','a'),('comments','a'),('article_fts','a'),('article_fts','d')) THEN 'corporate_mcp_content_write_allowed()' ELSE '(NOT corporate_mcp_scope_active())' END AS expected
+	 SELECT p.*,c.relname, CASE WHEN (c.relname,p.polcmd) IN (('articles','a'),('articles','w'),('revisions','a'),('comments','a'),('comments','w'),('article_fts','a'),('article_fts','d')) THEN 'corporate_mcp_content_write_allowed()' ELSE '(NOT corporate_mcp_scope_active())' END AS expected
 	 FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace
 	 WHERE n.nspname='public' AND c.relname IN ('spaces','articles','revisions','comments','attachments','favorites','article_fts') AND p.polname LIKE 'mcp_scope_%' AND NOT p.polpermissive AND p.polcmd IN ('a','w','d'))
 	 SELECT count(*) FROM guards WHERE pg_get_expr(polqual,polrelid) IS NOT DISTINCT FROM CASE WHEN polcmd='a' THEN NULL ELSE expected END AND pg_get_expr(polwithcheck,polrelid) IS NOT DISTINCT FROM CASE WHEN polcmd='d' THEN NULL ELSE expected END`).Scan(&count); err != nil || count != 21 {

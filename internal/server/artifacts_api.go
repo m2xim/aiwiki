@@ -602,7 +602,7 @@ func (s *Server) artifactHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	name := `''`
 	if s.DB.pg {
-		name = `coalesce((SELECT u.name FROM users u WHERE u.id=r.author),'')`
+		name = `public.corporate_actor_name(r.author)`
 	}
 	rows, err := s.DB.Query(`SELECT r.revision,r.author,`+name+`,r.message,r.created_at,r.file_count FROM artifact_revisions r WHERE r.artifact_id=? ORDER BY r.revision DESC`, id)
 	if err != nil {
@@ -614,6 +614,7 @@ func (s *Server) artifactHistory(w http.ResponseWriter, r *http.Request) {
 		Revision   int    `json:"revision"`
 		Author     string `json:"author"`
 		AuthorName string `json:"author_name"`
+		AuthorKind string `json:"author_kind,omitempty"`
 		Message    string `json:"message"`
 		CreatedAt  string `json:"created_at"`
 		FileCount  int    `json:"file_count"`
@@ -624,6 +625,11 @@ func (s *Server) artifactHistory(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&e.Revision, &e.Author, &e.AuthorName, &e.Message, &e.CreatedAt, &e.FileCount); err != nil {
 			writeArtifactError(w, err)
 			return
+		}
+		if s.DB.pg {
+			e.AuthorKind = authorKind(e.Author)
+		} else {
+			e.AuthorName = e.Author
 		}
 		out = append(out, e)
 	}

@@ -34,25 +34,32 @@ type Article struct {
 	CreatedAt  string            `json:"created_at"`
 	UpdatedAt  string            `json:"updated_at"`
 	Author     string            `json:"author"`
-	DeletedAt  string            `json:"deleted_at,omitempty"`
+	// AuthorName and AuthorKind are filled at read time only (never stored in snapshots).
+	AuthorName string `json:"author_name,omitempty"`
+	AuthorKind string `json:"author_kind,omitempty"`
+	DeletedAt  string `json:"deleted_at,omitempty"`
 }
 type Revision struct {
-	ID        int64   `json:"id"`
-	ArticleID string  `json:"article_id"`
-	Revision  int     `json:"revision"`
-	Author    string  `json:"author"`
-	Message   string  `json:"message"`
-	CreatedAt string  `json:"created_at"`
-	Snapshot  Article `json:"snapshot"`
+	ID         int64   `json:"id"`
+	ArticleID  string  `json:"article_id"`
+	Revision   int     `json:"revision"`
+	Author     string  `json:"author"`
+	AuthorName string  `json:"author_name,omitempty"`
+	AuthorKind string  `json:"author_kind,omitempty"`
+	Message    string  `json:"message"`
+	CreatedAt  string  `json:"created_at"`
+	Snapshot   Article `json:"snapshot"`
 }
 type Comment struct {
-	ID        string `json:"id"`
-	ArticleID string `json:"article_id"`
-	Anchor    string `json:"anchor"`
-	Body      string `json:"body"`
-	Author    string `json:"author"`
-	CreatedAt string `json:"created_at"`
-	Resolved  bool   `json:"resolved"`
+	ID         string `json:"id"`
+	ArticleID  string `json:"article_id"`
+	Anchor     string `json:"anchor"`
+	Body       string `json:"body"`
+	Author     string `json:"author"`
+	AuthorName string `json:"author_name,omitempty"`
+	AuthorKind string `json:"author_kind,omitempty"`
+	CreatedAt  string `json:"created_at"`
+	Resolved   bool   `json:"resolved"`
 }
 type Attachment struct {
 	ID        string `json:"id"`

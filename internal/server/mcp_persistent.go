@@ -596,6 +596,10 @@ func (s *Server) mcpCredential(w http.ResponseWriter, r *http.Request) {
 		s.mcpCredentialUpdate(w, r)
 		return
 	}
+	if r.Method == http.MethodPatch {
+		s.mcpServiceAccountRename(w, r)
+		return
+	}
 	if r.Method != http.MethodDelete {
 		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -730,11 +734,76 @@ func (s *Server) mcpServiceAccountCreate(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusCreated, account)
 }
 
+// mcpServiceAccountRename handles PATCH /api/mcp/service-accounts/{id} {"name"}: the
+// sponsor renames a live account. Authorship stays the stored svc_ id, so old
+// revisions, comments and artifact history show the new name. A disabled account
+// answers 409.
+func (s *Server) mcpServiceAccountRename(w http.ResponseWriter, r *http.Request) {
+	owner, ok := s.mcpPersistentOwner(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if !validPathID(id) {
+		apiErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	var in mcpServiceAccountRequest
+	if err := corporateDecode(r, &in); err != nil {
+		apiErr(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	name, ok := corporateName(in.Name, mcpPersistentMaxName)
+	if !ok {
+		apiErr(w, http.StatusBadRequest, "invalid name")
+		return
+	}
+	if err := s.mcpPersistentAdmit(); err != nil {
+		mcpPersistentWriteErr(w, err)
+		return
+	}
+	var out mcpServiceAccount
+	err := s.mcpPersistentTx(func(tx *transaction) error {
+		if err := s.mcpPersistentLockOwner(tx, owner, true); err != nil {
+			return err
+		}
+		var old string
+		var disabled int
+		err := tx.QueryRow(`SELECT name,disabled FROM mcp_service_accounts WHERE id=? AND owner_id=? FOR UPDATE`, id, owner).Scan(&old, &disabled)
+		if errors.Is(err, sql.ErrNoRows) {
+			return mcpPersistentFail(http.StatusNotFound, "not found")
+		}
+		if err != nil {
+			return err
+		}
+		if disabled != 0 {
+			return mcpPersistentFail(http.StatusConflict, "service account is disabled")
+		}
+		if _, err = tx.Exec(`UPDATE mcp_service_accounts SET name=? WHERE id=? AND owner_id=?`, name, id, owner); err != nil {
+			return err
+		}
+		if err = tx.QueryRow(`SELECT id,name,owner_id,disabled,created_at FROM mcp_service_accounts WHERE id=?`, id).Scan(&out.ID, &out.Name, &out.SponsorID, &disabled, &out.CreatedAt); err != nil {
+			return err
+		}
+		out.Disabled, out.CreatedAt = disabled != 0, out.CreatedAt.UTC()
+		return corporateAudit(tx, owner, "mcp_service_account.rename", "mcp_service_account", id, map[string]any{"old_name": old, "name": name})
+	})
+	if err != nil {
+		mcpPersistentWriteErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // mcpServiceAccount handles DELETE /api/mcp/service-accounts/{id}: disabling is
 // permanent (there is no re-enable) and revokes every credential of the account
 // in the same transaction. It works while the identity provider is down.
 func (s *Server) mcpServiceAccount(w http.ResponseWriter, r *http.Request) {
 	mcpPersistentNoStore(w)
+	if r.Method == http.MethodPatch {
+		s.mcpServiceAccountRename(w, r)
+		return
+	}
 	if r.Method != http.MethodDelete {
 		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return

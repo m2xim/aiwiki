@@ -125,8 +125,9 @@ func mcpToolList() []map[string]any {
 		{"name": "wiki_write", "description": "Create an article (no id) or update one (id + article.base_revision). Update is a merge: fields you do not send keep their current values, so you may send only what changes. For small body changes prefer wiki_edit. Link other articles as [text](/?article=ID). Returns {id,revision,updated_at,title,space_id} without the body.", "inputSchema": objectSchema(map[string]any{"id": prop("string", "Id of the article to update; omit to create."), "article": article}, "article")},
 		{"name": "wiki_links", "description": "Navigate relations of an article: parent, children (sorted by title), outgoing links (articles it links to, with anchor when the link has one) and incoming links (articles linking to it). All entries are compact; deleted articles are skipped. To link articles in Markdown write [text](/?article=ID#anchor).", "inputSchema": objectSchema(map[string]any{"id": prop("string", idDesc)}, "id")},
 		{"name": "wiki_history", "description": "List revisions of an article, newest first, as compact {revision,author,message,created_at} without content. With revision returns that single snapshot in full (wiki_read with revision returns the body in a lighter form).", "inputSchema": objectSchema(map[string]any{"id": prop("string", idDesc), "revision": map[string]any{"type": "integer", "minimum": 1, "description": "Return this revision's full snapshot."}}, "id")},
-		{"name": "wiki_comments", "description": "Read all comments on an article, including resolved comments, in chronological order", "inputSchema": objectSchema(map[string]any{"id": stringSchema()}, "id")},
+		{"name": "wiki_comments", "description": "Read all comments on an article, including resolved comments (field resolved), in chronological order. Mark a comment done with wiki_comment_resolve.", "inputSchema": objectSchema(map[string]any{"id": stringSchema()}, "id")},
 		{"name": "wiki_restore", "description": "Restore a prior revision as a new revision", "inputSchema": objectSchema(map[string]any{"id": stringSchema(), "revision": map[string]any{"type": "integer", "minimum": 1}, "base_revision": map[string]any{"type": "integer", "minimum": 1}, "author": stringSchema(), "message": stringSchema()}, "id", "revision", "base_revision")},
+		{"name": "wiki_comment_resolve", "description": "Mark a comment resolved (or reopen it with resolved=false). Needs a write key; you may resolve your own comments with commenter access and anyone's with editor access to the article's project. Returns the comment.", "inputSchema": objectSchema(map[string]any{"id": prop("string", "Comment id (from wiki_comments)."), "resolved": prop("boolean", "true (default) to resolve, false to reopen.")}, "id")},
 		{"name": "wiki_comment", "description": "Add a comment to an article heading", "inputSchema": objectSchema(map[string]any{"id": stringSchema(), "anchor": stringSchema(), "body": stringSchema(), "author": stringSchema()}, "id", "body")},
 	}
 	return append(tools, artifactToolList()...)
@@ -167,6 +168,21 @@ func (s *Server) callTool(params map[string]json.RawMessage) any {
 		return s.toolLinks(args)
 	case "wiki_history":
 		return s.toolHistory(args)
+	case "wiki_comment_resolve":
+		ar := newArgs(args)
+		id := ar.str("id")
+		resolved := true
+		if raw, ok := args["resolved"]; ok && json.Unmarshal(raw, &resolved) != nil {
+			return toolErr("resolved must be a boolean")
+		}
+		if bad := ar.fail(); bad != nil {
+			return bad
+		}
+		if !validPathID(id) {
+			return toolErr("invalid comment id")
+		}
+		b, _ := json.Marshal(map[string]bool{"resolved": resolved})
+		return s.proxy("PATCH", "/api/comments/"+id, b)
 	case "wiki_comments", "wiki_restore", "wiki_comment":
 		id, bad := toolID(args)
 		if bad != nil {
@@ -488,6 +504,7 @@ func (s *Server) toolRead(args map[string]json.RawMessage) any {
 			Headings   []outlineHeading `json:"headings"`
 		}{a.ID, a.Title, a.Summary, a.SpaceID, a.ParentID, a.Kind, a.Status, a.Revision, a.UpdatedAt, historical, currentDeleted, utf8.RuneCountInString(a.Body), hs})
 	}
+	s.fillArticleAuthors(&a)
 	if historical {
 		return toolOK(struct {
 			Article
@@ -552,7 +569,9 @@ func (s *Server) toolHistory(args map[string]json.RawMessage) any {
 			return toolErr("revision not found")
 		}
 		_ = json.Unmarshal([]byte(raw), &x.Snapshot)
-		return toolOK(x)
+		one := []Revision{x}
+		s.fillRevisionAuthors(one)
+		return toolOK(one[0])
 	}
 	rows, err := s.DB.Query("SELECT revision,author,message,created_at FROM revisions WHERE article_id=? ORDER BY revision DESC", id)
 	if err != nil {
@@ -560,17 +579,25 @@ func (s *Server) toolHistory(args map[string]json.RawMessage) any {
 	}
 	defer rows.Close()
 	type item struct {
-		Revision  int    `json:"revision"`
-		Author    string `json:"author"`
-		Message   string `json:"message,omitempty"`
-		CreatedAt string `json:"created_at"`
+		Revision   int    `json:"revision"`
+		Author     string `json:"author"`
+		AuthorName string `json:"author_name"`
+		AuthorKind string `json:"author_kind,omitempty"`
+		Message    string `json:"message,omitempty"`
+		CreatedAt  string `json:"created_at"`
 	}
 	out := []item{}
+	authors := []string{}
 	for rows.Next() {
 		var it item
 		if rows.Scan(&it.Revision, &it.Author, &it.Message, &it.CreatedAt) == nil {
 			out = append(out, it)
+			authors = append(authors, it.Author)
 		}
+	}
+	names := s.authorInfos(authors...)
+	for i := range out {
+		out[i].AuthorName, out[i].AuthorKind = names[out[i].Author].Name, names[out[i].Author].Kind
 	}
 	return toolOK(out)
 }

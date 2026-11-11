@@ -179,7 +179,11 @@ func (d *database) scoped(ctx context.Context, userID string) (*database, func()
 
 // scopedMCP pins the session user and an optional MCP key scope to one connection.
 // A nil scope means unrestricted; a non-nil scope is carried verbatim in app.mcp_scope.
-func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScopeElement) (*database, func(), error) {
+func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScopeElement, actor ...string) (*database, func(), error) {
+	actorID := ""
+	if len(actor) > 0 && actor[0] != userID {
+		actorID = actor[0] // service-account authorship; empty when it equals the user
+	}
 	if scope != nil && len(scope) == 0 {
 		return nil, nil, errors.New("invalid MCP scope")
 	}
@@ -207,9 +211,9 @@ func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScop
 	if err != nil {
 		return nil, nil, err
 	}
-	var gotUser, gotScope string
-	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_scope', $2, false)`, userID, scopeText).Scan(&gotUser, &gotScope)
-	if err == nil && (gotUser != userID || gotScope != scopeText) {
+	var gotUser, gotScope, gotActor string
+	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_scope', $2, false), set_config('app.actor_id', $3, false)`, userID, scopeText, actorID).Scan(&gotUser, &gotScope, &gotActor)
+	if err == nil && (gotUser != userID || gotScope != scopeText || gotActor != actorID) {
 		err = errors.New("session scope was not applied")
 	}
 	if err != nil {
@@ -229,9 +233,9 @@ func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScop
 				discardConn(conn)
 				return
 			}
-			var clearedUser, clearedScope string
-			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_scope', '', false)`).Scan(&clearedUser, &clearedScope)
-			if err != nil || clearedUser != "" || clearedScope != "" {
+			var clearedUser, clearedScope, clearedActor string
+			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_scope', '', false), set_config('app.actor_id', '', false)`).Scan(&clearedUser, &clearedScope, &clearedActor)
+			if err != nil || clearedUser != "" || clearedScope != "" || clearedActor != "" {
 				discardConn(conn)
 				return
 			}
@@ -241,7 +245,7 @@ func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScop
 	view.release = cleanup
 	resumeScope := append([]mcpScopeElement(nil), scope...)
 	view.resume = func(ctx context.Context) (*database, func(), error) {
-		return d.scopedMCP(ctx, userID, resumeScope)
+		return d.scopedMCP(ctx, userID, resumeScope, actorID)
 	}
 	return view, cleanup, nil
 }

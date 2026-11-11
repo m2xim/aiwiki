@@ -1,3 +1,4 @@
+import { AuthorName } from '../AuthorName';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Box, Clock3, Files, History, Lock, Maximize2, Minimize2, Pencil, RotateCcw, Share2, Trash2, Users } from 'lucide-react';
 import { client } from '../api';
@@ -123,7 +124,7 @@ export function ArtifactPage({ id, mode, revision, spaces, theme, go, backToList
             <button type="button" onClick={() => page('history', item.revision === artifact.revision ? null : item.revision)} aria-current={(pinned ?? artifact.revision) === item.revision ? 'true' : undefined}>
               <b>Версия {item.revision}{item.revision === artifact.revision && <small> ТЕКУЩАЯ</small>}</b>
               <span>{item.message || 'Без комментария'}</span>
-              <small>{item.author || 'Автор неизвестен'} · {formatDate(item.created_at)} · {filesLabel(item.file_count)}</small>
+              <small><AuthorName item={item} fallback="Автор неизвестен"/> · {formatDate(item.created_at)} · {filesLabel(item.file_count)}</small>
             </button></li>)}
         </ul>}
         {pinned && <p className="art-muted">Показана версия {pinned}. <button type="button" className="link-button" onClick={() => page('history')}>Вернуться к текущей</button></p>}

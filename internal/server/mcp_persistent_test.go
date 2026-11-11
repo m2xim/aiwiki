@@ -757,7 +757,7 @@ func TestMCPPersistentServiceAccountLifecycle(t *testing.T) {
 	if n := e.count(`SELECT count(*) FROM security_audit WHERE action='mcp_service_account.disable'`); n != 1 {
 		t.Fatalf("repeat disable audits: %d", n)
 	}
-	for _, m := range []string{"PUT", "PATCH", "POST", "GET"} {
+	for _, m := range []string{"PUT", "POST", "GET"} { // PATCH renames
 		e.expect(e.call(alice, persistentAccountR, m, "", svc), 405)
 	}
 	for _, m := range []string{"PUT", "DELETE", "PATCH"} {

@@ -70,6 +70,7 @@ export default function MCPPersistentAccess() {
   const [serviceAccountId, setServiceAccountId] = useState('');
   const [serviceAccountName, setServiceAccountName] = useState('');
   const [confirmDisableId, setConfirmDisableId] = useState('');
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [secret, setSecret] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -216,6 +217,27 @@ export default function MCPPersistentAccess() {
     }
   };
 
+  const renameServiceAccount = async () => {
+    if (!renaming) return;
+    const trimmed = renaming.name.trim();
+    if (!trimmed || trimmed.length > 80) return;
+    setSecret('');
+    setError('');
+    setNotice('');
+    setBusy(true);
+    try {
+      const updated = await client.renameMCPServiceAccount(renaming.id, trimmed);
+      if (!mounted.current) return;
+      setServiceAccounts(current => current.map(account => account.id === updated.id ? { ...account, ...updated } : account));
+      setRenaming(null);
+      setNotice('Сервисная учётная запись переименована.');
+    } catch (reason) {
+      if (mounted.current) setError(explainError(reason));
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  };
+
   const disableServiceAccount = async (id: string) => {
     setSecret('');
     setError('');
@@ -308,7 +330,15 @@ export default function MCPPersistentAccess() {
         <button className="mcp-persistent-secondary" type="submit" disabled={busy || !serviceAccountName.trim() || serviceAccountName.trim().length > 80}>Создать учётную запись</button>
       </form>}
       {serviceAccounts.length ? <div className="mcp-persistent-cards">{serviceAccounts.map(account => <article className="mcp-persistent-card" key={account.id}>
-        <div className="mcp-persistent-card-content"><h4>{account.name}</h4><p><strong>ID:</strong> {account.id}</p><p><strong>Создана:</strong> <time dateTime={account.created_at}>{dateTime(account.created_at)}</time></p></div>
+        <div className="mcp-persistent-card-content">{renaming?.id === account.id
+          ? <form className="mcp-persistent-actions" onSubmit={event => { event.preventDefault(); void renameServiceAccount(); }}>
+              <input aria-label="Новое название сервисной учётной записи" value={renaming.name} maxLength={80} required autoFocus onChange={event => setRenaming({ id: account.id, name: event.target.value })}/>
+              <button type="submit" className="mcp-persistent-primary" disabled={busy || !renaming.name.trim() || renaming.name.trim().length > 80}>Сохранить</button>
+              <button type="button" className="mcp-persistent-secondary" disabled={busy} onClick={() => setRenaming(null)}>Отмена</button>
+              <small className="mcp-persistent-hint">Новое имя сразу появится в истории правок, в том числе в старых</small>
+            </form>
+          : <h4>{account.name}</h4>}<p><strong>ID:</strong> {account.id}</p><p><strong>Создана:</strong> <time dateTime={account.created_at}>{dateTime(account.created_at)}</time></p></div>
+        {renaming?.id !== account.id && confirmDisableId !== account.id && <button type="button" className="mcp-persistent-secondary" onClick={() => { setSecret(''); setRenaming({ id: account.id, name: account.name }); }} disabled={busy}><Pencil size={15}/>Переименовать</button>}
         {confirmDisableId === account.id ? <div className="mcp-persistent-confirm" role="group" aria-label={`Подтверждение отключения: ${account.name}`}>
           <span>Отключить навсегда и отозвать все связанные ключи?</span>
           <button type="button" className="mcp-persistent-danger" onClick={() => void disableServiceAccount(account.id)} disabled={busy}>Отключить</button>

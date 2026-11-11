@@ -1,3 +1,4 @@
+import { AuthorName } from './AuthorName';
 import React, { useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { Article } from './api';
@@ -31,7 +32,7 @@ export function EditorConflict({ current, mine, busy, onTakeTheirs, onOverwrite,
     return rows.filter(([, theirs, my]) => theirs.trim() !== my.trim());
   }, [current, mine]);
   return <section className="editor-conflict" role="alert" aria-live="assertive">
-    <div className="editor-conflict-head"><AlertTriangle size={18}/><div><strong>Статья изменена после начала правки</strong><p>Сейчас версия {current.revision}, автор {current.author || 'неизвестен'}, {formatDate(current.updated_at)}. Ваш черновик не потерян: он остаётся в редакторе и в локальном хранилище браузера.</p></div></div>
+    <div className="editor-conflict-head"><AlertTriangle size={18}/><div><strong>Статья изменена после начала правки</strong><p>Сейчас версия {current.revision}, автор <AuthorName item={current} fallback="неизвестен"/>, {formatDate(current.updated_at)}. Ваш черновик не потерян: он остаётся в редакторе и в локальном хранилище браузера.</p></div></div>
     <div className="editor-conflict-actions">
       <button type="button" className="button" onClick={() => setShowDiff(v => !v)} aria-expanded={showDiff}>{showDiff ? 'Скрыть отличия' : 'Показать отличия'}</button>
       <button type="button" className="button" onClick={onTakeTheirs} disabled={busy}>Взять их версию за основу</button>

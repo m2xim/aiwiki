@@ -127,6 +127,7 @@ func (s *Server) articleComments(w http.ResponseWriter, aid string) {
 			out = append(out, c)
 		}
 	}
+	s.fillCommentAuthors(out)
 	writeJSON(w, 200, out)
 }
 func (s *Server) addComment(w http.ResponseWriter, r *http.Request, aid string) {
@@ -148,7 +149,9 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request, aid string) 
 		apiErr(w, 404, "article not found")
 		return
 	}
-	writeJSON(w, 201, c)
+	one := []Comment{c}
+	s.fillCommentAuthors(one)
+	writeJSON(w, 201, one[0])
 }
 func (s *Server) commentRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "PATCH" {
@@ -190,7 +193,7 @@ func (s *Server) commentRoute(w http.ResponseWriter, r *http.Request) {
 		var role int
 		var writable bool
 		e = tx.QueryRow("SELECT corporate_role_rank(corporate_effective_role(?,space_id,project_id)),corporate_container_writable(space_id,project_id) FROM articles WHERE id=?", s.principal.ID, c.ArticleID).Scan(&role, &writable)
-		if e != nil || !writable || role < 2 || (role < 3 && c.Author != s.principal.ID) {
+		if e != nil || !writable || role < 2 || (role < 3 && c.Author != s.changeAuthor("")) {
 			apiErr(w, 403, "comment modification is not permitted")
 			return
 		}
@@ -227,7 +230,9 @@ func (s *Server) commentRoute(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "database error")
 		return
 	}
-	writeJSON(w, 200, c)
+	one := []Comment{c}
+	s.fillCommentAuthors(one)
+	writeJSON(w, 200, one[0])
 }
 func (s *Server) listAttachments(w http.ResponseWriter, aid string) {
 	if _, e := s.articleByID(s.DB, aid); e != nil {

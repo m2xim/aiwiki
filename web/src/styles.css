@@ -456,3 +456,6 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--purple)}
 .rail-count{position:absolute;top:1px;right:0;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:var(--purple);color:#fff;font-size:9px;line-height:15px;text-align:center}
 .rail-sep{display:block;width:22px;height:1px;background:var(--line);margin:4px 0}
 .rail-spacer{flex:1}
+
+.author-badge{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:10px;background:var(--lavender,#f5f3fc);color:var(--muted,#8b899d);font-size:.8em;font-weight:600;vertical-align:baseline}
+html[data-theme="dark"] .author-badge{background:#302943;color:#a89fc8}
