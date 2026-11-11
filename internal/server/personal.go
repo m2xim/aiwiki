@@ -112,7 +112,7 @@ func personalName(raw string) (string, error) {
 // Nothing is granted to any role and nothing in the schema changes. The server
 // writes an audit row only when it changed something.
 func ensurePersonalOwner(ctx context.Context, db *database, name string) error {
-	scoped, done, err := db.scopedMCP(ctx, PersonalOwnerID, nil, "")
+	scoped, done, err := db.scopedMCP(ctx, PersonalOwnerID, nil)
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func (s *Server) personalHandler() http.Handler {
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		p := s.personalPrincipal()
-		scoped, cleanup, err := s.DB.scopedMCP(r.Context(), p.ID, nil, "")
+		scoped, cleanup, err := s.DB.scopedMCP(r.Context(), p.ID, nil)
 		if err != nil {
 			apiErr(w, 503, "database unavailable")
 			return

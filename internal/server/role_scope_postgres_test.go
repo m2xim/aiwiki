@@ -74,6 +74,9 @@ func rsGenerate(seed int64, content bool) *rsFixture {
 			}
 		}
 	}
+	if seed%3 == 0 { // the default shared-rules space id
+		f.spaces[0] = "general"
+	}
 	nProj := 8 + r.Intn(8)
 	ids := make([]string, nProj)
 	for i := range ids {
@@ -304,7 +307,7 @@ func rsLoad(t *testing.T, owner *Server, f *rsFixture) {
 // missing space, and project ids that exist only in memberships.
 func (f *rsFixture) candidates(r *rand.Rand) []rsCand {
 	set := map[rsCand]bool{}
-	spaces := append([]string{"", "rs_nosp"}, f.spaces...)
+	spaces := append([]string{"", "rs_nosp", "general"}, f.spaces...)
 	projects := map[string]bool{"rs_nopr": true}
 	for _, m := range f.members {
 		if m.rtype == "space" {
@@ -342,7 +345,7 @@ func (f *rsFixture) candidates(r *rand.Rand) []rsCand {
 	return out
 }
 
-type rsVariant struct{ name, projects, mode string }
+type rsVariant struct{ name, scope string }
 
 func rsVariants(f *rsFixture, r *rand.Rand) []rsVariant {
 	var all, some []string
@@ -353,27 +356,64 @@ func rsVariants(f *rsFixture, r *rand.Rand) []rsVariant {
 		}
 	}
 	all = append(all, "rs_nopr")
-	some = append(some, "rs_nopr", some[0], some[0])
+	some = append(some, "rs_nopr", some[0])
 	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	mixed := fmt.Sprintf(`[1,null,true,[%s],{"id":%s},%s,%s]`, js(all[0]), js(all[0]), js(all[1]), js(all[2]))
-	return []rsVariant{
-		{"none", "", ""},
-		{"none+write-mode", "", "write"},
-		{"read-some", js(some), "read"},
-		{"write-some", js(some), "write"},
-		{"read-empty-list", "[]", "read"},
-		{"read-all", js(all), "read"},
-		{"write-all", js(all), "write"},
-		{"bad-json", "{not json", "read"},
-		{"object", `{"` + all[0] + `":"x"}`, "read"},
-		{"string", js(all[0]), "write"},
-		{"json-null", "null", "write"},
-		{"mixed-types", mixed, "write"},
-		{"bad-mode", js(all), "admin"},
-		{"empty-mode", js(all), ""},
-		{"upper-mode", js(all), "READ"},
-		{"whitespace", " ", "read"},
+	el := func(t, id, m string) map[string]string { return map[string]string{"type": t, "id": id, "mode": m} }
+	projs := func(mode string, ids []string) []map[string]string {
+		var out []map[string]string
+		for _, id := range ids {
+			out = append(out, el("project", id, mode))
+		}
+		return out
 	}
+	spaces := append([]string{"general", "rs_nosp"}, f.spaces...)
+	spaceEls := func(mode string, ids []string) []map[string]string {
+		var out []map[string]string
+		for _, id := range ids {
+			out = append(out, el("space", id, mode))
+		}
+		return out
+	}
+	mixedModes := append(projs("read", all[:len(all)/2]), projs("write", all[len(all)/2:])...)
+	mixedModes = append(mixedModes, el("space", f.spaces[0], "read"))
+	everything := append(projs("write", all), spaceEls("write", spaces)...)
+	return []rsVariant{
+		{"none", ""},
+		{"read-some", js(projs("read", some))},
+		{"write-some", js(projs("write", some))},
+		{"read-all", js(projs("read", all))},
+		{"write-all", js(projs("write", all))},
+		{"space-read", js(spaceEls("read", f.spaces[:1]))},
+		{"space-write", js(spaceEls("write", f.spaces[:1]))},
+		{"spaces-write-all", js(spaceEls("write", spaces))},
+		{"general-explicit-write", js([]map[string]string{el("space", "general", "write")})},
+		{"general-explicit-read", js([]map[string]string{el("space", "general", "read")})},
+		{"general-implicit", js(projs("read", some[:1]))},
+		{"project-write-space-read", js(append(projs("write", some[:2]), spaceEls("read", f.spaces[1:2])...))},
+		{"project-read-same-space-write", js([]map[string]string{el("project", all[0], "read"), el("space", f.projects[0].space, "write")})},
+		{"mixed-modes", js(mixedModes)},
+		{"everything", js(everything)},
+		{"read-empty-list", "[]"},
+		{"bad-json", "{not json"},
+		{"object", `{"` + all[0] + `":"x"}`},
+		{"string", js(all[0])},
+		{"json-null", "null"},
+		{"legacy-strings", js(all)},
+		{"mixed-types", fmt.Sprintf(`[1,null,true,[%s],{"id":%s},{"type":"project","id":%s,"mode":"read"}]`, js(all[0]), js(all[0]), js(all[1]))},
+		{"bad-mode", js([]map[string]string{el("project", all[0], "admin"), el("project", all[1], "read")})},
+		{"bad-type", js([]map[string]string{el("team", all[0], "read")})},
+		{"upper-mode", js([]map[string]string{el("project", all[0], "READ")})},
+		{"whitespace", " "},
+	}
+}
+
+func (f *rsFixture) projectSpace(id string) string {
+	for _, p := range f.projects {
+		if p.id == id {
+			return p.space
+		}
+	}
+	return ""
 }
 
 func rsDSN(t *testing.T) string {
@@ -407,16 +447,16 @@ func rsSession(t *testing.T, root *Server, user *string, v rsVariant, move strin
 		if err := conn.QueryRowContext(ctx, `SELECT current_setting('app.user_id',true) IS NULL`).Scan(&isNull); err != nil || !isNull {
 			t.Fatalf("fresh session should have no app.user_id: %v %v", isNull, err)
 		}
-		_, err = conn.ExecContext(ctx, `SELECT set_config('app.mcp_projects',$1,false), set_config('app.mcp_mode',$2,false), set_config('app.move',$3,false)`, v.projects, v.mode, move)
+		_, err = conn.ExecContext(ctx, `SELECT set_config('app.mcp_scope',$1,false), set_config('app.move',$2,false)`, v.scope, move)
 	} else {
 		if conn, err = root.DB.pool.Conn(ctx); err != nil {
 			t.Fatal(err)
 		}
 		closeAll = func() {
-			conn.ExecContext(ctx, `SELECT set_config('app.user_id','',false), set_config('app.mcp_projects','',false), set_config('app.mcp_mode','',false), set_config('app.move','',false)`)
+			conn.ExecContext(ctx, `SELECT set_config('app.user_id','',false), set_config('app.mcp_scope','',false), set_config('app.move','',false)`)
 			conn.Close()
 		}
-		_, err = conn.ExecContext(ctx, `SELECT set_config('app.user_id',$1,false), set_config('app.mcp_projects',$2,false), set_config('app.mcp_mode',$3,false), set_config('app.move',$4,false)`, *user, v.projects, v.mode, move)
+		_, err = conn.ExecContext(ctx, `SELECT set_config('app.user_id',$1,false), set_config('app.mcp_scope',$2,false), set_config('app.move',$3,false)`, *user, v.scope, move)
 	}
 	if err != nil {
 		closeAll()
@@ -574,7 +614,7 @@ func TestPostgresRoleScopeMatchesEffectiveRole(t *testing.T) {
 				rowsSeen += n
 				if n > 0 {
 					nonEmpty++
-					if v.projects != "" {
+					if v.scope != "" {
 						mcpNonEmpty++
 					}
 				}
@@ -684,7 +724,7 @@ func TestPostgresRoleScopePoliciesMatchReferencePredicates(t *testing.T) {
 				// The project-move read policy is checked without an MCP scope; other
 				// move values must change nothing.
 				moves := []string{""}
-				if v.projects == "" {
+				if v.scope == "" {
 					moves = []string{"", "project", "article", "probe"}
 				}
 				for _, move := range moves {
@@ -747,7 +787,7 @@ func TestPostgresRoleScopeMoveModeDoesNotWidenRevisions(t *testing.T) {
 	rsLoad(t, owner, f)
 	u := "rs_u0"
 	for move, wantArticle := range map[string]int{"": 0, "project": 1} {
-		conn, done := rsSession(t, root, &u, rsVariant{"none", "", ""}, move)
+		conn, done := rsSession(t, root, &u, rsVariant{"none", ""}, move)
 		var n [3]int
 		for i, tbl := range []string{"articles", "revisions", "comments"} {
 			if err := conn.QueryRowContext(context.Background(), `SELECT count(*) FROM `+tbl).Scan(&n[i]); err != nil {
@@ -795,14 +835,36 @@ func TestPostgresRoleScopeFunctionIsNotALeak(t *testing.T) {
 	cands := f.candidates(rand.New(rand.NewSource(1)))
 	for _, name := range f.users[:3] {
 		name := name
-		plain, done := rsSession(t, root, &name, rsVariant{"none", "", ""}, "")
+		plain, done := rsSession(t, root, &name, rsVariant{"none", ""}, "")
 		rsCompareScope(t, plain, "unscoped "+name, cands)
 		var all []string
 		for _, p := range f.projects {
 			all = append(all, p.id)
 		}
-		list, _ := json.Marshal(all[:2])
-		scoped, doneScoped := rsSession(t, root, &name, rsVariant{"scoped", string(list), "read"}, "")
+		list, _ := json.Marshal(projScope("read", all[:2]...))
+		allowed := map[string]bool{}
+		for _, start := range all[:2] {
+			for _, p := range f.projects {
+				cur, steps := p, 0
+				for steps < 80 {
+					if cur.id == start && cur.space == f.projectSpace(start) {
+						allowed[p.id] = true
+						break
+					}
+					var next *rsProject
+					for i := range f.projects {
+						if f.projects[i].id == cur.parent && f.projects[i].space == cur.space {
+							next = &f.projects[i]
+						}
+					}
+					if next == nil {
+						break
+					}
+					cur, steps = *next, steps+1
+				}
+			}
+		}
+		scoped, doneScoped := rsSession(t, root, &name, rsVariant{"scoped", string(list)}, "")
 		rows, err := scoped.QueryContext(ctx, `SELECT space_id, project_id, role_rank FROM public.corporate_role_scope()`)
 		if err != nil {
 			t.Fatal(err)
@@ -813,7 +875,7 @@ func TestPostgresRoleScopeFunctionIsNotALeak(t *testing.T) {
 			if err := rows.Scan(&s, &p, &rank); err != nil {
 				t.Fatal(err)
 			}
-			if p != all[0] && p != all[1] || rank != 1 {
+			if s != "general" && !allowed[p] || rank != 1 { // listed projects with their subprojects, plus the general space
 				t.Fatalf("%s: scoped session got %q/%q rank %d outside its two read projects", name, s, p, rank)
 			}
 		}
@@ -833,17 +895,17 @@ func TestPostgresRoleScopeMigrationAndGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	if err := owner.DB.QueryRow(`SELECT count(*) FROM schema_migrations WHERE component='role_scope' AND version=1`).Scan(&n); err != nil || n != 1 {
+	if err := owner.DB.QueryRow(`SELECT count(*) FROM schema_migrations WHERE component='role_scope' AND version IN (1,2)`).Scan(&n); err != nil || n != 2 {
 		t.Fatalf("role_scope migration rows: %d %v", n, err)
 	}
 	var fn string
-	for _, st := range splitCorporateSQL(roleScopeSQL) {
+	for _, st := range splitCorporateSQL(roleScopeSQL2) {
 		if strings.Contains(st, "CREATE OR REPLACE FUNCTION public.corporate_role_scope") {
 			fn = st
 		}
 	}
 	if fn == "" || !strings.Contains(fn, "WHERE b.rank >= 1") {
-		t.Fatal("function statement not found in role_scope.sql")
+		t.Fatal("function statement not found in role_scope_2.sql")
 	}
 	const spaces = `(id, ''::text) IN (SELECT s.space_id, s.project_id FROM public.corporate_role_scope() s)`
 	const fnName = `FUNCTION public.corporate_role_scope()`

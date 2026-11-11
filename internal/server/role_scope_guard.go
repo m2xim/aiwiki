@@ -9,7 +9,7 @@ import (
 // roleScopeBodyMD5 is md5 of corporate_role_scope()'s body (prosrc, CR removed so a
 // CRLF checkout of role_scope.sql hashes the same). prosrc is stored verbatim, so the
 // value is stable across PostgreSQL versions; change it together with the function.
-const roleScopeBodyMD5 = "051ab117ae7b7fd91566e763ddc34adc"
+const roleScopeBodyMD5 = "d682d9af3a0830325f373bb8447c39f6"
 
 // roleScopePolicies are the SELECT policies that must call corporate_role_scope(), as
 // pg_get_expr deparses them with whitespace collapsed (default search_path). A later

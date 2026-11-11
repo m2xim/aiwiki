@@ -89,18 +89,18 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 		t.Fatalf("bootstrap failed: %d %s", w.Code, w.Body)
 	}
 	var bootOut struct {
-		Spaces   []Space `json:"spaces"`
-		Projects []struct {
-			ID, Name, SpaceID string
-		} `json:"projects"`
+		Spaces []Space `json:"spaces"`
+		Scope  []struct {
+			Type, ID, Mode, Name, SpaceID string
+		} `json:"scope"`
 	}
 	if err := json.Unmarshal([]byte(strings.ReplaceAll(boot.Result.Content[0].Text, `"space_id"`, `"SpaceID"`)), &bootOut); err != nil {
 		t.Fatal(err)
 	}
-	if len(bootOut.Spaces) != 0 || len(bootOut.Projects) != 1 || bootOut.Projects[0].ID != project.ID || bootOut.Projects[0].Name != "Selected" || bootOut.Projects[0].SpaceID != space.ID {
+	if len(bootOut.Spaces) != 0 || len(bootOut.Scope) != 1 || bootOut.Scope[0].ID != project.ID || bootOut.Scope[0].Type != "project" || bootOut.Scope[0].Name != "Selected" || bootOut.Scope[0].SpaceID != space.ID {
 		t.Fatalf("scoped bootstrap must list exactly its project with its space: %s", boot.Result.Content[0].Text)
 	}
-	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Service authorship", "space_id": bootOut.Projects[0].SpaceID, "project_id": bootOut.Projects[0].ID, "body": "# Scoped\ncontent", "author": "spoof"}}})
+	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Service authorship", "space_id": bootOut.Scope[0].SpaceID, "project_id": bootOut.Scope[0].ID, "body": "# Scoped\ncontent", "author": "spoof"}}})
 	if w.Code != 200 || strings.Contains(w.Body.String(), `"isError":true`) {
 		t.Fatalf("write failed: %d %s", w.Code, w.Body)
 	}
@@ -108,7 +108,7 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if _, err := owner.DB.Exec(`UPDATE projects SET archived_at='2020-01-01T00:00:00Z' WHERE id=?`, project.ID); err != nil {
 		t.Fatal(err)
 	}
-	if w = rpc("tools/call", map[string]any{"name": "wiki_bootstrap", "arguments": map[string]any{}}); w.Code != 200 || !strings.Contains(w.Body.String(), `\"projects\":[]`) {
+	if w = rpc("tools/call", map[string]any{"name": "wiki_bootstrap", "arguments": map[string]any{}}); w.Code != 200 || !strings.Contains(w.Body.String(), `\"scope\":[]`) {
 		t.Fatalf("archived project still listed: %d %s", w.Code, w.Body)
 	}
 	if _, err := owner.DB.Exec(`UPDATE projects SET archived_at=NULL WHERE id=?`, project.ID); err != nil {

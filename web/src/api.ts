@@ -1,6 +1,9 @@
 export type Space = { limited?: boolean; id: string; name: string; description: string; archived_at?: string; personal?: boolean; article_count?: number; project_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
 export type Project = { id: string; name: string; description: string; space_id: string; parent_id: string; archived_at?: string; inherit_acl: boolean; article_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
-export type MCPCredential = { id: string; name: string; service_account_id?: string; project_ids: string[]; mode: 'read' | 'write'; created_at: string; expires_at: string; revoked_at?: string };
+export type MCPScopeMode = 'read' | 'write';
+export type MCPScopeInput = { type: 'space' | 'project'; id: string; mode: MCPScopeMode };
+export type MCPScopeElement = MCPScopeInput & { name?: string; space_id?: string };
+export type MCPCredential = { id: string; name: string; service_account_id?: string; scope: MCPScopeElement[]; created_at: string; expires_at: string; revoked_at?: string };
 export type MCPServiceAccount = { id: string; name: string; sponsor_id: string; disabled: boolean; created_at: string };
 export type Team = { id: string; name: string; description: string; archived_at?: string };
 export type TeamMember = { id: string; name: string };
@@ -40,8 +43,8 @@ export type ArtifactShare = { id: string; url?: string; revision: number | null;
 export type ArtifactFileInput = { path: string; content: string; encoding: 'utf8' | 'base64' } | { path: string; delete: true };
 export type ArtifactView = { frame_url: string; expires_at: string };
 export type SpaceStorage = { used: number; limit: number; override: number | null; default: number };
-export type AdminSettings = { public_artifact_links: boolean };
-export type Bootstrap = { instructions: Article[]; spaces: Space[]; recent: Article[]; guide: string };
+export type AdminSettings = { public_artifact_links: boolean; general_space_id: string };
+export type Bootstrap = { instructions: Article[]; spaces: Space[]; recent: Article[]; guide: string; general_space_id?: string };
 import type { ManifestFile, Visibility } from './artifactsCore';
 let corporateSession = false;
 export const setCorporateSession = (value: boolean) => { corporateSession = value; };
@@ -134,7 +137,7 @@ const artifactApi = {
     return response.arrayBuffer();
   },
   adminSettings: () => api<AdminSettings>('/api/admin/settings'),
-  setAdminSettings: (data: AdminSettings) => api<AdminSettings>('/api/admin/settings', json('PUT', data)),
+  setAdminSettings: (data: Partial<AdminSettings>) => api<AdminSettings>('/api/admin/settings', json('PUT', data)),
 };
 export const client = {
   ...artifactApi,
@@ -185,9 +188,9 @@ export const client = {
   createSpaceFor: (data: { name: string; description: string; personal: boolean }) => api<Space>('/api/corporate/spaces', json('POST', data)),
   projects: (spaceId = '') => api<Project[]>(`/api/projects${spaceId ? `?space_id=${encodeURIComponent(spaceId)}` : ''}`),
   mcpCredentials: () => api<{ enabled: boolean; credentials: MCPCredential[] }>('/api/mcp/credentials'),
-  createMCPCredential: (data: { name: string; project_ids: string[]; mode: 'read' | 'write'; ttl_seconds: number; service_account_id?: string }) => api<MCPCredential & { token: string }>('/api/mcp/credentials', json('POST', data)),
+  createMCPCredential: (data: { name: string; scope: MCPScopeInput[]; ttl_seconds: number; service_account_id?: string }) => api<MCPCredential & { token: string }>('/api/mcp/credentials', json('POST', data)),
   revokeMCPCredential: (id: string) => api<void>(`/api/mcp/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  updateMCPCredential: (id: string, data: { project_ids: string[]; mode: 'read' | 'write' }) => api<MCPCredential>(`/api/mcp/credentials/${encodeURIComponent(id)}`, json('PATCH', data)),
+  updateMCPCredential: (id: string, data: { scope: MCPScopeInput[] }) => api<MCPCredential>(`/api/mcp/credentials/${encodeURIComponent(id)}`, json('PATCH', data)),
   mcpServiceAccounts: () => api<{ enabled: boolean; service_accounts: MCPServiceAccount[] }>('/api/mcp/service-accounts'),
   createMCPServiceAccount: (name: string) => api<MCPServiceAccount>('/api/mcp/service-accounts', json('POST', { name })),
   disableMCPServiceAccount: (id: string) => api<void>(`/api/mcp/service-accounts/${encodeURIComponent(id)}`, { method: 'DELETE' }),

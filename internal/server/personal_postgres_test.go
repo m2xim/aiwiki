@@ -75,7 +75,7 @@ func addForeignSpace(t *testing.T, owner *database, user, space string) {
 	if _, err := owner.Exec(`INSERT INTO users(id,issuer,subject,name,admin) VALUES(?,?,?,?,0) ON CONFLICT DO NOTHING`, user, "https://identity.example.org", user, user); err != nil {
 		t.Fatal(err)
 	}
-	scoped, done, err := owner.scopedMCP(context.Background(), user, nil, "")
+	scoped, done, err := owner.scopedMCP(context.Background(), user, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestPersonalOwnerRowsExactlyOnceAndIdempotent(t *testing.T) {
 	first := openPersonalForTest(t, cfg)
 	// The unscoped runtime connection sees no spaces (row-level security), so
 	// count through a connection scoped to the owner.
-	viewer, done, err := first.DB.scopedMCP(context.Background(), "owner", nil, "")
+	viewer, done, err := first.DB.scopedMCP(context.Background(), "owner", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestPersonalServesOwnerEverywhere(t *testing.T) {
 	}
 	var ownerID string
 	var personal int
-	scoped, done, err := s.DB.scopedMCP(context.Background(), "owner", nil, "")
+	scoped, done, err := s.DB.scopedMCP(context.Background(), "owner", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

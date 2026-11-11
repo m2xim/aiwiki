@@ -241,7 +241,7 @@ func (s *Server) createArticle(w http.ResponseWriter, r *http.Request) {
 		// Delegated MCP sessions cannot lock the row (no UPDATE policy on projects for
 		// them) and only check that it exists.
 		lockClause := " FOR SHARE"
-		if s.principal != nil && (s.principal.MCPMode != "" || s.principal.MCPProjects != nil) {
+		if s.principal != nil && s.principal.MCPScope != nil {
 			lockClause = ""
 		}
 		var one int

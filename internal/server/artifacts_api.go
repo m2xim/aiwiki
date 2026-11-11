@@ -168,7 +168,7 @@ func loadManifest(q queryer, id string, rev int) ([]artifactFile, bool, error) {
 	return files, true, nil
 }
 
-func (s *Server) isMCPScoped() bool { return s.principal != nil && s.principal.MCPProjects != nil }
+func (s *Server) isMCPScoped() bool { return s.principal != nil && s.principal.MCPScope != nil }
 
 // artifactRoleOf returns the caller's role rank (0 none, 3 editor, 4 manager,
 // 5 owner) in a container and whether the container accepts writes. Trusted
@@ -519,7 +519,7 @@ func (s *Server) createArtifact(ctx context.Context, in artifactCreateIn) (artif
 	if rs.DB.pg && in.ProjectID != "" {
 		// Serializes with a project move, like article creation.
 		lock := " FOR SHARE"
-		if rs.principal != nil && (rs.principal.MCPMode != "" || rs.principal.MCPProjects != nil) {
+		if rs.principal != nil && rs.principal.MCPScope != nil {
 			lock = ""
 		}
 		var one int
@@ -1227,7 +1227,7 @@ func (s *Server) adminSettingsGet(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.corporateActor(w, r, true); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"public_artifact_links": s.publicLinksEnabled(s.DB)})
+	writeJSON(w, http.StatusOK, map[string]any{"public_artifact_links": s.publicLinksEnabled(s.DB), "general_space_id": s.generalSpaceID(s.DB)})
 }
 
 func (s *Server) adminSettingsPut(w http.ResponseWriter, r *http.Request) {
@@ -1236,33 +1236,59 @@ func (s *Server) adminSettingsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		PublicArtifactLinks *bool `json:"public_artifact_links"`
+		PublicArtifactLinks *bool   `json:"public_artifact_links"`
+		GeneralSpaceID      *string `json:"general_space_id"`
 	}
 	if !artifactDecode(w, r, &in) {
 		return
 	}
-	if in.PublicArtifactLinks == nil {
-		apiErr(w, http.StatusBadRequest, "public_artifact_links is required")
+	if in.PublicArtifactLinks == nil && in.GeneralSpaceID == nil {
+		apiErr(w, http.StatusBadRequest, "public_artifact_links or general_space_id is required")
 		return
 	}
-	value := strconv.FormatBool(*in.PublicArtifactLinks)
 	tx, err := s.DB.Begin()
 	if err != nil {
 		writeArtifactError(w, err)
 		return
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`INSERT INTO app_settings(key,value) VALUES('public_artifact_links',?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, value); err == nil {
-		err = corporateAudit(tx, actor, "settings.update", "settings", "public_artifact_links", map[string]any{"key": "public_artifact_links", "value": *in.PublicArtifactLinks})
+	if in.GeneralSpaceID != nil {
+		var exists bool
+		check := `SELECT EXISTS(SELECT 1 FROM spaces WHERE id=? AND archived_at IS NULL)`
+		if s.DB.pg {
+			check = `SELECT public.corporate_space_assignable(?)`
+		}
+		if err := tx.QueryRow(check, *in.GeneralSpaceID).Scan(&exists); err != nil {
+			writeArtifactError(w, err)
+			return
+		}
+		if !exists {
+			apiErr(w, http.StatusBadRequest, "unknown space")
+			return
+		}
+		if _, err = tx.Exec(`INSERT INTO app_settings(key,value) VALUES('general_space_id',?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, *in.GeneralSpaceID); err == nil {
+			err = corporateAudit(tx, actor, "settings.update", "settings", "general_space_id", map[string]any{"key": "general_space_id", "value": *in.GeneralSpaceID})
+		}
+		if err != nil {
+			writeArtifactError(w, err)
+			return
+		}
 	}
-	if err == nil {
-		err = tx.Commit()
+	if in.PublicArtifactLinks != nil {
+		value := strconv.FormatBool(*in.PublicArtifactLinks)
+		if _, err = tx.Exec(`INSERT INTO app_settings(key,value) VALUES('public_artifact_links',?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, value); err == nil {
+			err = corporateAudit(tx, actor, "settings.update", "settings", "public_artifact_links", map[string]any{"key": "public_artifact_links", "value": *in.PublicArtifactLinks})
+		}
+		if err != nil {
+			writeArtifactError(w, err)
+			return
+		}
 	}
-	if err != nil {
+	if err = tx.Commit(); err != nil {
 		writeArtifactError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"public_artifact_links": *in.PublicArtifactLinks})
+	writeJSON(w, http.StatusOK, map[string]any{"public_artifact_links": s.publicLinksEnabled(s.DB), "general_space_id": s.generalSpaceID(s.DB)})
 }
 
 // registerArtifactRoutes adds the artifact API, the isolated renderer and the

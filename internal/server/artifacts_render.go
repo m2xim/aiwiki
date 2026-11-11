@@ -352,7 +352,7 @@ func (d *database) scopedView(ctx context.Context, settings map[string]string) (
 	if err != nil {
 		return nil, nil, err
 	}
-	keys := []string{"app.artifact_view", "app.share_id", "app.share_token_hash", "app.user_id", "app.mcp_projects", "app.mcp_mode"}
+	keys := []string{"app.artifact_view", "app.share_id", "app.share_token_hash", "app.user_id", "app.mcp_scope"}
 	apply := func(c context.Context, values map[string]string) error {
 		for _, k := range keys {
 			var got string

@@ -78,7 +78,7 @@ func TestCorporateMCPProjectScopePostgres(t *testing.T) {
 	}
 	defer done()
 	var scopeSetting string
-	if err = scoped.QueryRow(`SELECT current_setting('app.mcp_projects',true)`).Scan(&scopeSetting); err != nil || scopeSetting != `[`+`"`+projectA+`"`+`]` {
+	if err = scoped.QueryRow(`SELECT current_setting('app.mcp_scope',true)`).Scan(&scopeSetting); err != nil || scopeSetting != `[{"type":"project","id":"`+projectA+`","mode":"read"}]` {
 		t.Fatalf("MCP scope setting=%q err=%v", scopeSetting, err)
 	}
 	for _, query := range []struct {
@@ -173,7 +173,7 @@ func TestCorporateMCPProjectScopePostgres(t *testing.T) {
 	}
 	defer release()
 	var resumedScope string
-	if err = resumed.QueryRow(`SELECT current_setting('app.mcp_projects',true)`).Scan(&resumedScope); err != nil || resumedScope != scopeSetting {
+	if err = resumed.QueryRow(`SELECT current_setting('app.mcp_scope',true)`).Scan(&resumedScope); err != nil || resumedScope != scopeSetting {
 		t.Errorf("resumed scope=%q err=%v, want copied scope %q", resumedScope, err, scopeSetting)
 	}
 	release()
@@ -183,7 +183,7 @@ func TestCorporateMCPProjectScopePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	var clearedUser, clearedProjects string
-	if err = conn.QueryRowContext(ctx, `SELECT coalesce(current_setting('app.user_id',true),''), coalesce(current_setting('app.mcp_projects',true),'')`).Scan(&clearedUser, &clearedProjects); err != nil || clearedUser != "" || clearedProjects != "" {
+	if err = conn.QueryRowContext(ctx, `SELECT coalesce(current_setting('app.user_id',true),''), coalesce(current_setting('app.mcp_scope',true),'')`).Scan(&clearedUser, &clearedProjects); err != nil || clearedUser != "" || clearedProjects != "" {
 		t.Errorf("cleanup left session values user=%q projects=%q err=%v", clearedUser, clearedProjects, err)
 	}
 	_ = conn.Close()
@@ -193,7 +193,7 @@ func TestCorporateMCPProjectScopePostgres(t *testing.T) {
 	}
 	defer clear()
 	var cleared string
-	if err = check.QueryRow(`SELECT current_setting('app.mcp_projects',true)`).Scan(&cleared); err != nil || cleared != "" {
+	if err = check.QueryRow(`SELECT current_setting('app.mcp_scope',true)`).Scan(&cleared); err != nil || cleared != "" {
 		t.Errorf("reborrowed connection retained MCP scope %q err=%v", cleared, err)
 	}
 	if err = check.QueryRow(`SELECT corporate_effective_role(?,?, '')`, userID, spaceID).Scan(&role); err != nil || role != "owner" {
@@ -204,13 +204,21 @@ func TestCorporateMCPProjectScopePostgres(t *testing.T) {
 		t.Errorf("forgotten transaction was not rolled back: count=%d err=%v", changed, err)
 	}
 
-	emptyScope, clearEmpty, err := root.DB.scopedProjects(ctx, userID, []string{})
+	// An empty scope is refused outright (it never degrades to unrestricted).
+	if _, _, err := root.DB.scopedMCP(ctx, userID, []mcpScopeElement{}); err == nil {
+		t.Error("empty scope accepted")
+	}
+	// A stale process that still sets the pre-scope setting gets a scoped session with no valid scope.
+	legacy, err := root.DB.pool.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clearEmpty()
-	if err = emptyScope.QueryRow(`SELECT count(*) FROM articles WHERE id=?`, articleA).Scan(&denied); err != nil || denied != 0 {
-		t.Errorf("empty project scope count=%d err=%v, want deny all", denied, err)
+	defer legacy.Close()
+	if _, err = legacy.ExecContext(ctx, `SELECT set_config('app.user_id',$1,false), set_config('app.mcp_projects','["x"]',false)`, userID); err != nil {
+		t.Fatal(err)
 	}
-	clearEmpty()
+	if err = legacy.QueryRowContext(ctx, `SELECT count(*) FROM articles WHERE id=$1`, articleA).Scan(&denied); err != nil || denied != 0 {
+		t.Errorf("legacy setting count=%d err=%v, want deny", denied, err)
+	}
+	legacy.ExecContext(ctx, `SELECT set_config('app.user_id','',false), set_config('app.mcp_projects','',false)`)
 }
