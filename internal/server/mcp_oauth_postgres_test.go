@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -89,8 +88,8 @@ func TestMCPOAuthPostgresResourceBoundary(t *testing.T) {
 	if p.Code != 201 || json.Unmarshal(p.Body.Bytes(), &project) != nil {
 		t.Fatal("seed project failed")
 	}
-	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now, admission: leadAdmissionCheck(func(context.Context, string, string) error { return nil })}
-	for _, endpoint := range []string{"credentials", "delegations"} {
+	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now}
+	for _, endpoint := range []string{"credentials"} {
 		w = call("POST", "/api/mcp/"+endpoint, `{"name":"Native read","project_ids":["`+project.ID+`"]}`, "", me.CSRF, cookie)
 		var native struct {
 			Token string `json:"token"`

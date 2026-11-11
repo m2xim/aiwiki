@@ -10,23 +10,11 @@ import (
 	"time"
 )
 
-type leadAdmissionCheck func(context.Context, string, string) error
-
-func (f leadAdmissionCheck) Check(c context.Context, i, s string) error { return f(c, i, s) }
-
 func TestMCPPersistentEndToEnd(t *testing.T) {
 	owner, root := corporateFixture(t)
 	x := newAuthHarness(t, nil)
 	x.a.users = authSQLUsers{db: root.DB}
-	admitted := true
-	checks := 0
-	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now, admission: leadAdmissionCheck(func(context.Context, string, string) error {
-		checks++
-		if !admitted {
-			return errMCPAdmissionDenied
-		}
-		return nil
-	})}
+	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now}
 	root.auth = x.a
 	cookie := authCookie(x.login(authUserGrant("persistent-e2e", "aiwiki-access", "aiwiki-admin")), x.a.sessionCookie)
 	call := func(method, path, body, csrf, bearer string, c *http.Cookie) *httptest.ResponseRecorder {
@@ -79,7 +67,6 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if issued.Token == "" {
 		t.Fatal("missing secret")
 	}
-	before := checks
 	rpc := func(method string, params any) *httptest.ResponseRecorder {
 		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 		return call("POST", "/mcp", string(b), "", issued.Token, nil)
@@ -88,9 +75,44 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"wiki_edit"`) {
 		t.Fatalf("writer discovery failed: %d %s", w.Code, w.Body)
 	}
-	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Service authorship", "space_id": space.ID, "project_id": project.ID, "body": "# Scoped\ncontent", "author": "spoof"}}})
+	// The agent learns where it may write from bootstrap alone: exactly its
+	// projects with their space ids, never the sibling project.
+	w = rpc("tools/call", map[string]any{"name": "wiki_bootstrap", "arguments": map[string]any{}})
+	var boot struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &boot) != nil || len(boot.Result.Content) != 1 {
+		t.Fatalf("bootstrap failed: %d %s", w.Code, w.Body)
+	}
+	var bootOut struct {
+		Spaces   []Space `json:"spaces"`
+		Projects []struct {
+			ID, Name, SpaceID string
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal([]byte(strings.ReplaceAll(boot.Result.Content[0].Text, `"space_id"`, `"SpaceID"`)), &bootOut); err != nil {
+		t.Fatal(err)
+	}
+	if len(bootOut.Spaces) != 0 || len(bootOut.Projects) != 1 || bootOut.Projects[0].ID != project.ID || bootOut.Projects[0].Name != "Selected" || bootOut.Projects[0].SpaceID != space.ID {
+		t.Fatalf("scoped bootstrap must list exactly its project with its space: %s", boot.Result.Content[0].Text)
+	}
+	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Service authorship", "space_id": bootOut.Projects[0].SpaceID, "project_id": bootOut.Projects[0].ID, "body": "# Scoped\ncontent", "author": "spoof"}}})
 	if w.Code != 200 || strings.Contains(w.Body.String(), `"isError":true`) {
 		t.Fatalf("write failed: %d %s", w.Code, w.Body)
+	}
+	// An archived project disappears from bootstrap and comes back on restore.
+	if _, err := owner.DB.Exec(`UPDATE projects SET archived_at='2020-01-01T00:00:00Z' WHERE id=?`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w = rpc("tools/call", map[string]any{"name": "wiki_bootstrap", "arguments": map[string]any{}}); w.Code != 200 || !strings.Contains(w.Body.String(), `\"projects\":[]`) {
+		t.Fatalf("archived project still listed: %d %s", w.Code, w.Body)
+	}
+	if _, err := owner.DB.Exec(`UPDATE projects SET archived_at=NULL WHERE id=?`, project.ID); err != nil {
+		t.Fatal(err)
 	}
 	scoped, done, err := owner.DB.scoped(context.Background(), me.User.ID)
 	if err != nil {
@@ -116,23 +138,36 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"isError":true`) {
 		t.Fatalf("sibling write allowed: %d %s", w.Code, w.Body)
 	}
-	if checks-before != 5 { // list, write, edit, search, sibling write
-		t.Fatalf("admission called %d times, want5", checks-before)
-	}
 	// Native secrets never authenticate browser APIs, even with an otherwise valid key.
 	if w = call("GET", "/api/mcp/credentials", "", "", issued.Token, nil); w.Code != 401 {
 		t.Fatalf("native credential authenticated browser path: %d", w.Code)
 	}
 	var actors int
-	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors != 5 {
+	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors != 7 { // bootstrap x2, write, edit, search, sibling write, list
 		t.Fatalf("audit actors=%d err=%v", actors, err)
 	}
-	admitted = false
-	w = rpc("ping", map[string]any{})
-	if w.Code != 403 && w.Code != 401 {
-		t.Fatalf("removed admission still allowed: %d %s", w.Code, w.Body)
+	// Local admission: no browser login for longer than the window stops the key.
+	if _, err = owner.DB.Exec(`UPDATE users SET last_login_at=? WHERE id=?`, time.Now().UTC().Add(-mcpPersistentLoginWindow-time.Minute), me.User.ID); err != nil {
+		t.Fatal(err)
 	}
-	admitted = true
+	if w = rpc("ping", map[string]any{}); w.Code != 403 {
+		t.Fatalf("stale login still allowed: %d %s", w.Code, w.Body)
+	}
+	// A fresh browser login re-activates the same credential.
+	x.login(authUserGrant("persistent-e2e", "aiwiki-access", "aiwiki-admin"))
+	if w = rpc("ping", map[string]any{}); w.Code != 200 {
+		t.Fatalf("fresh login did not re-admit: %d %s", w.Code, w.Body)
+	}
+	// A locally disabled owner is refused.
+	if _, err = owner.DB.Exec(`UPDATE users SET disabled=1 WHERE id=?`, me.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w = rpc("ping", map[string]any{}); w.Code != 403 {
+		t.Fatalf("disabled owner still allowed: %d %s", w.Code, w.Body)
+	}
+	if _, err = owner.DB.Exec(`UPDATE users SET disabled=0 WHERE id=?`, me.User.ID); err != nil {
+		t.Fatal(err)
+	}
 	mustJSON(call("DELETE", "/api/mcp/service-accounts/"+account.ID, "", me.CSRF, "", cookie), 204, nil)
 	w = rpc("ping", map[string]any{})
 	if w.Code != 403 && w.Code != 401 {

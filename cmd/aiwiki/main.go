@@ -76,6 +76,14 @@ func run() error {
 		}
 		spaceQuota = parsed
 	}
+	var sessionMaxAge time.Duration
+	if v := strings.TrimSpace(os.Getenv("AIWIKI_SESSION_MAX_AGE")); v != "" {
+		parsed, perr := time.ParseDuration(v)
+		if perr != nil || parsed <= 0 {
+			return errors.New("AIWIKI_SESSION_MAX_AGE must be a positive duration such as 12h")
+		}
+		sessionMaxAge = parsed
+	}
 	if mode == modePersonal {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -89,12 +97,13 @@ func run() error {
 		defer cancel()
 		s, err = server.OpenCorporate(ctx, server.CorporateConfig{
 			MCPOAuth:    server.MCPOAuthConfig{ResourceURL: os.Getenv("AIWIKI_MCP_RESOURCE_URL"), IntrospectionClientID: os.Getenv("AIWIKI_MCP_INTROSPECTION_CLIENT_ID"), IntrospectionClientSecret: os.Getenv("AIWIKI_MCP_INTROSPECTION_CLIENT_SECRET")},
-			Admission:   server.KeycloakAdmissionConfig{AdminURL: os.Getenv("AIWIKI_KEYCLOAK_ADMIN_URL"), ClientID: os.Getenv("AIWIKI_KEYCLOAK_ADMISSION_CLIENT_ID"), ClientSecret: os.Getenv("AIWIKI_KEYCLOAK_ADMISSION_CLIENT_SECRET")},
 			S3:          s3ConfigFromEnv(),
 			DatabaseURL: databaseURL, MigrationDatabaseURL: os.Getenv("AIWIKI_MIGRATION_DATABASE_URL"), RuntimeRole: os.Getenv("AIWIKI_DATABASE_ROLE"),
 			IssuerURL: issuer, ClientID: os.Getenv("AIWIKI_OIDC_CLIENT_ID"), ClientSecret: os.Getenv("AIWIKI_OIDC_CLIENT_SECRET"), RedirectURL: os.Getenv("AIWIKI_OIDC_REDIRECT_URL"),
 			AccessRole: os.Getenv("AIWIKI_OIDC_ACCESS_ROLE"), AdminRole: os.Getenv("AIWIKI_OIDC_ADMIN_ROLE"), RolesClaim: os.Getenv("AIWIKI_OIDC_ROLES_CLAIM"),
 			AllowInsecureHTTP: os.Getenv("AIWIKI_ALLOW_INSECURE_LOOPBACK") == "1",
+			SessionRefresh:    os.Getenv("AIWIKI_SESSION_REFRESH") == "1",
+			SessionMaxAge:     sessionMaxAge,
 			SpaceQuotaBytes:   spaceQuota,
 		}, *data, *web)
 	} else {

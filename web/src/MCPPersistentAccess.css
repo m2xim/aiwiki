@@ -46,3 +46,5 @@ html[data-theme="dark"] .mcp-persistent-danger{color:#f0a2a0}
 html[data-theme="dark"] .mcp-persistent-project:hover{background:var(--lavender,#282535)}
 html[data-theme=dark] .mcp-persistent-secret{background:#23382a;border-color:#42664a}
 @media(max-width:600px){.mcp-persistent-heading{align-items:flex-start;flex-direction:column}.mcp-persistent-card{flex-direction:column}.mcp-persistent-account-create{grid-template-columns:minmax(0,1fr)}.mcp-persistent-account-create>button,.mcp-persistent-actions>*{width:100%}}
+.mcp-persistent-card:has(.mcp-persistent-edit){flex-wrap:wrap}
+.mcp-persistent-edit{flex-basis:100%;margin-top:8px}

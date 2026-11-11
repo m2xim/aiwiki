@@ -32,9 +32,9 @@ Why: Keycloak 26.8's `AccessTokenIntrospectionProvider.verifyAudience` ([source,
 | OAuth resource URL unset | Existing browser OIDC client ID audience | Legacy MCP OIDC validation remains in effect. |
 | OAuth resource URL set; external MCP OAuth token | Exact canonical `AIWIKI_MCP_RESOURCE_URL` audience **and** `aiwiki:mcp` scope | Signature, issuer, expiry and live introspection/admission checks must pass. There is no browser-client-ID audience fallback. |
 | Browser sign-in callback | Browser OIDC client ID audience | Remains browser-client-bound; enabling MCP OAuth does not change the callback audience. |
-| Native personal access token or temporary key | Its existing exact native scope and validation | Unchanged; these credentials do not become OAuth tokens. |
+| Native personal access token | Its existing exact native scope and validation | Unchanged; these credentials do not become OAuth tokens. |
 
-The scope `aiwiki:mcp` grants the user's full current content ACL. It does not mean read-only access and does not restrict access to selected projects. For narrowed grants (selected projects, read-only ceiling) use a native key (project-scoped PAT); see [persistent MCP access](MCP-PERSISTENT-ACCESS.md) and [temporary MCP access](MCP-TEMPORARY-ACCESS.md). Browser session credentials remain separate from MCP OAuth credentials; both resolve to the same local user when issuer and subject match.
+The scope `aiwiki:mcp` grants the user's full current content ACL. It does not mean read-only access and does not restrict access to selected projects. For narrowed grants (selected projects, read-only ceiling) use a native key (project-scoped PAT); see [persistent MCP access](MCP-PERSISTENT-ACCESS.md). Browser session credentials remain separate from MCP OAuth credentials; both resolve to the same local user when issuer and subject match.
 
 External OAuth tokens are checked through OIDC introspection on MCP requests, subject to the identity provider's token lifetime, introspection behavior and directory synchronization/cache. This does not promise immediate visibility of an AD change. Native persistent credentials use their configured admission provider; its upstream directory freshness has the same deployment dependency.
 
@@ -90,7 +90,7 @@ For Claude Code the callback is `http://localhost:58082/callback`, but this is v
 - [ ] With the feature enabled, confirm the path-based RFC 9728 metadata (and the root alias) advertise the configured resource, existing OIDC issuer and only `aiwiki:mcp`. With it disabled, confirm the metadata endpoints return 404.
 - [ ] In the real Keycloak realm, confirm PKCE S256, exact callback allowlists, issuer response identification, optional `aiwiki:mcp` scope, resource audience in access and introspection responses, consent required, and normal realm access claims.
 - [ ] Reject an external MCP token missing either the exact resource audience or `aiwiki:mcp`; confirm a browser-client-ID audience does not fall back, and that browser credentials cannot introspect the MCP token as active.
-- [ ] Exercise the browser callback and native PAT/temporary-key flows separately to confirm their existing audiences and exact scopes remain unchanged.
+- [ ] Exercise the browser callback and native PAT flows separately to confirm their existing audiences and exact scopes remain unchanged.
 - [ ] Verify content access against current ACLs and explicitly test the intended permission ceiling before giving an OAuth client access to production content.
 - [ ] Run a pilot to measure proxy and IdP introspection load.
 

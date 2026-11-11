@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,7 +57,7 @@ func TestLoadCorporatePostgres(t *testing.T) {
 	owner, root := corporateFixture(t)
 	x := newAuthHarness(t, nil)
 	x.a.users = authSQLUsers{db: root.DB}
-	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now, admission: leadAdmissionCheck(func(context.Context, string, string) error { return nil })}
+	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now}
 	root.auth = x.a
 	srv := httptest.NewServer(root.Handler())
 	defer srv.Close()

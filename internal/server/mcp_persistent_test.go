@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,60 +15,33 @@ import (
 )
 
 // Everything below that touches persistence uses the disposable PostgreSQL
-// fixture (skipped without AIWIKI_TEST_POSTGRES*). The identity provider's
-// admission API is always a mock.
+// fixture (skipped without AIWIKI_TEST_POSTGRES*). Admission is local: the
+// owner must not be disabled and must have logged in within the login window.
 
-type persistentProvider struct {
-	mu     sync.Mutex
-	denied map[string]bool
-	fault  bool
-	calls  []string
-	hook   func()
+// persistentProbe counts passes through the checkpoint between the first,
+// rate-limited verification and the final re-read; hook runs inside it.
+type persistentProbe struct {
+	mu    sync.Mutex
+	calls int
+	hook  func()
 }
 
-func (p *persistentProvider) Check(_ context.Context, issuer, subject string) error {
+func (p *persistentProbe) checkpoint() {
 	p.mu.Lock()
-	p.calls = append(p.calls, issuer+"|"+subject)
-	denied, fault, hook := p.denied[subject], p.fault, p.hook
+	p.calls++
+	hook := p.hook
 	p.mu.Unlock()
 	if hook != nil {
 		hook()
 	}
-	if fault {
-		return errors.New("provider unavailable")
-	}
-	if denied {
-		return errMCPAdmissionDenied
-	}
-	return nil
 }
 
-func (p *persistentProvider) deny(subject string, v bool) {
-	p.mu.Lock()
-	if p.denied == nil {
-		p.denied = map[string]bool{}
-	}
-	p.denied[subject] = v
-	p.mu.Unlock()
-}
+func (p *persistentProbe) setHook(f func()) { p.mu.Lock(); p.hook = f; p.mu.Unlock() }
 
-func (p *persistentProvider) setFault(v bool) { p.mu.Lock(); p.fault = v; p.mu.Unlock() }
-
-func (p *persistentProvider) setHook(f func()) { p.mu.Lock(); p.hook = f; p.mu.Unlock() }
-
-func (p *persistentProvider) count() int {
+func (p *persistentProbe) count() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return len(p.calls)
-}
-
-func (p *persistentProvider) last() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.calls) == 0 {
-		return ""
-	}
-	return p.calls[len(p.calls)-1]
+	return p.calls
 }
 
 type persistentClock struct {
@@ -106,7 +78,7 @@ type persistentEnv struct {
 	seedDB *database // migration owner scoped to the space owner: spaces/projects/ACLs
 	x      *authHarness
 	iss    string
-	prov   *persistentProvider
+	prov   *persistentProbe
 	clk    *persistentClock
 }
 
@@ -117,20 +89,24 @@ func newPersistentEnv(t *testing.T) *persistentEnv {
 	x.a.users = authSQLUsers{db: root.DB}
 	e := &persistentEnv{
 		t: t, owner: owner, root: root, admin: owner.DB, x: x, iss: x.iss.srv.URL,
-		prov: &persistentProvider{denied: map[string]bool{}},
+		prov: &persistentProbe{},
 		clk:  &persistentClock{t: time.Now().UTC().Truncate(time.Second)},
 	}
-	x.a.persistent = &mcpPersistentAccess{db: root.DB, admission: e.prov, now: e.clk.now}
+	x.a.persistent = e.access()
 	root.auth = x.a
 	return e
 }
 
-// user inserts a local user for the harness issuer and returns a browser-side
-// Server for it plus its id.
+func (e *persistentEnv) access() *mcpPersistentAccess {
+	return &mcpPersistentAccess{db: e.root.DB, now: e.clk.now, checkpoint: e.prov.checkpoint}
+}
+
+// user inserts a local user for the harness issuer, logged in now, and returns
+// a browser-side Server for it plus its id.
 func (e *persistentEnv) user(sub string) (*Server, string) {
 	e.t.Helper()
 	uid := authUserID(e.iss, sub)
-	e.exec(`INSERT INTO users(id,issuer,subject,name,admin) VALUES(?,?,?,?,0)`, uid, e.iss, sub, sub)
+	e.exec(`INSERT INTO users(id,issuer,subject,name,admin,last_login_at) VALUES(?,?,?,?,0,?)`, uid, e.iss, sub, sub, e.clk.now())
 	db, cleanup, err := e.root.DB.scoped(context.Background(), uid)
 	if err != nil {
 		e.t.Fatal(err)
@@ -330,8 +306,7 @@ func TestMCPPersistentDisabledFailsClosed(t *testing.T) {
 	token := mcpPersistentPrefix + strings.Repeat("A", mcpPersistentSecretLen)
 	for name, a := range map[string]*AuthService{
 		"no feature":  {},
-		"no provider": {persistent: &mcpPersistentAccess{db: &database{}}},
-		"no database": {persistent: &mcpPersistentAccess{admission: &persistentProvider{}}},
+		"no database": {persistent: &mcpPersistentAccess{now: time.Now}},
 	} {
 		_, rec, ok := persistentAuthOn(a, token)
 		if ok || rec.Code != http.StatusServiceUnavailable {
@@ -344,9 +319,9 @@ func TestMCPPersistentDisabledFailsClosed(t *testing.T) {
 }
 
 func TestMCPPersistentTokenShapeAndHash(t *testing.T) {
-	prov := &persistentProvider{}
+	prov := &persistentProbe{}
 	// The database is never reached for malformed tokens.
-	a := &AuthService{persistent: &mcpPersistentAccess{db: &database{}, admission: prov, now: time.Now}}
+	a := &AuthService{persistent: &mcpPersistentAccess{db: &database{}, now: time.Now, checkpoint: prov.checkpoint}}
 	aaa := strings.Repeat("A", mcpPersistentSecretLen)
 	for _, raw := range []string{
 		mcpPersistentPrefix,
@@ -366,7 +341,7 @@ func TestMCPPersistentTokenShapeAndHash(t *testing.T) {
 		}
 	}
 	if prov.count() != 0 {
-		t.Fatal("malformed tokens must not reach the provider")
+		t.Fatal("malformed tokens must not get past the first check")
 	}
 
 	secret, err := authRandom(32)
@@ -457,8 +432,8 @@ func TestMCPPersistentMintListRevokeLifecycle(t *testing.T) {
 		len(p.MCPProjects) != 2 || p.MCPProjects[0] != "pa" || p.MCPProjects[1] != "pb" {
 		t.Fatalf("bad principal: %+v", p)
 	}
-	if e.prov.count() != before+1 || e.prov.last() != e.iss+"|alice" {
-		t.Fatalf("provider must be asked about the owner: %d %q", e.prov.count(), e.prov.last())
+	if e.prov.count() != before+1 {
+		t.Fatalf("a valid request re-verifies the credential once: %d", e.prov.count()-before)
 	}
 	if !mcpScopedTool(&p, "wiki_write") || !mcpScopedTool(&p, "wiki_read") || mcpScopedTool(&p, "wiki_delete") {
 		t.Fatal("write credential tool scope")
@@ -507,9 +482,11 @@ func TestMCPPersistentMintListRevokeLifecycle(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"revoked_at"`) {
 		t.Fatalf("revoked credentials stay listed: %s", rec.Body)
 	}
-	for _, m := range []string{"PUT", "PATCH", "POST", "GET"} {
+	for _, m := range []string{"PUT", "POST", "GET"} {
 		e.expect(e.call(alice, persistentCredentialR, m, "", id), 405)
 	}
+	// PATCH edits projects/mode of a live key; this one is revoked.
+	e.expect(e.call(alice, persistentCredentialR, "PATCH", `{"project_ids":["pa"],"mode":"read"}`, id), 404)
 	for _, m := range []string{"PUT", "DELETE", "PATCH"} {
 		e.expect(e.call(alice, persistentCredentials, m, "", ""), 405)
 	}
@@ -539,7 +516,7 @@ func TestMCPPersistentMintValidation(t *testing.T) {
 		`{"name":"n","project_ids":["pa"],"mode":"WRITE"}`,
 		`{"name":"n","project_ids":["pa"],"ttl_seconds":59}`,
 		`{"name":"n","project_ids":["pa"],"ttl_seconds":-1}`,
-		`{"name":"n","project_ids":["pa"],"ttl_seconds":2592001}`,
+		`{"name":"n","project_ids":["pa"],"ttl_seconds":15552001}`, // 180 days + 1s
 		`{"name":"n","project_ids":["pa"],"ttl_seconds":1.5}`,
 		`{"name":"n","project_ids":["pa"],"admin":true}`,
 		`{"name":"n","project_ids":["pa"],"owner_id":"someone"}`,
@@ -563,17 +540,17 @@ func TestMCPPersistentMintValidation(t *testing.T) {
 		return x.Sub(c)
 	}
 	out := e.mint(alice, `{"name":"defaults","project_ids":["pa"]}`, http.StatusCreated)
-	if out["mode"] != "read" || span(out) != 7*24*time.Hour {
+	if out["mode"] != "read" || span(out) != 30*24*time.Hour {
 		t.Fatalf("defaults: %v", out)
 	}
 	if out := e.mint(alice, `{"name":"min","project_ids":["pa"],"mode":"read","ttl_seconds":60}`, http.StatusCreated); span(out) != time.Minute {
 		t.Fatalf("min ttl: %v", out)
 	}
-	if out := e.mint(alice, `{"name":"max","project_ids":["pa"],"ttl_seconds":2592000}`, http.StatusCreated); span(out) != 30*24*time.Hour {
+	if out := e.mint(alice, `{"name":"max","project_ids":["pa"],"ttl_seconds":15552000}`, http.StatusCreated); span(out) != 180*24*time.Hour {
 		t.Fatalf("max ttl: %v", out)
 	}
 
-	// Credentials and delegations can never manage credentials.
+	// MCP credentials can never manage credentials.
 	for name, pr := range map[string]*Principal{
 		"scoped":     {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPProjects: []string{"pa"}},
 		"credential": {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPDelegationID: "pat_x"},
@@ -653,7 +630,9 @@ func TestMCPPersistentMintCaps(t *testing.T) {
 	e.mint(carol, body, http.StatusTooManyRequests)
 
 	// Expired credentials stop counting as active but still count in the total.
-	e.clk.advance(8 * 24 * time.Hour)
+	// (Keep carol inside the login window: it is unrelated to the caps.)
+	e.clk.advance(mcpPersistentDefaultTTL + 24*time.Hour)
+	e.exec(`UPDATE users SET last_login_at=? WHERE id=?`, e.clk.now(), carolID)
 	e.mint(carol, body, http.StatusCreated)
 	if n := e.count(`SELECT count(*) FROM mcp_credentials WHERE owner_id=?`, carolID); n != mcpPersistentActiveCap+2 {
 		t.Fatalf("carol rows: %d", n)
@@ -873,38 +852,45 @@ func TestMCPPersistentAuthenticateStates(t *testing.T) {
 	e.mustFail(svcToken, http.StatusForbidden)
 }
 
-func TestMCPPersistentProviderEveryRequest(t *testing.T) {
+func TestMCPPersistentLoginWindow(t *testing.T) {
 	e := newPersistentEnv(t)
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	id, token := e.mintToken(alice, `{"name":"n","project_ids":["pa"]}`)
+	id, token := e.mintToken(alice, `{"name":"n","project_ids":["pa"],"ttl_seconds":15552000}`)
 
+	// Evaluated on every request, from the database only.
 	base := e.prov.count()
 	for i := 1; i <= 3; i++ {
 		e.mustAuth(token)
-		if e.prov.count() != base+i || e.prov.last() != e.iss+"|alice" {
-			t.Fatalf("every request must consult the provider: %d %q", e.prov.count(), e.prov.last())
+		if e.prov.count() != base+i {
+			t.Fatalf("every request must be re-verified: %d", e.prov.count()-base)
 		}
 	}
 
-	// A denial is never cached either way, and never revokes by itself.
-	e.prov.deny("alice", true)
-	e.mustFail(token, http.StatusForbidden)
-	e.prov.deny("alice", false)
+	// Exactly at the end of the window the owner is no longer admitted.
+	e.clk.advance(mcpPersistentLoginWindow - time.Second)
 	e.mustAuth(token)
+	e.clk.advance(time.Second)
+	e.mustFail(token, http.StatusForbidden)
 
-	// Provider faults fail closed without changing the credential.
-	e.prov.setFault(true)
-	e.mustFail(token, http.StatusServiceUnavailable)
-	e.prov.setFault(false)
+	// A new interactive login re-admits the same credential; nothing was revoked.
+	e.exec(`UPDATE users SET last_login_at=? WHERE id=?`, e.clk.now(), aliceID)
 	e.mustAuth(token)
 	if e.text(`SELECT coalesce(revoked_at::text,'') FROM mcp_credentials WHERE id=?`, id) != "" {
-		t.Fatal("provider outcomes must not alter the credential")
+		t.Fatal("an expired login window must not alter the credential")
 	}
+
+	// Never logged in (e.g. before the column existed) is not admitted.
+	e.exec(`UPDATE users SET last_login_at=NULL WHERE id=?`, aliceID)
+	e.mustFail(token, http.StatusForbidden)
+
+	// A login time in the future (clock skew) still counts as recent.
+	e.exec(`UPDATE users SET last_login_at=? WHERE id=?`, e.clk.now().Add(time.Hour), aliceID)
+	e.mustAuth(token)
 }
 
-func TestMCPPersistentProviderRequiredToMintNotToRevoke(t *testing.T) {
+func TestMCPPersistentLoginWindowGovernsUseNotManagement(t *testing.T) {
 	e := newPersistentEnv(t)
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
@@ -916,41 +902,24 @@ func TestMCPPersistentProviderRequiredToMintNotToRevoke(t *testing.T) {
 	svcA := e.account(alice, "a")
 	svcB := e.account(alice, "b")
 	_, svcTokenA := e.mintToken(alice, `{"name":"n","project_ids":["pa"],"service_account_id":"`+svcA+`"}`)
-	rows := e.count(`SELECT count(*) FROM mcp_credentials`)
-	accounts := e.count(`SELECT count(*) FROM mcp_service_accounts`)
 
-	// Denied or failing provider: nothing new can be created.
-	e.prov.deny("alice", true)
-	e.mint(alice, body, http.StatusForbidden)
-	e.expect(e.call(alice, persistentAccounts, "POST", `{"name":"x"}`, ""), 403)
-	e.prov.deny("alice", false)
-	e.prov.setFault(true)
-	e.mint(alice, body, http.StatusServiceUnavailable)
-	e.expect(e.call(alice, persistentAccounts, "POST", `{"name":"x"}`, ""), 503)
-	if e.count(`SELECT count(*) FROM mcp_credentials`) != rows || e.count(`SELECT count(*) FROM mcp_service_accounts`) != accounts {
-		t.Fatal("refused creation must store nothing")
-	}
-
-	// ...but listing, revocation and disabling keep working, without asking it.
-	asked := e.prov.count()
+	// Listing, revocation and disabling never depend on the login window.
+	e.clk.advance(mcpPersistentLoginWindow + time.Hour)
+	e.mustFail(tokenA, http.StatusForbidden)
 	e.expect(e.call(alice, persistentCredentials, "GET", "", ""), 200)
 	e.expect(e.call(alice, persistentAccounts, "GET", "", ""), 200)
 	e.expect(e.call(alice, persistentCredentialR, "DELETE", "", credA), 204)
 	e.expect(e.call(alice, persistentAccountR, "DELETE", "", svcA), 204)
-	if e.prov.count() != asked {
-		t.Fatal("revocation must not depend on the provider")
-	}
-	e.prov.setFault(false)
+	e.exec(`UPDATE users SET last_login_at=? WHERE id=?`, e.clk.now(), aliceID)
 	e.mustFail(tokenA, http.StatusUnauthorized)
 	e.mustFail(svcTokenA, http.StatusUnauthorized)
 
-	// Feature switched off: management reads and revocation still work, creation and
-	// authentication are refused.
+	// Feature switched off (no database): management reads and revocation still
+	// work, creation and authentication are refused.
 	live := e.mintTokenFor(alice, body)
 	for name, off := range map[string]*mcpPersistentAccess{
 		"nil":         nil,
-		"no provider": {db: e.root.DB, now: e.clk.now},
-		"no database": {admission: e.prov, now: e.clk.now},
+		"no database": {now: e.clk.now},
 	} {
 		saved := e.x.a.persistent
 		e.x.a.persistent = off
@@ -973,7 +942,7 @@ func TestMCPPersistentProviderRequiredToMintNotToRevoke(t *testing.T) {
 	e.x.a.persistent = nil
 	e.expect(e.call(alice, persistentAccountR, "DELETE", "", svcB), 204)
 	e.expect(e.call(alice, persistentCredentialR, "DELETE", "", credB), 204)
-	e.x.a.persistent = &mcpPersistentAccess{db: e.root.DB, admission: e.prov, now: e.clk.now}
+	e.x.a.persistent = e.access()
 	e.mustAuth(live) // revoking credB and disabling svcB touched nothing else
 }
 
@@ -990,7 +959,6 @@ func TestMCPPersistentMintRequiresLiveIdentity(t *testing.T) {
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
 	body := `{"name":"n","project_ids":["pa"]}`
-	asked := e.prov.count()
 
 	for name, pr := range map[string]*Principal{
 		"subject differs from the id": {ID: aliceID, Issuer: e.iss, Subject: "mallory"},
@@ -1011,10 +979,6 @@ func TestMCPPersistentMintRequiresLiveIdentity(t *testing.T) {
 			t.Fatalf("%s: account %d %s", name, rec.Code, rec.Body)
 		}
 	}
-	if e.prov.count() != asked {
-		t.Fatal("the provider must only be asked about a consistent identity")
-	}
-
 	// A locally disabled owner can do nothing, including listing and revoking.
 	id, token := e.mintToken(alice, body)
 	e.exec(`UPDATE users SET disabled=1 WHERE id=?`, aliceID)
@@ -1081,7 +1045,7 @@ func TestMCPPersistentRateLimit(t *testing.T) {
 		e.mustAuth(tokenA)
 	}
 	if e.prov.count()-asked != mcpPersistentRateLimit {
-		t.Fatalf("provider calls: %d", e.prov.count()-asked)
+		t.Fatalf("verified requests: %d", e.prov.count()-asked)
 	}
 	_, rec, ok := persistentAuthOn(e.x.a, tokenA)
 	if ok || rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "60" {
@@ -1089,7 +1053,7 @@ func TestMCPPersistentRateLimit(t *testing.T) {
 	}
 	e.mustFail(tokenA, http.StatusTooManyRequests)
 	if e.prov.count()-asked != mcpPersistentRateLimit {
-		t.Fatal("rate limited requests must not reach the provider")
+		t.Fatal("rate limited requests must stop before the final re-check")
 	}
 
 	// Limits are per credential and per minute (window boundary inclusive).
@@ -1140,11 +1104,11 @@ func TestMCPPersistentRateLimitIsAtomicUnderConcurrency(t *testing.T) {
 		t.Fatalf("outcomes: %v", codes)
 	}
 	if e.prov.count()-asked != mcpPersistentRateLimit {
-		t.Fatalf("provider calls %d", e.prov.count()-asked)
+		t.Fatalf("verified requests %d", e.prov.count()-asked)
 	}
 }
 
-func TestMCPPersistentChangesDuringProviderCheckAreHonoured(t *testing.T) {
+func TestMCPPersistentChangesBetweenChecksAreHonoured(t *testing.T) {
 	e := newPersistentEnv(t)
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
@@ -1153,7 +1117,7 @@ func TestMCPPersistentChangesDuringProviderCheckAreHonoured(t *testing.T) {
 	svc := e.account(alice, "bot")
 	defer e.prov.setHook(nil)
 
-	// Revoked while the provider is being asked.
+	// Revoked between the first check and the final re-read.
 	id, token := e.mintToken(alice, body)
 	e.prov.setHook(func() { e.exec(`UPDATE mcp_credentials SET revoked_at=? WHERE id=?`, e.clk.now(), id) })
 	e.mustFail(token, http.StatusUnauthorized)
@@ -1176,6 +1140,13 @@ func TestMCPPersistentChangesDuringProviderCheckAreHonoured(t *testing.T) {
 	_, token = e.mintToken(alice, body)
 	e.prov.setHook(func() { e.clk.advance(time.Hour) })
 	e.mustFail(token, http.StatusUnauthorized)
+	e.prov.setHook(nil)
+
+	// Login window elapsed meanwhile.
+	_, token = e.mintToken(alice, `{"name":"n","project_ids":["pa"],"ttl_seconds":15552000}`)
+	e.exec(`UPDATE users SET last_login_at=? WHERE id=?`, e.clk.now(), aliceID)
+	e.prov.setHook(func() { e.clk.advance(mcpPersistentLoginWindow) })
+	e.mustFail(token, http.StatusForbidden)
 }
 
 func TestMCPPersistentSurvivesRestartWithoutCache(t *testing.T) {
@@ -1195,7 +1166,10 @@ func TestMCPPersistentSurvivesRestartWithoutCache(t *testing.T) {
 	if restarted == e.x.a {
 		t.Fatal("restart must use a new AuthService")
 	}
-	restarted.persistent = &mcpPersistentAccess{db: e.root.DB, admission: e.prov, now: e.clk.now}
+	if restarted.persistent == nil || restarted.persistent.db != e.root.DB {
+		t.Fatal("a new service enables persistent credentials from its database")
+	}
+	restarted.persistent = e.access()
 	p, rec, ok := persistentAuthOn(restarted, token)
 	if !ok {
 		t.Fatalf("token must survive a restart: %d %s", rec.Code, rec.Body)
@@ -1212,7 +1186,7 @@ func TestMCPPersistentSurvivesRestartWithoutCache(t *testing.T) {
 		t.Fatal("unrelated credential must keep working")
 	}
 
-	// A restarted service without the provider configured refuses everything.
+	// A restarted service without a database refuses everything.
 	restarted.persistent = nil
 	e.mustFailOn(restarted, other, http.StatusServiceUnavailable)
 }

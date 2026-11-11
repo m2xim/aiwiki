@@ -53,6 +53,46 @@ type authMockIssuer struct {
 	codes      map[string]authCode
 	introspect map[string]map[string]any
 	down       bool
+	// refresh tokens: token -> grant; refreshCalls counts refresh_token grants.
+	refreshes    map[string]authGrant
+	refreshCalls int
+	refreshTTL   time.Duration    // refresh_expires_in; 0 omits it
+	clock        func() time.Time // token issue time; nil means time.Now
+}
+
+// now is called with m.mu held (bearer); clock is set once before requests
+// and is itself goroutine-safe, so it is read without the lock.
+func (m *authMockIssuer) now() time.Time {
+	if m.clock == nil {
+		return time.Now()
+	}
+	return m.clock()
+}
+
+// revokeRefreshes ends every refresh token (SSO session ended).
+func (m *authMockIssuer) revokeRefreshes() {
+	m.mu.Lock()
+	m.refreshes = map[string]authGrant{}
+	m.mu.Unlock()
+}
+
+func (m *authMockIssuer) refreshCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.refreshCalls
+}
+
+func (m *authMockIssuer) newRefresh(g authGrant) string {
+	b := make([]byte, 12)
+	rand.Read(b)
+	t := "rt_" + base64.RawURLEncoding.EncodeToString(b)
+	m.mu.Lock()
+	if m.refreshes == nil {
+		m.refreshes = map[string]authGrant{}
+	}
+	m.refreshes[t] = g
+	m.mu.Unlock()
+	return t
 }
 
 type authCode struct {
@@ -116,7 +156,7 @@ func (m *authMockIssuer) accessClaims(g authGrant) map[string]any {
 	c := map[string]any{
 		"iss": m.srv.URL, "aud": authTestClientID, "sub": g.sub,
 		"jti": newID(),
-		"iat": time.Now().Add(-time.Second).Unix(), "exp": time.Now().Add(ttl).Unix(),
+		"iat": m.now().Add(-time.Second).Unix(), "exp": m.now().Add(ttl).Unix(),
 		"typ": "Bearer", "name": g.name,
 	}
 	for k, v := range g.claims {
@@ -178,6 +218,34 @@ func (m *authMockIssuer) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.ParseForm()
+	if r.Form.Get("grant_type") == "refresh_token" {
+		m.mu.Lock()
+		m.refreshCalls++
+		if m.down { // an outage does not consume the refresh token
+			m.mu.Unlock()
+			http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
+			return
+		}
+		g, found := m.refreshes[r.Form.Get("refresh_token")]
+		delete(m.refreshes, r.Form.Get("refresh_token")) // single use, rotated
+		m.mu.Unlock()
+		if !found {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		ttl := g.tokenTTL
+		if ttl == 0 {
+			ttl = 10 * time.Minute
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token": m.bearer(g), "token_type": "Bearer", "expires_in": int(ttl.Seconds()),
+			"refresh_token": m.newRefresh(g),
+		})
+		return
+	}
 	m.mu.Lock()
 	ac, found := m.codes[r.Form.Get("code")]
 	delete(m.codes, r.Form.Get("code"))
@@ -200,11 +268,17 @@ func (m *authMockIssuer) handleToken(w http.ResponseWriter, r *http.Request) {
 	if ttl == 0 {
 		ttl = 10 * time.Minute
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"access_token": access, "token_type": "Bearer", "expires_in": int(ttl.Seconds()),
-		"id_token": m.sign(m.signer, idc),
-	})
+		"id_token": m.sign(m.signer, idc), "refresh_token": m.newRefresh(g),
+	}
+	m.mu.Lock()
+	if m.refreshTTL > 0 {
+		resp["refresh_expires_in"] = int(m.refreshTTL.Seconds())
+	}
+	m.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (m *authMockIssuer) handleIntrospect(w http.ResponseWriter, r *http.Request) {
@@ -229,9 +303,10 @@ func (m *authMockIssuer) handleIntrospect(w http.ResponseWriter, r *http.Request
 }
 
 type authFakeUsers struct {
-	mu    sync.Mutex
-	users map[string]*Principal
-	off   map[string]bool
+	mu     sync.Mutex
+	users  map[string]*Principal
+	off    map[string]bool
+	logins map[string]time.Time
 }
 
 func (f *authFakeUsers) upsert(_ context.Context, p Principal) (bool, error) {
@@ -240,6 +315,16 @@ func (f *authFakeUsers) upsert(_ context.Context, p Principal) (bool, error) {
 	cp := p
 	f.users[p.ID] = &cp
 	return f.off[p.ID], nil
+}
+
+func (f *authFakeUsers) loggedIn(_ context.Context, id string, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.logins == nil {
+		f.logins = map[string]time.Time{}
+	}
+	f.logins[id] = at
+	return nil
 }
 
 func (f *authFakeUsers) find(_ context.Context, id string) (string, bool, bool, error) {

@@ -1,13 +1,18 @@
 package server
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const mcpPersistentPrefix = "aiwiki_pat_"
 
 type mcpPersistentAccess struct {
-	db        *database // separate authentication pool, never the request-scoped view
-	admission mcpAdmissionProvider
-	now       func() time.Time
+	db  *database // separate authentication pool, never the request-scoped view
+	now func() time.Time
+	// checkpoint, when set (tests only), runs between the rate-limited first
+	// verification and the final re-read of a credential.
+	checkpoint func()
 }
 
 type mcpCredential struct {
@@ -42,4 +47,21 @@ func mcpScopedTool(p *Principal, name string) bool {
 		return true
 	}
 	return false
+}
+
+func mcpReadTool(name string) bool {
+	switch name {
+	case "wiki_bootstrap", "wiki_search", "wiki_search_sections", "wiki_read", "wiki_links", "wiki_history", "wiki_comments", "wiki_artifact_list", "wiki_artifact_read":
+		return true
+	}
+	return false
+}
+
+func mcpAuditName(value string) string {
+	value = strings.ReplaceAll(strings.ToValidUTF8(value, ""), "\x00", "")
+	runes := []rune(value)
+	if len(runes) > 100 {
+		return string(runes[:100])
+	}
+	return value
 }

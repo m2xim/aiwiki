@@ -5,7 +5,6 @@ import "time"
 // CorporateConfig enables the isolated PostgreSQL/OIDC edition.
 type CorporateConfig struct {
 	MCPOAuth             MCPOAuthConfig
-	Admission            KeycloakAdmissionConfig
 	S3                   S3Config
 	DatabaseURL          string
 	MigrationDatabaseURL string
@@ -18,7 +17,13 @@ type CorporateConfig struct {
 	AdminRole            string
 	RolesClaim           string
 	SessionTTL           time.Duration
-	AllowInsecureHTTP    bool
+	// SessionRefresh keeps a browser session alive with the refresh token
+	// (refresh_token grant) instead of ending it with the access token. The
+	// session then lasts until SessionMaxAge, the refresh token's own expiry,
+	// or a refused refresh (SSO session ended, user disabled), whichever first.
+	SessionRefresh    bool
+	SessionMaxAge     time.Duration
+	AllowInsecureHTTP bool
 	// SpaceQuotaBytes is the default storage limit per space; 0 means unlimited.
 	SpaceQuotaBytes int64
 }

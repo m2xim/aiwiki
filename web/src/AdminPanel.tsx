@@ -2,7 +2,6 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Archive, ArrowLeft, ChevronDown, ChevronRight, FolderInput, Pencil, Plus, RefreshCw, RotateCcw, Shield } from 'lucide-react';
 import { AccessGrant, CatalogSpace, client, Project, Team, TeamMember, UserAccessSnapshot } from './api';
 import { MoveDialog } from './MoveDialog';
-import MCPDelegations from './MCPDelegations';
 import MCPPersistentAccess from './MCPPersistentAccess';
 import { CatalogKind, CatalogSort, DEFAULT_CATALOG_QUERY, catalogQueryString, parseCatalogQuery } from './catalogQuery';
 import { replaceUrl } from './nav';
@@ -371,7 +370,7 @@ export function AdminPanel({ onClose, userId, isAdmin, personalMode = false, act
       {moveNotice && <div className="corp-admin-notice" role="status">{moveNotice}</div>}
       {moveProject && <MoveDialog subject={{ kind: 'project', project: moveProject }} author="" onClose={() => setMoveProject(null)} onDone={() => { const moved = moveProject; setMoveProject(null); setMoveNotice(`Проект «${moved.name}» перемещён`); void refresh(); }}/>}
       <main aria-busy={busy}>
-        {tab === 'tokens' && <><MCPPersistentAccess/><MCPDelegations/></>}
+        {tab === 'tokens' && <MCPPersistentAccess/>}
         {tab === 'settings' && isAdmin && <ArtifactSettings/>}
         {tab === 'catalog' && <>
           <form className="corp-admin-create" onSubmit={submit(() => void create())}><input aria-label="Название пространства" value={name} onChange={e => setName(e.target.value)} placeholder="Название пространства"/><input aria-label="Описание пространства" value={description} onChange={e => setDescription(e.target.value)} placeholder="Описание (необязательно)"/>{!personalMode && <select aria-label="Тип пространства" value={personal ? 'personal' : 'team'} onChange={e => setPersonal(e.target.value === 'personal')}><option value="personal">Личное</option>{isAdmin && <option value="team">Командное</option>}</select>}<button type="submit" disabled={busy || !name.trim()}><Plus size={15}/>Создать</button></form>

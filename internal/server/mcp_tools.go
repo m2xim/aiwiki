@@ -136,10 +136,7 @@ func (s *Server) callTool(params map[string]json.RawMessage) any {
 	var name string
 	_ = json.Unmarshal(params["name"], &name)
 	if !mcpScopedTool(s.principal, name) {
-		if strings.HasPrefix(s.principal.MCPDelegationID, "pat_") {
-			return toolErr("MCP credential is read-only or does not permit this tool")
-		}
-		return toolErr("temporary MCP access is read-only")
+		return toolErr("MCP credential is read-only or does not permit this tool")
 	}
 	var args map[string]json.RawMessage
 	if raw, ok := params["arguments"]; ok && strings.TrimSpace(string(raw)) != "null" {
@@ -602,6 +599,30 @@ func (s *Server) toolBootstrap(args map[string]json.RawMessage) any {
 		live = "deleted_at IS NULL AND status<>'archived' AND corporate_container_writable(space_id,project_id)"
 	}
 	out := map[string]any{"spaces": spaces}
+	// A project-scoped credential cannot see whole spaces, so it would never
+	// learn the space_id its projects live in (required by wiki_write and
+	// wiki_bootstrap). List the live projects it can see: RLS already limits
+	// this to the credential's exact projects; nothing new becomes visible.
+	if s.principal != nil && s.principal.MCPProjects != nil {
+		type scopedProject struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			SpaceID string `json:"space_id"`
+		}
+		projects := []scopedProject{}
+		prow, err := s.DB.Query("SELECT id,name,space_id FROM projects WHERE archived_at IS NULL ORDER BY name,id")
+		if err != nil {
+			return toolErr("database error")
+		}
+		for prow.Next() {
+			var p scopedProject
+			if prow.Scan(&p.ID, &p.Name, &p.SpaceID) == nil {
+				projects = append(projects, p)
+			}
+		}
+		prow.Close()
+		out["projects"] = projects
+	}
 	var instructions []Article
 	recentWhere, recentArgs := live, []any{}
 	if space == "" {
@@ -609,6 +630,9 @@ func (s *Server) toolBootstrap(args map[string]json.RawMessage) any {
 		others := s.selectArticles("SELECT " + articleColumns + " FROM articles WHERE " + live + " AND pinned=1 AND space_id<>'general' ORDER BY space_id,title,id")
 		out["other_pinned"] = compactAll(others)
 		out["guide"] = "Only pinned rules of the general space are included in full. other_pinned lists pinned articles of other spaces without bodies. Call wiki_bootstrap again with the space_id of your project to get its pinned rules in full, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates."
+		if _, ok := out["projects"]; ok {
+			out["guide"] = "This credential is limited to the listed projects. Call wiki_bootstrap again with the space_id of one of them to get its pinned rules, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates. To create an article pass that project's space_id and project_id."
+		}
 	} else {
 		instructions = s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND (space_id='general' OR space_id=?) ORDER BY title,id", space)
 		recentWhere += " AND (space_id='general' OR space_id=?)"
