@@ -36,6 +36,11 @@ Responses and errors never expose the secret.
 Open the administration page's MCP access tab. Any admitted user can manage their
 own credentials and service accounts. Credentials have a name, 1–20 exact projects,
 `read` or `write` mode, and an expiry (default 30 days, maximum 180 days).
+The owner can later change the projects and mode of a live credential
+(`PATCH /api/mcp/credentials/{id}` with `{project_ids, mode}`); the secret stays
+the same. The new scope is checked against the owner's current rights exactly as
+at issuance and audited as `mcp_credential.update` with the previous values.
+Name, owner, service account and expiry cannot be changed; revocation is final.
 At issuance, the user must currently hold Reader access to every selected project
 for read mode, or Editor access for write mode. Archived containers are excluded.
 No parent, sibling, descendant, or space-level access is implied by selection.

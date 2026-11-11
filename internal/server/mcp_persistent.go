@@ -404,24 +404,8 @@ func (s *Server) mcpCredentialMint(w http.ResponseWriter, r *http.Request, owner
 				return err
 			}
 		}
-		// Exact, currently active projects the owner holds enough rights on now.
-		for _, id := range cred.ProjectIDs {
-			var space string
-			var live bool
-			err := tx.QueryRow(`SELECT space_id,corporate_container_writable(space_id,id) FROM projects WHERE id=?`, id).Scan(&space, &live)
-			if errors.Is(err, sql.ErrNoRows) || err == nil && !live {
-				return mcpPersistentFail(http.StatusForbidden, "forbidden")
-			}
-			if err != nil {
-				return err
-			}
-			var rank int
-			if err = tx.QueryRow(`SELECT coalesce(corporate_role_rank(corporate_effective_role(?,?,?)),0)`, owner, space, id).Scan(&rank); err != nil {
-				return err
-			}
-			if rank < minRank {
-				return mcpPersistentFail(http.StatusForbidden, "forbidden")
-			}
+		if err := mcpPersistentCheckProjects(tx, owner, cred.ProjectIDs, minRank); err != nil {
+			return err
 		}
 		var active, total int
 		if err := tx.QueryRow(`SELECT count(*) FILTER (WHERE revoked_at IS NULL AND expires_at>?),count(*) FROM mcp_credentials WHERE owner_id=?`, now, owner).Scan(&active, &total); err != nil {
@@ -446,10 +430,123 @@ func (s *Server) mcpCredentialMint(w http.ResponseWriter, r *http.Request, owner
 	writeJSON(w, http.StatusCreated, mcpCredentialIssued{mcpCredential: cred, Token: token})
 }
 
+// mcpPersistentCheckProjects requires every project to be live and the owner to
+// hold at least minRank on it right now (Reader for read, Editor for write).
+func mcpPersistentCheckProjects(tx *transaction, owner string, projects []string, minRank int) error {
+	for _, id := range projects {
+		var space string
+		var live bool
+		err := tx.QueryRow(`SELECT space_id,corporate_container_writable(space_id,id) FROM projects WHERE id=?`, id).Scan(&space, &live)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && !live {
+			return mcpPersistentFail(http.StatusForbidden, "forbidden")
+		}
+		if err != nil {
+			return err
+		}
+		var rank int
+		if err = tx.QueryRow(`SELECT coalesce(corporate_role_rank(corporate_effective_role(?,?,?)),0)`, owner, space, id).Scan(&rank); err != nil {
+			return err
+		}
+		if rank < minRank {
+			return mcpPersistentFail(http.StatusForbidden, "forbidden")
+		}
+	}
+	return nil
+}
+
+type mcpCredentialUpdate struct {
+	ProjectIDs []string `json:"project_ids"`
+	Mode       string   `json:"mode"`
+}
+
+// mcpCredentialUpdate handles PATCH /api/mcp/credentials/{id}: the owner may
+// change the projects and mode of a live credential. Everything else (owner,
+// secret, service account, expiry) stays immutable. The new scope is checked
+// against the owner's current rights exactly as at issuance.
+func (s *Server) mcpCredentialUpdate(w http.ResponseWriter, r *http.Request) {
+	owner, ok := s.mcpPersistentOwner(w, r)
+	if !ok {
+		return
+	}
+	if s.persistentAccess() == nil {
+		apiErr(w, http.StatusServiceUnavailable, "persistent MCP access is not configured")
+		return
+	}
+	id := r.PathValue("id")
+	if !validPathID(id) {
+		apiErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	var raw mcpCredentialUpdate
+	if err := corporateDecode(r, &raw); err != nil {
+		apiErr(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	// Reuse issuance validation for projects and mode.
+	in, _, ok := mcpCredentialValidate(mcpCredentialRequest{Name: "x", ProjectIDs: raw.ProjectIDs, Mode: raw.Mode})
+	if !ok || raw.Mode == "" {
+		apiErr(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if err := s.mcpPersistentAdmit(); err != nil {
+		mcpPersistentWriteErr(w, err)
+		return
+	}
+	projectsJSON, err := json.Marshal(in.ProjectIDs)
+	if err != nil {
+		mcpPersistentWriteErr(w, err)
+		return
+	}
+	minRank := mcpPersistentReadRank
+	if in.Mode == "write" {
+		minRank = mcpPersistentWriteRank
+	}
+	now := s.persistentNow()
+	var out mcpCredential
+	err = s.mcpPersistentTx(func(tx *transaction) error {
+		if err := s.mcpPersistentLockOwner(tx, owner, true); err != nil {
+			return err
+		}
+		var one int
+		err := tx.QueryRow(`SELECT 1 FROM mcp_credentials WHERE id=? AND owner_id=? AND revoked_at IS NULL AND expires_at>? FOR UPDATE`, id, owner, now).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return mcpPersistentFail(http.StatusNotFound, "not found")
+		}
+		if err != nil {
+			return err
+		}
+		// Friendly 403 first; the database function re-checks everything and
+		// is the only path allowed to change the scope.
+		if err := mcpPersistentCheckProjects(tx, owner, in.ProjectIDs, minRank); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`SELECT corporate_mcp_credential_set_scope(?,?::jsonb,?)`, id, string(projectsJSON), in.Mode); err != nil {
+			return err
+		}
+		var created, expires time.Time
+		var name, service string
+		if err := tx.QueryRow(`SELECT name,service_account_id,created_at,expires_at FROM mcp_credentials WHERE id=? AND owner_id=?`, id, owner).Scan(&name, &service, &created, &expires); err != nil {
+			return err
+		}
+		out = mcpCredential{ID: id, Name: name, ServiceAccountID: service, ProjectIDs: in.ProjectIDs, Mode: in.Mode, CreatedAt: created.UTC(), ExpiresAt: expires.UTC()}
+		return nil
+	})
+	if err != nil {
+		mcpPersistentWriteErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // mcpCredential handles DELETE /api/mcp/credentials/{id}. It needs neither the
 // feature nor the identity provider: revocation must always be possible.
+// PATCH changes projects and mode (mcpCredentialUpdate).
 func (s *Server) mcpCredential(w http.ResponseWriter, r *http.Request) {
 	mcpPersistentNoStore(w)
+	if r.Method == http.MethodPatch {
+		s.mcpCredentialUpdate(w, r)
+		return
+	}
 	if r.Method != http.MethodDelete {
 		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Copy, RefreshCw, Trash2 } from 'lucide-react';
+import { Copy, Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { client, MCPCredential, MCPServiceAccount, Project } from './api';
 import './MCPPersistentAccess.css';
 
@@ -126,6 +126,34 @@ export default function MCPPersistentAccess() {
     }
   };
 
+  const [editing, setEditing] = useState<{ id: string; mode: 'read' | 'write'; projectIds: string[] } | null>(null);
+
+  const startEdit = (credential: MCPCredential) => {
+    setError('');
+    setNotice('');
+    setEditing({ id: credential.id, mode: credential.mode, projectIds: [...credential.project_ids] });
+  };
+
+  const saveEdit = async () => {
+    if (!editing || !editing.projectIds.length || editing.projectIds.length > 20) return;
+    if (editing.mode === 'write' && editing.projectIds.some(id => !projectCanWrite(id))) return;
+    setSecret('');
+    setError('');
+    setNotice('');
+    setBusy(true);
+    try {
+      const updated = await client.updateMCPCredential(editing.id, { project_ids: editing.projectIds, mode: editing.mode });
+      if (!mounted.current) return;
+      setCredentials(current => current.map(item => item.id === updated.id ? { ...item, ...updated } : item));
+      setEditing(null);
+      setNotice('Ключ обновлён. Секрет прежний — в клиенте ничего менять не нужно.');
+    } catch (reason) {
+      if (mounted.current) setError(explainError(reason));
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  };
+
   const revokeCredential = async (id: string) => {
     setSecret('');
     setError('');
@@ -225,7 +253,7 @@ export default function MCPPersistentAccess() {
     </section>}
 
     {credentialsEnabled === true && <form className="mcp-persistent-form" onSubmit={event => void createCredential(event)}>
-      <h3>Создать постоянный ключ</h3>
+      <h3>Создать ключ</h3>
       <label className="mcp-persistent-label">Название ключа
         <input value={name} onChange={event => setName(event.target.value)} maxLength={80} required aria-describedby="mcp-persistent-name-limit" />
       </label>
@@ -288,7 +316,7 @@ export default function MCPPersistentAccess() {
     </section>
 
     <section className="mcp-persistent-list" aria-labelledby="mcp-persistent-list-title">
-      <h3 id="mcp-persistent-list-title">Мои постоянные ключи</h3>
+      <h3 id="mcp-persistent-list-title">Мои ключи</h3>
       {credentials.length ? <div className="mcp-persistent-cards">{credentials.map(credential => {
         const expired = Date.parse(credential.expires_at) <= Date.now();
         const revoked = Boolean(credential.revoked_at);
@@ -302,9 +330,36 @@ export default function MCPPersistentAccess() {
             <p><strong>Создан:</strong> <time dateTime={credential.created_at}>{dateTime(credential.created_at)}</time></p>
             <p><strong>Истекает:</strong> <time dateTime={credential.expires_at}>{dateTime(credential.expires_at)}</time></p>
           </div>
-          {!revoked && !expired && <button type="button" className="mcp-persistent-danger" onClick={() => void revokeCredential(credential.id)} disabled={busy}><Trash2 size={15}/>Отозвать</button>}
+          {editing?.id === credential.id && <div className="mcp-persistent-form mcp-persistent-edit">
+            <fieldset>
+              <legend>Режим доступа</legend>
+              <label className="mcp-persistent-choice"><input type="radio" name={`mcp-edit-mode-${credential.id}`} checked={editing.mode === 'read'} onChange={() => setEditing({ ...editing, mode: 'read' })} disabled={busy}/>Только чтение</label>
+              <label className="mcp-persistent-choice"><input type="radio" name={`mcp-edit-mode-${credential.id}`} checked={editing.mode === 'write'} onChange={() => setEditing({ ...editing, mode: 'write', projectIds: editing.projectIds.filter(projectCanWrite) })} disabled={busy}/>Чтение и запись</label>
+            </fieldset>
+            <fieldset>
+              <legend>Проекты <span>Выбрано: {editing.projectIds.length} из 20</span></legend>
+              <div className="mcp-persistent-projects">
+                {projects.map(project => {
+                  const writable = canWrite(project);
+                  const checked = editing.projectIds.includes(project.id);
+                  return <label key={project.id} className="mcp-persistent-project">
+                    <input type="checkbox" checked={checked} disabled={busy || (editing.mode === 'write' && !writable) || (!checked && editing.projectIds.length >= 20)} onChange={event => setEditing({ ...editing, projectIds: event.target.checked ? [...editing.projectIds, project.id] : editing.projectIds.filter(id => id !== project.id) })} />
+                    <span>{project.name}{editing.mode === 'write' && !writable ? ' · только чтение по вашей роли' : ''}</span>
+                  </label>;
+                })}
+              </div>
+            </fieldset>
+            <div className="mcp-persistent-actions">
+              <button type="button" className="mcp-persistent-primary" onClick={() => void saveEdit()} disabled={busy || editing.projectIds.length < 1 || editing.projectIds.length > 20 || (editing.mode === 'write' && editing.projectIds.some(id => !projectCanWrite(id)))}>Сохранить</button>
+              <button type="button" className="mcp-persistent-secondary" onClick={() => setEditing(null)} disabled={busy}>Отмена</button>
+            </div>
+          </div>}
+          {!revoked && !expired && editing?.id !== credential.id && <div className="mcp-persistent-actions">
+            <button type="button" className="mcp-persistent-secondary" onClick={() => startEdit(credential)} disabled={busy}><Pencil size={15}/>Изменить</button>
+            <button type="button" className="mcp-persistent-danger" onClick={() => void revokeCredential(credential.id)} disabled={busy}><Trash2 size={15}/>Отозвать</button>
+          </div>}
         </article>;
-      })}</div> : <p className="mcp-persistent-empty">Постоянных ключей пока нет.</p>}
+      })}</div> : <p className="mcp-persistent-empty">Ключей пока нет.</p>}
     </section>
   </section>;
 }

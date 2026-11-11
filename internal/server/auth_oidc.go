@@ -5,8 +5,11 @@ package server
 // Browser flow: authorization code + PKCE (S256) + state bound to a browser
 // cookie + nonce. The resulting access token is kept only in process memory
 // behind an opaque session cookie (the map is keyed by SHA-256 of the cookie
-// secret). There is no refresh: a session never outlives the access token or
-// the configured session TTL, and a restart logs everybody out.
+// secret). By default there is no refresh: a session never outlives the access
+// token or the configured session TTL. With SessionRefresh the session keeps the
+// refresh token and renews the access token shortly before it expires; it ends
+// at SessionMaxAge, at the refresh token's expiry or when the provider refuses
+// the refresh. A restart logs everybody out either way.
 //
 // Every authenticated request introspects the access token (RFC 7662, using
 // the confidential client credentials) and re-evaluates the access/admin
@@ -57,11 +60,16 @@ const (
 
 	authDefaultSessionTTL = 5 * time.Minute
 	authMaxSessionTTL     = 15 * time.Minute
-	authLoginTTL          = 10 * time.Minute
-	authHTTPTimeout       = 5 * time.Second
-	authMaxBody           = 1 << 20
-	authMaxSessions       = 10000
-	authMaxLogins         = 10000
+	// With SessionRefresh: default and upper bound of the whole session, and
+	// how early before access-token expiry it is renewed.
+	authDefaultSessionMaxAge = 12 * time.Hour
+	authMaxSessionMaxAge     = 7 * 24 * time.Hour
+	authRefreshAhead         = 30 * time.Second
+	authLoginTTL             = 10 * time.Minute
+	authHTTPTimeout          = 5 * time.Second
+	authMaxBody              = 1 << 20
+	authMaxSessions          = 10000
+	authMaxLogins            = 10000
 )
 
 var errAuthTokenInactive = errors.New("token inactive")
@@ -98,7 +106,23 @@ type authSession struct {
 	accessToken string
 	csrf        string
 	expires     time.Time
+	// SessionRefresh only: refresh token, when the current access token
+	// expires, and a lock serialising renewals (refresh tokens may be single
+	// use). Shared by snapshots: the pointer outlives copies.
+	refresh *authRefresh
 }
+
+type authRefresh struct {
+	mu          sync.Mutex
+	token       string
+	accessToken string
+	accessUntil time.Time
+	loginMarked time.Time // last time last_login_at was recorded for this session
+}
+
+// authLoginMarkEvery: a refreshed session is an active, provider-confirmed
+// login; record it for persistent MCP admission at most this often.
+const authLoginMarkEvery = time.Hour
 
 type authLogin struct {
 	binder   [32]byte
@@ -290,6 +314,14 @@ func normalizeAuthConfig(cfg CorporateConfig) (CorporateConfig, error) {
 	if cfg.RolesClaim == "" {
 		cfg.RolesClaim = authDefaultRolesClaim
 	}
+	if cfg.SessionRefresh {
+		switch {
+		case cfg.SessionMaxAge == 0:
+			cfg.SessionMaxAge = authDefaultSessionMaxAge
+		case cfg.SessionMaxAge < 0 || cfg.SessionMaxAge > authMaxSessionMaxAge:
+			return cfg, fmt.Errorf("auth: session max age must be within (0, %s]", authMaxSessionMaxAge)
+		}
+	}
 	switch {
 	case cfg.SessionTTL == 0:
 		cfg.SessionTTL = authDefaultSessionTTL
@@ -382,6 +414,21 @@ func (a *AuthService) authenticateSession(w http.ResponseWriter, r *http.Request
 	if !authSafeMethod(r.Method) && !authEqual(r.Header.Get("X-CSRF-Token"), sess.csrf) {
 		authError(w, http.StatusForbidden, "invalid CSRF token")
 		return nil, Principal{}, false
+	}
+	if sess.refresh != nil {
+		token, err := a.renewSession(r.Context(), sess)
+		if err != nil {
+			if errors.Is(err, errAuthTokenInactive) {
+				a.dropSession(key)
+				a.clearSessionCookie(w)
+				authError(w, http.StatusUnauthorized, "session expired")
+			} else {
+				log.Printf("auth: token refresh unavailable: %v", err)
+				authError(w, http.StatusServiceUnavailable, "authentication unavailable")
+			}
+			return nil, Principal{}, false
+		}
+		sess.accessToken = token
 	}
 	info, err := a.introspect(r.Context(), sess.accessToken)
 	if err == nil && info.subject != sess.subject {
@@ -956,6 +1003,16 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "failed")
 		return
 	}
+	var refresh *authRefresh
+	if a.cfg.SessionRefresh && tok.RefreshToken != "" {
+		// The access token's own expiry stays the renewal point; the session
+		// itself lasts until the max age or the refresh token's expiry.
+		refresh = &authRefresh{token: tok.RefreshToken, accessToken: tok.AccessToken, accessUntil: expires, loginMarked: now}
+		expires = now.Add(a.cfg.SessionMaxAge)
+		if until, ok := authRefreshExpiry(tok, now); ok && until.Before(expires) {
+			expires = until
+		}
+	}
 	csrf, err := authRandom(32)
 	if err != nil {
 		loginRedirect(w, r, "unavailable")
@@ -972,6 +1029,7 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 		accessToken: tok.AccessToken,
 		csrf:        csrf,
 		expires:     expires,
+		refresh:     refresh,
 	})
 	if !ok {
 		loginRedirect(w, r, "unavailable")
@@ -984,6 +1042,94 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	defaultMetrics.login("ok")
 	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// authRefreshExpiry reads Keycloak's refresh_expires_in (seconds) from the
+// token response. Zero means the refresh token does not expire on its own
+// (offline token); false when absent or malformed.
+func authRefreshExpiry(tok *oauth2.Token, now time.Time) (time.Time, bool) {
+	var secs float64
+	switch v := tok.Extra("refresh_expires_in").(type) {
+	case float64:
+		secs = v
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return time.Time{}, false
+		}
+		secs = f
+	default:
+		return time.Time{}, false
+	}
+	if secs <= 0 {
+		return time.Time{}, false
+	}
+	return now.Add(time.Duration(secs) * time.Second), true
+}
+
+// authExpiresIn reads expires_in (seconds) from a token response.
+func authExpiresIn(tok *oauth2.Token) (time.Duration, bool) {
+	if tok.ExpiresIn > 0 {
+		return time.Duration(tok.ExpiresIn) * time.Second, true
+	}
+	switch v := tok.Extra("expires_in").(type) {
+	case float64:
+		if v > 0 {
+			return time.Duration(v) * time.Second, true
+		}
+	case json.Number:
+		if f, err := v.Float64(); err == nil && f > 0 {
+			return time.Duration(f) * time.Second, true
+		}
+	}
+	return 0, false
+}
+
+// renewSession returns a current access token for a refreshable session,
+// renewing it with the refresh token when it expires within authRefreshAhead.
+// Renewals of one session are serialised. errAuthTokenInactive means the
+// provider refused the refresh (session over); other errors are outages.
+func (a *AuthService) renewSession(ctx context.Context, sess *authSession) (string, error) {
+	rf := sess.refresh
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	now := a.now()
+	if now.Add(authRefreshAhead).Before(rf.accessUntil) {
+		return rf.accessToken, nil
+	}
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, a.client)
+	tok, err := a.oauth.TokenSource(ctx, &oauth2.Token{RefreshToken: rf.token, Expiry: now.Add(-time.Second)}).Token()
+	if err != nil {
+		var re *oauth2.RetrieveError
+		if errors.As(err, &re) && re.Response != nil && re.Response.StatusCode >= 400 && re.Response.StatusCode < 500 {
+			// Normally invalid_grant (SSO session over); invalid_client would
+			// mean a broken client configuration, so the code is logged.
+			log.Printf("auth: token refresh refused: status=%d error=%q", re.Response.StatusCode, re.ErrorCode)
+			return "", errAuthTokenInactive
+		}
+		return "", err
+	}
+	if tok.AccessToken == "" {
+		return "", errAuthTokenInactive
+	}
+	// Lifetime from our own clock: expires_in relative to now, never longer
+	// than the session TTL used for the first access token.
+	until := now.Add(a.cfg.SessionTTL)
+	if in, ok := authExpiresIn(tok); ok && now.Add(in).Before(until) {
+		until = now.Add(in)
+	}
+	rf.accessToken, rf.accessUntil = tok.AccessToken, until
+	if tok.RefreshToken != "" {
+		rf.token = tok.RefreshToken // rotation
+	}
+	if !now.Before(rf.loginMarked.Add(authLoginMarkEvery)) {
+		if err := a.users.loggedIn(ctx, sess.userID, now); err != nil {
+			log.Printf("auth: recording login time failed: %v", err)
+		} else {
+			rf.loginMarked = now
+		}
+	}
+	return rf.accessToken, nil
 }
 
 func (a *AuthService) handleMe(w http.ResponseWriter, r *http.Request) {

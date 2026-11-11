@@ -120,3 +120,26 @@ against a disposable PostgreSQL 16.15 with separate non-superuser owner/runtime
 roles. New tests cover the login window boundary, NULL and future login times,
 re-admission after login, and changes committed between the first check and the
 final re-read.
+
+## Session refresh and editable credential scope — 2026-11-11
+
+`AIWIKI_SESSION_REFRESH=1` keeps browser sessions alive with the refresh token:
+the access token is renewed shortly before expiry (one renewal per session at a
+time, rotated refresh tokens stored), the session ends at
+`AIWIKI_SESSION_MAX_AGE` (default 12h), at `refresh_expires_in`, or when the
+provider refuses the refresh. Off by default; upstream behaviour is unchanged.
+
+Owners can change the projects and mode of a live persistent credential. The
+change goes only through `corporate_mcp_credential_set_scope()` (SECURITY
+DEFINER, migration `mcp_access` v5), which re-checks the owner's current rights
+with `corporate_owner_effective_role` and audits old and new scope. The
+immutability trigger still refuses any direct change of projects/mode by the
+runtime role, and of identity, secret, service account or times by anyone.
+
+Tests cover renewal, single renewal under concurrency, provider outage (503,
+session kept), refused refresh (session ends), lifetime bounds, local disable
+after renewal, login marking; scope edits through the API and directly through
+the function (no rights, reader→write, archived, foreign project, revoked key,
+other user, MCP session), and direct runtime updates being refused. An upgrade
+from a database with v4 already applied was checked separately.
+

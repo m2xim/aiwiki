@@ -187,6 +187,7 @@ export const client = {
   mcpCredentials: () => api<{ enabled: boolean; credentials: MCPCredential[] }>('/api/mcp/credentials'),
   createMCPCredential: (data: { name: string; project_ids: string[]; mode: 'read' | 'write'; ttl_seconds: number; service_account_id?: string }) => api<MCPCredential & { token: string }>('/api/mcp/credentials', json('POST', data)),
   revokeMCPCredential: (id: string) => api<void>(`/api/mcp/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  updateMCPCredential: (id: string, data: { project_ids: string[]; mode: 'read' | 'write' }) => api<MCPCredential>(`/api/mcp/credentials/${encodeURIComponent(id)}`, json('PATCH', data)),
   mcpServiceAccounts: () => api<{ enabled: boolean; service_accounts: MCPServiceAccount[] }>('/api/mcp/service-accounts'),
   createMCPServiceAccount: (name: string) => api<MCPServiceAccount>('/api/mcp/service-accounts', json('POST', { name })),
   disableMCPServiceAccount: (id: string) => api<void>(`/api/mcp/service-accounts/${encodeURIComponent(id)}`, { method: 'DELETE' }),

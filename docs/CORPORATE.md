@@ -24,6 +24,8 @@ Environment variables:
 | `AIWIKI_MCP_INTROSPECTION_CLIENT_SECRET` | Server-only resource client secret; browser credentials remain separate |
 | `AIWIKI_OIDC_REDIRECT_URL` | Exact public callback URL, e.g. `https://wiki.example.org/auth/callback` |
 | `AIWIKI_OIDC_ROLES_CLAIM` | Dot path, default `realm_access.roles` |
+| `AIWIKI_SESSION_REFRESH` | `1` keeps browser sessions alive with the refresh token (see below); off by default |
+| `AIWIKI_SESSION_MAX_AGE` | With refresh: longest session, Go duration, default `12h`, at most `168h` |
 | `AIWIKI_OIDC_ACCESS_ROLE` | Admission role, default `aiwiki-access` |
 | `AIWIKI_OIDC_ADMIN_ROLE` | System administrator role, default `aiwiki-admin` |
 | `AIWIKI_ALLOW_INSECURE_LOOPBACK` | `1` permits HTTP only on loopback for local integration tests |
@@ -32,7 +34,7 @@ Environment variables:
 
 Missing admission claims deny access, including for administrators. Identities use `(issuer, subject)`; email changes never merge accounts. Setting corporate configuration incompletely fails startup instead of opening an anonymous SQLite service. TLS terminates at the trusted deployment proxy; publish the application only behind that proxy and configure the exact browser origin.
 
-Browser sessions use opaque HttpOnly, SameSite cookies, Secure in normal deployments; random secrets are hashed as in-memory session-map keys. Login validates state, a browser-bound cookie, PKCE, nonce, issuer, audience, signature and expiry. Sessions default to five minutes, never exceed fifteen minutes or the access-token expiry, and have no refresh. A restart logs users out. Unsafe browser operations require `X-CSRF-Token` from `/api/me`. Logout revokes the local session; it does not terminate the entire Keycloak SSO session.
+Browser sessions use opaque HttpOnly, SameSite cookies, Secure in normal deployments; random secrets are hashed as in-memory session-map keys. Login validates state, a browser-bound cookie, PKCE, nonce, issuer, audience, signature and expiry. Sessions default to five minutes, never exceed fifteen minutes or the access-token expiry, and have no refresh. With `AIWIKI_SESSION_REFRESH=1` the session keeps the refresh token and renews the access token shortly before it expires (renewals of one session are serialised, rotated refresh tokens are stored); it ends at `AIWIKI_SESSION_MAX_AGE`, at the refresh token's own expiry (`refresh_expires_in`), or when the provider refuses the refresh (SSO session ended, user disabled upstream), so upstream changes still reach aiwiki within one access-token lifetime. A provider outage during renewal answers 503 and keeps the session. A renewed session records the login for persistent MCP admission at most hourly. A restart logs users out. Unsafe browser operations require `X-CSRF-Token` from `/api/me`. Logout revokes the local session; it does not terminate the entire Keycloak SSO session.
 
 A failed browser login at `/auth/callback` does not return JSON: the server answers `303` to `/?login_error=<code>` (`expired`, `failed`, `denied` or `unavailable`; the code is the only thing in the URL) and the web shell shows an explanation with "sign in again" buttons, without automatic retry. `/auth/login`, `/mcp` and the API keep JSON errors. `/auth/login` accepts an optional `return` (only the path `/` with its own query and fragment; anything else is ignored), kept server-side with the pending login, and a successful callback answers `303` to it instead of `/`; error redirects never carry it.
 

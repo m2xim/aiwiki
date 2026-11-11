@@ -482,9 +482,11 @@ func TestMCPPersistentMintListRevokeLifecycle(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"revoked_at"`) {
 		t.Fatalf("revoked credentials stay listed: %s", rec.Body)
 	}
-	for _, m := range []string{"PUT", "PATCH", "POST", "GET"} {
+	for _, m := range []string{"PUT", "POST", "GET"} {
 		e.expect(e.call(alice, persistentCredentialR, m, "", id), 405)
 	}
+	// PATCH edits projects/mode of a live key; this one is revoked.
+	e.expect(e.call(alice, persistentCredentialR, "PATCH", `{"project_ids":["pa"],"mode":"read"}`, id), 404)
 	for _, m := range []string{"PUT", "DELETE", "PATCH"} {
 		e.expect(e.call(alice, persistentCredentials, m, "", ""), 405)
 	}
