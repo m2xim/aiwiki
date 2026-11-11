@@ -75,9 +75,44 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"wiki_edit"`) {
 		t.Fatalf("writer discovery failed: %d %s", w.Code, w.Body)
 	}
-	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Service authorship", "space_id": space.ID, "project_id": project.ID, "body": "# Scoped\ncontent", "author": "spoof"}}})
+	// The agent learns where it may write from bootstrap alone: exactly its
+	// projects with their space ids, never the sibling project.
+	w = rpc("tools/call", map[string]any{"name": "wiki_bootstrap", "arguments": map[string]any{}})
+	var boot struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &boot) != nil || len(boot.Result.Content) != 1 {
+		t.Fatalf("bootstrap failed: %d %s", w.Code, w.Body)
+	}
+	var bootOut struct {
+		Spaces   []Space `json:"spaces"`
+		Projects []struct {
+			ID, Name, SpaceID string
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal([]byte(strings.ReplaceAll(boot.Result.Content[0].Text, `"space_id"`, `"SpaceID"`)), &bootOut); err != nil {
+		t.Fatal(err)
+	}
+	if len(bootOut.Spaces) != 0 || len(bootOut.Projects) != 1 || bootOut.Projects[0].ID != project.ID || bootOut.Projects[0].Name != "Selected" || bootOut.Projects[0].SpaceID != space.ID {
+		t.Fatalf("scoped bootstrap must list exactly its project with its space: %s", boot.Result.Content[0].Text)
+	}
+	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Service authorship", "space_id": bootOut.Projects[0].SpaceID, "project_id": bootOut.Projects[0].ID, "body": "# Scoped\ncontent", "author": "spoof"}}})
 	if w.Code != 200 || strings.Contains(w.Body.String(), `"isError":true`) {
 		t.Fatalf("write failed: %d %s", w.Code, w.Body)
+	}
+	// An archived project disappears from bootstrap and comes back on restore.
+	if _, err := owner.DB.Exec(`UPDATE projects SET archived_at='2020-01-01T00:00:00Z' WHERE id=?`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w = rpc("tools/call", map[string]any{"name": "wiki_bootstrap", "arguments": map[string]any{}}); w.Code != 200 || !strings.Contains(w.Body.String(), `\"projects\":[]`) {
+		t.Fatalf("archived project still listed: %d %s", w.Code, w.Body)
+	}
+	if _, err := owner.DB.Exec(`UPDATE projects SET archived_at=NULL WHERE id=?`, project.ID); err != nil {
+		t.Fatal(err)
 	}
 	scoped, done, err := owner.DB.scoped(context.Background(), me.User.ID)
 	if err != nil {
@@ -108,7 +143,7 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 		t.Fatalf("native credential authenticated browser path: %d", w.Code)
 	}
 	var actors int
-	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors != 5 {
+	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors != 7 { // bootstrap x2, write, edit, search, sibling write, list
 		t.Fatalf("audit actors=%d err=%v", actors, err)
 	}
 	// Local admission: no browser login for longer than the window stops the key.

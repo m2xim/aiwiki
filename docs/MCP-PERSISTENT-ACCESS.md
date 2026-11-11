@@ -52,7 +52,10 @@ apply, capped at Editor by RLS. ACLs, users, teams, ownership, space/project str
 and credential management are unavailable through native MCP credentials. A key
 cannot mint another key. Partial reads and revision conflict checks remain available.
 
-Use the secret as `Authorization: Bearer <secret>` on `/mcp`. Native credentials do
+Use the secret as `Authorization: Bearer <secret>` on `/mcp`. A project-scoped
+credential cannot list whole spaces, so `wiki_bootstrap` returns its live projects
+as `projects: [{id, name, space_id}]`; pass that `space_id` and `project_id` when
+creating articles. Native credentials do
 not authenticate browser REST endpoints, and browser cookies do not authenticate MCP.
 Native credentials are an explicit bearer option, not a claim of MCP OAuth discovery
 or compatibility with every client. See [AI-CONNECTION.md](AI-CONNECTION.md).
