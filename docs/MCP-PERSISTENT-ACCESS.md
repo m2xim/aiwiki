@@ -1,49 +1,41 @@
 # Persistent MCP access
 
 Corporate mode supports opaque personal credentials and sponsored service accounts,
-in addition to OIDC bearer tokens and [temporary session keys](MCP-TEMPORARY-ACCESS.md).
-Persistent credentials are optional and fail closed without the admission checker.
+in addition to OIDC bearer tokens. They are always available in corporate mode and
+need no extra configuration. Temporary session-bound keys (`aiwiki_tmp_`) were
+removed: use a persistent credential with a short expiry instead.
 
-## Admission checker
+## Admission
 
-Configure a separate confidential Keycloak client with service accounts enabled.
-Give it read permission for the users and their effective realm role mappings in
-this realm. The classic `realm-management` `view-users` role is one option; check
-your Keycloak version's fine-grained administration permissions when narrowing
-this further. Do not grant `realm-admin` or user-management write permission.
+Admission is decided locally, from the database, on every request. The identity
+provider is not contacted per request and nothing is cached in process memory, so
+restarts and replicas behave identically. A credential works only while all of
+these hold:
 
-```text
-AIWIKI_KEYCLOAK_ADMIN_URL=https://identity.example.org/admin/realms/wiki
-AIWIKI_KEYCLOAK_ADMISSION_CLIENT_ID=aiwiki-admission
-AIWIKI_KEYCLOAK_ADMISSION_CLIENT_SECRET=<secret supplied by deployment>
-```
+- it is neither expired nor revoked;
+- its owner is not disabled in aiwiki's user administration;
+- its service account, if any, is not disabled and still belongs to the owner;
+- the owner completed an interactive (browser) login within the last **14 days**.
 
-The admin URL must match the configured OIDC issuer's origin, prefix and realm:
-`https://identity.example.org/realms/wiki` maps to the URL above. All three settings
-are required together. TLS is required, apart from the existing explicit loopback
-test option. The machine client is separate from the browser OIDC client.
+The login window is how directory changes reach credentials. A user removed from
+the directory, or who lost the access role, can no longer sign in; all of their
+credentials stop working at most 14 days after their last login. A user who simply
+has not used the browser for 14 days gets the same refusal, and their credentials
+work again after the next login: nothing is revoked. Disable the user in the
+administration page to cut access immediately. The login time is stored in
+`users.last_login_at` (migration `mcp_access` v4); users who have not signed in
+since the upgrade start without it, so their existing credentials resume after
+their next login.
 
-Every request using a persistent credential checks the sponsor's local enabled
-state, immutable issuer/subject identity, Keycloak user `enabled` state, and the
-configured admission realm role (`aiwiki-access` by default). User and role results
-are not cached. Only the machine client's short-lived access token is cached.
-Provider faults deny access with 503; a removed admission role or disabled account
-denies access. Redirects are not followed. Responses and errors never expose the
-machine secret or bearer token.
-
-This first checker supports `realm_access.roles` and a Keycloak subject equal to
-the Admin API user ID. Custom claim mappings and pairwise subjects are unsupported
-and fail closed. The composite-role endpoint evaluates inherited/composite roles;
-AD group-to-realm-role mapping and directory synchronization must be verified in
-the deployment. Keycloak's own LDAP/AD cache and synchronization determine when an
-upstream directory change becomes visible; aiwiki cannot promise instantaneous AD
-revocation independently of that configuration.
+Database faults deny access with 503. A disabled owner or an expired login window
+denies with 403; credential state problems (unknown, expired, revoked) with 401.
+Responses and errors never expose the secret.
 
 ## Issuance and scope
 
 Open the administration page's MCP access tab. Any admitted user can manage their
 own credentials and service accounts. Credentials have a name, 1–20 exact projects,
-`read` or `write` mode, and an expiry (default seven days, maximum 30 days).
+`read` or `write` mode, and an expiry (default 30 days, maximum 180 days).
 At issuance, the user must currently hold Reader access to every selected project
 for read mode, or Editor access for write mode. Archived containers are excluded.
 No parent, sibling, descendant, or space-level access is implied by selection.
@@ -71,8 +63,8 @@ A service account has a stable actor ID and an immutable human sponsor. Only its
 sponsor manages it. It receives no administrator status or independent ACL grants:
 each request uses current sponsor ACLs intersected with credential projects/mode.
 Article/comment authorship identifies the service account; request audit records
-include both actor and sponsor. A sponsor losing admission or becoming locally
-disabled blocks all associated personal and service credentials.
+include both actor and sponsor. A sponsor becoming locally disabled or exceeding
+the login window blocks all associated personal and service credentials.
 
 If the sponsor is demoted below Editor, a service account can still read permitted
 content but cannot add comments at Commenter rank: comment ownership is tied to the

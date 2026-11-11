@@ -147,12 +147,10 @@ func splitCorporateSQL(src string) []string {
 // corporateRoutes registers security and administration APIs. Callers must
 // place these routes behind the request-scoped authenticated Server.
 func (s *Server) corporateRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/mcp/delegations", s.mcpDelegations)
 	mux.HandleFunc("/api/mcp/credentials", s.mcpCredentials)
 	mux.HandleFunc("/api/mcp/credentials/{id}", s.mcpCredential)
 	mux.HandleFunc("/api/mcp/service-accounts", s.mcpServiceAccounts)
 	mux.HandleFunc("/api/mcp/service-accounts/{id}", s.mcpServiceAccount)
-	mux.HandleFunc("/api/mcp/delegations/{id}", s.mcpDelegation)
 	mux.HandleFunc("GET /api/admin/users", s.corporateUsers)
 	mux.HandleFunc("GET /api/admin/users/{id}/access", s.corporateUserAccess)
 	mux.HandleFunc("GET /api/users", s.corporateUserDirectory)

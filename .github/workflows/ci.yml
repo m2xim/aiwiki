@@ -122,4 +122,4 @@ jobs:
           docker logs keycloak-oauth >&2 || true
           exit 1
       - name: Corporate PostgreSQL, signed OIDC, object storage and Keycloak OAuth checks
-        run: go test ./internal/server -run 'TestCorporate|TestAuth|TestStorage|TestS3|TestMCPDelegation|TestMCPScope|TestMCPPersistent|TestKeycloakAdmission|TestMCPOAuth' -count=1 -v
+        run: go test ./internal/server -run 'TestCorporate|TestAuth|TestStorage|TestS3|TestMCPScope|TestMCPPersistent|TestMCPOAuth' -count=1 -v

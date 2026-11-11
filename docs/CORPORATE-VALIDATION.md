@@ -35,7 +35,7 @@ Setup and runtime configuration: [CORPORATE.md](CORPORATE.md).
 
 ## Temporary MCP access follow-up — 2026-10-22
 
-The next slice adds [temporary exact-project read-only keys](MCP-TEMPORARY-ACCESS.md).
+The next slice adds temporary exact-project read-only keys (later removed, see the end of this file).
 Sonnet implemented the session/key lifecycle; gpt-6-luna implemented the scope
 migration, UI and optional S3 smoke harness. The lead integrated and inspected
 the changes and ran the full Go suite with PostgreSQL, vet, frontend build and
@@ -103,3 +103,20 @@ Real Keycloak/AD synchronization, actual S3 service acceptance, OAuth discovery 
 the chosen client compatibility matrix remain pilot work. PostgreSQL startup guards
 compare canonical policy expressions; validate them on each PostgreSQL major before
 upgrading. No home deployment or migration was performed.
+
+## Local MCP admission — 2026-11-11
+
+Temporary session-bound MCP keys and the Keycloak Admin API admission checker
+were removed. Persistent credentials are admitted locally on every request:
+not revoked or expired, owner and service account not disabled, owner's last
+interactive login within 14 days (`users.last_login_at`, migration `mcp_access`
+v4). Maximum credential lifetime is 180 days (default 30). Issuance still
+requires the owner's current Reader/Editor rights on every selected project, and
+each request still runs with the owner's current ACLs intersected with the
+credential's projects and mode.
+
+`go vet ./...` and `go test ./... -count=1` passed with PostgreSQL integration
+against a disposable PostgreSQL 16.15 with separate non-superuser owner/runtime
+roles. New tests cover the login window boundary, NULL and future login times,
+re-admission after login, and changes committed between the first check and the
+final re-read.

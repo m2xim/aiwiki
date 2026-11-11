@@ -42,9 +42,9 @@ Every authenticated request introspects the access token; outages deny access. L
 
 Personal spaces are created explicitly by an admitted user; first sign-in creates or synchronizes the user record, without automatically provisioning a space. The user administration page lists a user's effective access only in spaces and projects that the viewing administrator manages. Administration does not grant visibility into another user's private spaces.
 
-Optional persistent MCP credentials use a separate current-admission checker and
-can survive browser logout/restarts. Configuration, exact project scopes, service
-accounts and revocation boundaries: [MCP-PERSISTENT-ACCESS.md](MCP-PERSISTENT-ACCESS.md).
+Persistent MCP credentials are checked locally (owner not disabled, browser login
+within the last 14 days) and survive browser logout/restarts. Exact project scopes,
+service accounts and revocation boundaries: [MCP-PERSISTENT-ACCESS.md](MCP-PERSISTENT-ACCESS.md).
 
 | Role | Permission |
 | --- | --- |
@@ -64,7 +64,7 @@ Moving between containers is done only through the access-impact preview (`POST 
 
 ## MCP
 
-In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. Optional [OAuth resource discovery](MCP-OAUTH.md) binds tokens to the canonical MCP resource and `aiwiki:mcp` scope, with Keycloak as the authorization server. It also supports [temporary project-scoped read-only keys](MCP-TEMPORARY-ACCESS.md), tied to a live browser session, and [persistent personal/service keys](MCP-PERSISTENT-ACCESS.md). Provider bearer requests are rate-limited per subject (per process) before introspection and audited per request, see the Limits section of that page. Browser cookies do not authorize MCP. Real client login and the actual AD federation remain pilot checks.
+In corporate mode `/mcp` accepts an OIDC access token using `Authorization: Bearer ...`, with signature/issuer/audience/expiry verification, introspection and local eligibility checks. Optional [OAuth resource discovery](MCP-OAUTH.md) binds tokens to the canonical MCP resource and `aiwiki:mcp` scope, with Keycloak as the authorization server. It also supports [persistent personal/service keys](MCP-PERSISTENT-ACCESS.md) scoped to exact projects. Provider bearer requests are rate-limited per subject (per process) before introspection and audited per request, see the Limits section of that page. Browser cookies do not authorize MCP. Real client login and the actual AD federation remain pilot checks.
 
 Interactive artifacts (versioned HTML/JS objects with sandboxed rendering, public links and an administrator switch) are described in [ARTIFACTS.md](ARTIFACTS.md); they add a migration component `artifacts`, FORCE RLS tables and startup checks.
 

@@ -10,23 +10,11 @@ import (
 	"time"
 )
 
-type leadAdmissionCheck func(context.Context, string, string) error
-
-func (f leadAdmissionCheck) Check(c context.Context, i, s string) error { return f(c, i, s) }
-
 func TestMCPPersistentEndToEnd(t *testing.T) {
 	owner, root := corporateFixture(t)
 	x := newAuthHarness(t, nil)
 	x.a.users = authSQLUsers{db: root.DB}
-	admitted := true
-	checks := 0
-	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now, admission: leadAdmissionCheck(func(context.Context, string, string) error {
-		checks++
-		if !admitted {
-			return errMCPAdmissionDenied
-		}
-		return nil
-	})}
+	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now}
 	root.auth = x.a
 	cookie := authCookie(x.login(authUserGrant("persistent-e2e", "aiwiki-access", "aiwiki-admin")), x.a.sessionCookie)
 	call := func(method, path, body, csrf, bearer string, c *http.Cookie) *httptest.ResponseRecorder {
@@ -79,7 +67,6 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if issued.Token == "" {
 		t.Fatal("missing secret")
 	}
-	before := checks
 	rpc := func(method string, params any) *httptest.ResponseRecorder {
 		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 		return call("POST", "/mcp", string(b), "", issued.Token, nil)
@@ -116,9 +103,6 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"isError":true`) {
 		t.Fatalf("sibling write allowed: %d %s", w.Code, w.Body)
 	}
-	if checks-before != 5 { // list, write, edit, search, sibling write
-		t.Fatalf("admission called %d times, want5", checks-before)
-	}
 	// Native secrets never authenticate browser APIs, even with an otherwise valid key.
 	if w = call("GET", "/api/mcp/credentials", "", "", issued.Token, nil); w.Code != 401 {
 		t.Fatalf("native credential authenticated browser path: %d", w.Code)
@@ -127,12 +111,28 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors != 5 {
 		t.Fatalf("audit actors=%d err=%v", actors, err)
 	}
-	admitted = false
-	w = rpc("ping", map[string]any{})
-	if w.Code != 403 && w.Code != 401 {
-		t.Fatalf("removed admission still allowed: %d %s", w.Code, w.Body)
+	// Local admission: no browser login for longer than the window stops the key.
+	if _, err = owner.DB.Exec(`UPDATE users SET last_login_at=? WHERE id=?`, time.Now().UTC().Add(-mcpPersistentLoginWindow-time.Minute), me.User.ID); err != nil {
+		t.Fatal(err)
 	}
-	admitted = true
+	if w = rpc("ping", map[string]any{}); w.Code != 403 {
+		t.Fatalf("stale login still allowed: %d %s", w.Code, w.Body)
+	}
+	// A fresh browser login re-activates the same credential.
+	x.login(authUserGrant("persistent-e2e", "aiwiki-access", "aiwiki-admin"))
+	if w = rpc("ping", map[string]any{}); w.Code != 200 {
+		t.Fatalf("fresh login did not re-admit: %d %s", w.Code, w.Body)
+	}
+	// A locally disabled owner is refused.
+	if _, err = owner.DB.Exec(`UPDATE users SET disabled=1 WHERE id=?`, me.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w = rpc("ping", map[string]any{}); w.Code != 403 {
+		t.Fatalf("disabled owner still allowed: %d %s", w.Code, w.Body)
+	}
+	if _, err = owner.DB.Exec(`UPDATE users SET disabled=0 WHERE id=?`, me.User.ID); err != nil {
+		t.Fatal(err)
+	}
 	mustJSON(call("DELETE", "/api/mcp/service-accounts/"+account.ID, "", me.CSRF, "", cookie), 204, nil)
 	w = rpc("ping", map[string]any{})
 	if w.Code != 403 && w.Code != 401 {

@@ -8,20 +8,26 @@ package server
 // token is stored; the token is shown exactly once, in the mint response.
 //
 // Nothing about a credential is cached in process memory, so restarts and
-// multiple replicas behave identically. Every request:
+// multiple replicas behave identically. Admission is decided locally, from the
+// database only; the identity provider is not contacted per request. Every
+// request:
 //
 //  1. looks the credential up by hash on the separate authentication pool and
-//     rejects expired, revoked, unknown, malformed or inconsistent records;
+//     rejects expired, revoked, unknown, malformed or inconsistent records, a
+//     locally disabled owner or service account, and an owner whose last
+//     successful browser login is older than mcpPersistentLoginWindow;
 //  2. consumes one slot of the per-credential rate limit with a single atomic
-//     UPDATE, so the (expensive) admission call below is bounded;
-//  3. asks the admission provider whether the sponsoring owner is still
-//     admitted right now (no positive or negative result is remembered);
-//  4. looks the credential up again, so a revocation or disable that committed
-//     while the provider was being asked is honoured.
+//     UPDATE;
+//  3. looks the credential up again and re-applies every rule, so a revocation
+//     or disable that committed in between is honoured.
 //
-// Practical boundary: a request that passed step 4 before a revocation
+// Practical boundary: a request that passed step 3 before a revocation
 // committed may still run to completion. Anything arriving afterwards is
-// refused. Provider or database faults fail closed (503).
+// refused. Database faults fail closed (503).
+//
+// Leaving the directory is enforced by the login window: a user who can no
+// longer sign in loses every credential at most mcpPersistentLoginWindow after
+// the last login. Disable the user locally to revoke immediately.
 //
 // The owner (sponsor) of a credential or service account is immutable. A
 // service account is only an attribution label for audit and authorship; all
@@ -43,9 +49,12 @@ import (
 )
 
 const (
-	mcpPersistentDefaultTTL  = 7 * 24 * time.Hour
-	mcpPersistentMinTTL      = 60 * time.Second
-	mcpPersistentMaxTTL      = 30 * 24 * time.Hour
+	mcpPersistentDefaultTTL = 30 * 24 * time.Hour
+	mcpPersistentMinTTL     = 60 * time.Second
+	mcpPersistentMaxTTL     = 180 * 24 * time.Hour
+	// mcpPersistentLoginWindow: credentials stop working when the owner has not
+	// completed a browser login for this long (inactive or departed user).
+	mcpPersistentLoginWindow = 14 * 24 * time.Hour
 	mcpPersistentMaxName     = 80
 	mcpPersistentMaxProjects = 20
 	mcpPersistentActiveCap   = 20  // live credentials per owner
@@ -120,7 +129,7 @@ func mcpPersistentText(status int) string {
 }
 
 func (p *mcpPersistentAccess) ready() bool {
-	return p != nil && p.db != nil && p.admission != nil
+	return p != nil && p.db != nil
 }
 
 // persistentAccess returns the configured feature or nil when it is disabled.
@@ -186,22 +195,16 @@ func (s *Server) mcpPersistentOwner(w http.ResponseWriter, r *http.Request) (str
 	return owner, true
 }
 
-// mcpPersistentAdmit checks, against the identity provider right now, that the
-// calling owner is still admitted. It is required whenever authority is created.
-func (s *Server) mcpPersistentAdmit(ctx context.Context, p *mcpPersistentAccess) error {
+// mcpPersistentAdmit requires the caller to be a browser-session identity of
+// the configured issuer. Authority is only created from such a session, which
+// already passed the login-time access-role check; the owner row is then
+// locked and re-checked (not disabled) inside the creating transaction.
+func (s *Server) mcpPersistentAdmit() error {
 	pr := s.principal
 	if pr == nil || pr.Issuer == "" || pr.Subject == "" || pr.Issuer != s.auth.cfg.IssuerURL || authUserID(pr.Issuer, pr.Subject) != pr.ID {
 		return mcpPersistentFail(http.StatusForbidden, "forbidden")
 	}
-	err := p.admission.Check(ctx, pr.Issuer, pr.Subject)
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, errMCPAdmissionDenied):
-		return mcpPersistentFail(http.StatusForbidden, "forbidden")
-	}
-	log.Printf("mcp persistent: admission unavailable: %v", err)
-	return mcpPersistentFail(http.StatusServiceUnavailable, "admission unavailable")
+	return nil
 }
 
 func (s *Server) mcpPersistentTx(fn func(tx *transaction) error) error {
@@ -351,7 +354,7 @@ func (s *Server) mcpCredentialMint(w http.ResponseWriter, r *http.Request, owner
 		apiErr(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if err := s.mcpPersistentAdmit(r.Context(), p); err != nil {
+	if err := s.mcpPersistentAdmit(); err != nil {
 		mcpPersistentWriteErr(w, err)
 		return
 	}
@@ -547,7 +550,7 @@ func (s *Server) mcpServiceAccountCreate(w http.ResponseWriter, r *http.Request,
 		apiErr(w, http.StatusBadRequest, "invalid name")
 		return
 	}
-	if err := s.mcpPersistentAdmit(r.Context(), p); err != nil {
+	if err := s.mcpPersistentAdmit(); err != nil {
 		mcpPersistentWriteErr(w, err)
 		return
 	}
@@ -668,6 +671,7 @@ type mcpPersistentRecord struct {
 	revoked                  sql.NullTime
 	issuer, subject, name    string
 	ownerDisabled            bool
+	lastLogin                sql.NullTime
 	svcID, svcOwner          sql.NullString
 	svcDisabled              sql.NullInt64
 }
@@ -676,11 +680,11 @@ func (p *mcpPersistentAccess) lookup(ctx context.Context, hash string) (*mcpPers
 	var rec mcpPersistentRecord
 	var disabled int
 	err := p.db.QueryRowContext(ctx, `SELECT c.id,c.owner_id,c.service_account_id,c.project_ids,c.mode,c.expires_at,c.revoked_at,
-u.issuer,u.subject,u.name,u.disabled,s.id,s.owner_id,s.disabled
+u.issuer,u.subject,u.name,u.disabled,u.last_login_at,s.id,s.owner_id,s.disabled
 FROM mcp_credentials c JOIN users u ON u.id=c.owner_id
 LEFT JOIN mcp_service_accounts s ON s.id=c.service_account_id
 WHERE c.secret_hash=?`, hash).Scan(&rec.id, &rec.owner, &rec.service, &rec.projects, &rec.mode, &rec.expires, &rec.revoked,
-		&rec.issuer, &rec.subject, &rec.name, &disabled, &rec.svcID, &rec.svcOwner, &rec.svcDisabled)
+		&rec.issuer, &rec.subject, &rec.name, &disabled, &rec.lastLogin, &rec.svcID, &rec.svcOwner, &rec.svcDisabled)
 	if err != nil {
 		return nil, err
 	}
@@ -704,6 +708,10 @@ func (a *AuthService) persistentVerify(rec *mcpPersistentRecord, now time.Time) 
 		return Principal{}, http.StatusUnauthorized
 	}
 	if authUserID(rec.issuer, rec.subject) != rec.owner || rec.issuer != a.cfg.IssuerURL || rec.ownerDisabled {
+		return Principal{}, http.StatusForbidden
+	}
+	// Local admission: the owner must have signed in recently.
+	if !rec.lastLogin.Valid || !now.Before(rec.lastLogin.Time.Add(mcpPersistentLoginWindow)) {
 		return Principal{}, http.StatusForbidden
 	}
 	actor := rec.owner
@@ -784,7 +792,6 @@ func (a *AuthService) authenticatePersistent(w http.ResponseWriter, r *http.Requ
 		return deny(status, mcpPersistentText(status))
 	}
 
-	// Bound provider load before making the upstream call.
 	took, err := p.takeRate(ctx, hash, p.clock())
 	if err != nil {
 		return unavailable(err)
@@ -803,16 +810,10 @@ func (a *AuthService) authenticatePersistent(w http.ResponseWriter, r *http.Requ
 		return deny(http.StatusTooManyRequests, "MCP request limit exceeded")
 	}
 
-	switch err = p.admission.Check(ctx, rec.issuer, rec.subject); {
-	case err == nil:
-	case errors.Is(err, errMCPAdmissionDenied):
-		return deny(http.StatusForbidden, "access denied")
-	default:
-		return unavailable(err)
+	if p.checkpoint != nil {
+		p.checkpoint()
 	}
-
-	// The credential may have been revoked or its owner disabled while the
-	// provider was being asked.
+	// The credential may have been revoked or its owner disabled meanwhile.
 	cur, err := p.lookup(ctx, hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return deny(http.StatusUnauthorized, "invalid token")

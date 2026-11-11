@@ -229,9 +229,10 @@ func (m *authMockIssuer) handleIntrospect(w http.ResponseWriter, r *http.Request
 }
 
 type authFakeUsers struct {
-	mu    sync.Mutex
-	users map[string]*Principal
-	off   map[string]bool
+	mu     sync.Mutex
+	users  map[string]*Principal
+	off    map[string]bool
+	logins map[string]time.Time
 }
 
 func (f *authFakeUsers) upsert(_ context.Context, p Principal) (bool, error) {
@@ -240,6 +241,16 @@ func (f *authFakeUsers) upsert(_ context.Context, p Principal) (bool, error) {
 	cp := p
 	f.users[p.ID] = &cp
 	return f.off[p.ID], nil
+}
+
+func (f *authFakeUsers) loggedIn(_ context.Context, id string, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.logins == nil {
+		f.logins = map[string]time.Time{}
+	}
+	f.logins[id] = at
+	return nil
 }
 
 func (f *authFakeUsers) find(_ context.Context, id string) (string, bool, bool, error) {

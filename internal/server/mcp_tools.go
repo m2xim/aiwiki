@@ -136,10 +136,7 @@ func (s *Server) callTool(params map[string]json.RawMessage) any {
 	var name string
 	_ = json.Unmarshal(params["name"], &name)
 	if !mcpScopedTool(s.principal, name) {
-		if strings.HasPrefix(s.principal.MCPDelegationID, "pat_") {
-			return toolErr("MCP credential is read-only or does not permit this tool")
-		}
-		return toolErr("temporary MCP access is read-only")
+		return toolErr("MCP credential is read-only or does not permit this tool")
 	}
 	var args map[string]json.RawMessage
 	if raw, ok := params["arguments"]; ok && strings.TrimSpace(string(raw)) != "null" {

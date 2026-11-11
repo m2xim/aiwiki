@@ -87,10 +87,9 @@ type AuthService struct {
 	oauthLimitOnce sync.Once
 	oauthLimit     *mcpOAuthLimiter
 
-	mu          sync.Mutex
-	sessions    map[[32]byte]*authSession
-	logins      map[[32]byte]*authLogin
-	delegations map[[32]byte]*mcpDelegation
+	mu       sync.Mutex
+	sessions map[[32]byte]*authSession
+	logins   map[[32]byte]*authLogin
 }
 
 type authSession struct {
@@ -150,6 +149,8 @@ type authUsers interface {
 	// upsert inserts or refreshes name/admin. It never changes disabled.
 	upsert(ctx context.Context, p Principal) (disabled bool, err error)
 	find(ctx context.Context, id string) (name string, disabled bool, found bool, err error)
+	// loggedIn records a successful interactive login (persistent MCP admission).
+	loggedIn(ctx context.Context, id string, at time.Time) error
 }
 
 type authSQLUsers struct{ db *database }
@@ -169,6 +170,11 @@ func (s authSQLUsers) upsert(ctx context.Context, p Principal) (bool, error) {
 		return false, err
 	}
 	return disabled != 0, nil
+}
+
+func (s authSQLUsers) loggedIn(ctx context.Context, id string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET last_login_at=? WHERE id=?`, at.UTC(), id)
+	return err
 }
 
 func (s authSQLUsers) find(ctx context.Context, id string) (string, bool, bool, error) {
@@ -247,7 +253,6 @@ func newAuthServiceWithUsers(ctx context.Context, users authUsers, cfg Corporate
 		maxSessions:   authMaxSessions,
 		maxLogins:     authMaxLogins,
 		sessions:      map[[32]byte]*authSession{},
-		delegations:   map[[32]byte]*mcpDelegation{},
 		logins:        map[[32]byte]*authLogin{},
 	}
 	if secure {
@@ -257,14 +262,9 @@ func newAuthServiceWithUsers(ctx context.Context, users authUsers, cfg Corporate
 	if cfg.MCPOAuth.ResourceURL != "" {
 		a.mcpVerifier = provider.Verifier(&oidc.Config{ClientID: cfg.MCPOAuth.ResourceURL})
 	}
-	admission, err := newKeycloakAdmissionProvider(cfg, endpoint.TokenURL, client)
-	if err != nil {
-		return nil, err
-	}
-	if admission != nil {
-		if sqlUsers, ok := users.(authSQLUsers); ok {
-			a.persistent = &mcpPersistentAccess{db: sqlUsers.db, admission: admission, now: time.Now}
-		}
+	// Persistent MCP credentials are decided locally from the database.
+	if sqlUsers, ok := users.(authSQLUsers); ok {
+		a.persistent = &mcpPersistentAccess{db: sqlUsers.db, now: time.Now}
 	}
 	return a, nil
 }
@@ -427,9 +427,6 @@ func (a *AuthService) authenticateBearer(w http.ResponseWriter, r *http.Request)
 	raw := strings.TrimSpace(h[7:])
 	if raw == "" {
 		return deny(http.StatusUnauthorized, "invalid token")
-	}
-	if strings.HasPrefix(raw, mcpDelegationPrefix) {
-		return a.authenticateDelegation(w, r, raw)
 	}
 	if strings.HasPrefix(raw, mcpPersistentPrefix) {
 		return a.authenticatePersistent(w, r, raw)
@@ -759,7 +756,6 @@ func (a *AuthService) purgeLocked(now time.Time) {
 	for k, s := range a.sessions {
 		if !now.Before(s.expires) {
 			delete(a.sessions, k)
-			a.dropDelegationsLocked(k)
 		}
 	}
 	for k, l := range a.logins {
@@ -778,7 +774,6 @@ func (a *AuthService) sessionSnapshot(key [32]byte) *authSession {
 	}
 	if !a.now().Before(s.expires) {
 		delete(a.sessions, key)
-		a.dropDelegationsLocked(key)
 		return nil
 	}
 	cp := *s
@@ -788,7 +783,6 @@ func (a *AuthService) sessionSnapshot(key [32]byte) *authSession {
 func (a *AuthService) dropSession(key [32]byte) {
 	a.mu.Lock()
 	delete(a.sessions, key)
-	a.dropDelegationsLocked(key)
 	a.mu.Unlock()
 }
 
@@ -967,6 +961,11 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "unavailable")
 		return
 	}
+	// Persistent MCP credentials require a recent interactive login. A failure
+	// here does not block the browser login; credentials just stay inactive.
+	if err := a.users.loggedIn(ctx, p.ID, now); err != nil {
+		log.Printf("auth: recording login time failed: %v", err)
+	}
 	secret, ok := a.newSession(&authSession{
 		userID:      p.ID,
 		subject:     info.subject,
@@ -1019,7 +1018,6 @@ func (a *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s := a.sessions[key]
 	if s != nil && authEqual(r.Header.Get("X-CSRF-Token"), s.csrf) {
 		delete(a.sessions, key)
-		a.dropDelegationsLocked(key)
 		s = nil
 	}
 	a.mu.Unlock()
