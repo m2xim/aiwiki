@@ -83,22 +83,23 @@ func TestMCPOAuthPostgresResourceBoundary(t *testing.T) {
 		t.Fatal("browser session lost")
 	}
 	// Native credentials coexist with discovery without inheriting its broad scope.
-	p := corporateHTTP(alice, "POST", "/api/projects", `{"name":"Native subset","space_id":"`+aSpace+`"}`)
-	var project corporateProject
+	p := corporateHTTP(alice, "POST", "/api/agent-projects", `{"name":"Native subset","visibility":"private","spaces":[{"space_id":"`+aSpace+`","mode":"read"}]}`)
+	var project AgentProjectForTest
 	if p.Code != 201 || json.Unmarshal(p.Body.Bytes(), &project) != nil {
 		t.Fatal("seed project failed")
 	}
 	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now}
 	for _, endpoint := range []string{"credentials"} {
-		w = call("POST", "/api/mcp/"+endpoint, `{"name":"Native read","project_ids":["`+project.ID+`"]}`, "", me.CSRF, cookie)
+		w = call("POST", "/api/mcp/"+endpoint, `{"name":"Native read","projects":["`+project.ID+`"],"read_only":true}`, "", me.CSRF, cookie)
 		var native struct {
 			Token string `json:"token"`
 		}
 		if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &native) != nil || native.Token == "" {
 			t.Fatalf("native mint failed: %d %s", w.Code, w.Body)
 		}
-		w = rpc(native.Token, "tools/list", nil)
-		if w.Code != 200 || strings.Contains(w.Body.String(), `"wiki_write"`) {
+		lb, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+		w = call("POST", "/mcp?project="+project.ID, string(lb), native.Token, "", nil)
+		if w.Code != 200 || strings.Contains(w.Body.String(), `"wiki_write"`) || !strings.Contains(w.Body.String(), `"wiki_search"`) {
 			t.Fatalf("native scope escaped: %d %s", w.Code, w.Body)
 		}
 	}

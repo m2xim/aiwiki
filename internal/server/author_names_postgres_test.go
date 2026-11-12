@@ -15,12 +15,12 @@ func TestAuthorNamesAndServiceAccountRenamePostgres(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	bob, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	e.member("pa", bobID, "reader")
+	e.member("sa", bobID, "reader")
 	svc := e.account(alice, "Agent Smith")
 
-	e.seedExec(`INSERT INTO articles(id,space_id,parent_id,project_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author) VALUES('an_art','s1','','pa','T','','b','article','active',0,'[]','{}',2,'now','now',?)`, svc)
+	e.seedExec(`INSERT INTO articles(id,space_id,parent_id,project_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author) VALUES('an_art','sa','','','T','','b','article','active',0,'[]','{}',2,'now','now',?)`, svc)
 	for rev, author := range map[int]string{1: aliceID, 2: svc} {
-		snap, _ := json.Marshal(Article{ID: "an_art", SpaceID: "s1", ProjectID: "pa", Title: "T", Revision: rev, Author: author})
+		snap, _ := json.Marshal(Article{ID: "an_art", SpaceID: "sa", Title: "T", Revision: rev, Author: author})
 		e.seedExec(`INSERT INTO revisions(article_id,revision,author,message,created_at,snapshot) VALUES('an_art',?,?,'m','now',?)`, rev, author, string(snap))
 	}
 	e.seedExec(`INSERT INTO comments(id,article_id,anchor,body,author,created_at,resolved) VALUES('c_u','an_art','','x',?,'now',0),('c_s','an_art','','y',?,'now',0),('c_g','an_art','','z','ghost_u_unknown',?, 0)`, aliceID, svc, "now")
@@ -57,7 +57,7 @@ func TestAuthorNamesAndServiceAccountRenamePostgres(t *testing.T) {
 			t.Fatalf("%s comment names: %v", label, got)
 		}
 		var list []map[string]any
-		rr = corporateHTTP(who, "GET", "/api/articles?space_id=s1", "")
+		rr = corporateHTTP(who, "GET", "/api/articles?space_id=sa", "")
 		if json.Unmarshal(rr.Body.Bytes(), &list) != nil || len(list) == 0 || list[0]["author_name"] != "Agent Smith" {
 			t.Fatalf("%s list: %s", label, rr.Body)
 		}
@@ -101,7 +101,7 @@ func TestAuthorNamesAndServiceAccountRenamePostgres(t *testing.T) {
 	e.expect(e.call(bob, persistentAccountR, "PATCH", `{"name":"Hijack"}`, svc), http.StatusNotFound)
 	e.expect(e.call(alice, persistentAccountR, "PATCH", `{"name":"n"}`, "svc_missing"), http.StatusNotFound)
 	scoped := *alice
-	scoped.principal = &Principal{ID: aliceID, Issuer: e.iss, Subject: "alice", MCPScope: projScope("write", "pa"), MCPDelegationID: "pat_x"}
+	scoped.principal = &Principal{ID: aliceID, Issuer: e.iss, Subject: "alice", MCPScope: spaceScope("write", "sa"), MCPDelegationID: "pat_x"}
 	e.expect(e.call(&scoped, persistentAccountR, "PATCH", `{"name":"Hijack"}`, svc), http.StatusForbidden)
 	if got := e.text(`SELECT name FROM mcp_service_accounts WHERE id=?`, svc); got != "Agent Brown" {
 		t.Fatalf("name after refusals: %s", got)
@@ -169,11 +169,11 @@ func TestMCPCommentResolvePostgres(t *testing.T) {
 	bob, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
 	svc := e.account(alice, "Agent")
-	e.seedExec(`INSERT INTO articles(id,space_id,parent_id,project_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author) VALUES('cr_art','s1','','pa','T','','b','article','active',0,'[]','{}',1,'now','now',?)`, aliceID)
+	e.seedExec(`INSERT INTO articles(id,space_id,parent_id,project_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author) VALUES('cr_art','sa','','','T','','b','article','active',0,'[]','{}',1,'now','now',?)`, aliceID)
 	e.seedExec(`INSERT INTO comments(id,article_id,anchor,body,author,created_at,resolved) VALUES('c_human','cr_art','','h',?,'now',0),('c_agent','cr_art','','a',?,'now',0),('c_agent2','cr_art','','a2',?,'now',0)`, aliceID, svc, svc)
 
 	asKey := func(mode, actor string) *Server {
-		sc := projScope(mode, "pa")
+		sc := spaceScope(mode, "sa")
 		db, done, err := e.root.DB.scopedMCP(context.Background(), aliceID, sc, actor)
 		if err != nil {
 			t.Fatal(err)
@@ -205,7 +205,7 @@ func TestMCPCommentResolvePostgres(t *testing.T) {
 		t.Fatalf("editor-level key resolves others': %v %s", isErr, text)
 	}
 	// Commenter-level ceiling (owner is only a commenter on pr... use a reader/commenter project): bob commenter on pa.
-	e.seedExec(`UPDATE memberships SET role='commenter' WHERE resource_id='pa' AND subject_id=?`, aliceID)
+	e.seedExec(`UPDATE memberships SET role='commenter' WHERE resource_id='sa' AND subject_id=?`, aliceID)
 	e.seedExec(`UPDATE comments SET resolved=0`)
 	own := mcpScopedCall(t, asKey("write", svc), "c_agent2")
 	if !own {
@@ -218,7 +218,7 @@ func TestMCPCommentResolvePostgres(t *testing.T) {
 	if mcpScopedCall(t, asKey("write", ""), "c_agent") {
 		t.Fatal("a key without the service actor resolved the service comment")
 	}
-	e.seedExec(`UPDATE memberships SET role='editor' WHERE resource_id='pa' AND subject_id=?`, aliceID)
+	e.seedExec(`UPDATE memberships SET role='editor' WHERE resource_id='sa' AND subject_id=?`, aliceID)
 	// Read-mode key: tool hidden and RLS refuses.
 	ro := asKey("read", "")
 	if mcpScopedTool(ro.principal, "wiki_comment_resolve") {

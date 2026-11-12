@@ -53,41 +53,14 @@ func TestCorporateRolesInheritanceAndAtomicGrants(t *testing.T) {
 	if !strings.Contains(grants.Body.String(), "commenter") || !strings.Contains(grants.Body.String(), "editor") {
 		t.Fatal("lost concurrent grants")
 	}
-	createProject := func(parent string, inherit bool) string {
-		t.Helper()
-		raw, _ := json.Marshal(map[string]any{"space_id": space, "parent_id": parent, "name": "Project", "inherit_acl": inherit})
-		r := corporateHTTP(alice, "POST", "/api/projects", string(raw))
-		if r.Code != 201 {
-			t.Fatalf("project %d %s", r.Code, r.Body.String())
-		}
-		var p map[string]any
-		json.Unmarshal(r.Body.Bytes(), &p)
-		return p["id"].(string)
-	}
-	if r := corporateHTTP(bob, "POST", "/api/projects", `{"space_id":"`+space+`","name":"escalation","inherit_acl":false}`); r.Code != 403 {
-		t.Fatalf("manager created closed project: %d %s", r.Code, r.Body.String())
-	}
-	r := corporateHTTP(bob, "POST", "/api/projects", `{"space_id":"`+space+`","name":"managed"}`)
-	if r.Code != 201 {
-		t.Fatal(r.Body.String())
-	}
-	var managed struct {
-		ID string `json:"id"`
-	}
-	json.Unmarshal(r.Body.Bytes(), &managed)
-	if r := corporateHTTP(bob, "PATCH", "/api/projects/"+managed.ID, `{"inherit_acl":false}`); r.Code < 400 {
-		t.Fatal("manager escalated through project creation")
-	}
-	parent := createProject("", true)
-	child := createProject(parent, true)
-	rr := corporateHTTP(alice, "POST", "/api/articles", `{"space_id":"`+space+`","project_id":"`+child+`","title":"Nested article","body":"nested needle","tags":["team.a"],"properties":{"key.with.dots":"v"}}`)
+	rr := corporateHTTP(alice, "POST", "/api/articles", `{"space_id":"`+space+`","title":"Nested article","body":"nested needle","tags":["team.a"],"properties":{"key.with.dots":"v"}}`)
 	if rr.Code != 201 {
 		t.Fatalf("article %d %s", rr.Code, rr.Body.String())
 	}
 	var a Article
 	json.Unmarshal(rr.Body.Bytes(), &a)
 	if rr := corporateHTTP(reader, "GET", "/api/articles/"+a.ID, ""); rr.Code != 200 {
-		t.Fatal("space grant not inherited through nested projects")
+		t.Fatal("space grant does not reach the article")
 	}
 	if rr := corporateHTTP(reader, "GET", "/api/search?tag=team.a&property=key.with.dots:v", ""); rr.Code != 200 || !strings.Contains(rr.Body.String(), a.ID) {
 		t.Fatalf("PG JSON filtering %d %s", rr.Code, rr.Body.String())
@@ -114,17 +87,12 @@ func TestCorporateRolesInheritanceAndAtomicGrants(t *testing.T) {
 	if rr := corporateHTTP(editor, "PATCH", "/api/comments/"+c.ID, `{"body":"moderated"}`); rr.Code != 200 {
 		t.Fatalf("editor moderation %d %s", rr.Code, rr.Body.String())
 	}
-	if rr := corporateHTTP(alice, "PATCH", "/api/projects/"+parent, `{"inherit_acl":false}`); rr.Code != 200 {
-		t.Fatalf("close root %d %s", rr.Code, rr.Body.String())
+	// Revoking the space grant revokes the article.
+	if rr := corporateHTTP(alice, "DELETE", "/api/access?resource_type=space&resource_id="+space+"&subject_type=user&subject_id=reader", ""); rr.Code != 204 {
+		t.Fatalf("revoke %d %s", rr.Code, rr.Body.String())
 	}
 	if rr := corporateHTTP(reader, "GET", "/api/articles/"+a.ID, ""); rr.Code != 404 {
-		t.Fatal("inheritance stop did not revoke")
-	}
-	// Creator retains direct ownership even for a project created without inheritance.
-	closed := createProject("", false)
-	rr = corporateHTTP(alice, "POST", "/api/articles", `{"space_id":"`+space+`","project_id":"`+closed+`","title":"Closed","body":"private"}`)
-	if rr.Code != 201 {
-		t.Fatalf("creator lost closed project %d %s", rr.Code, rr.Body.String())
+		t.Fatal("revoking the space grant did not revoke the article")
 	}
 	if rr := corporateHTTP(alice, "DELETE", "/api/access?resource_type=space&resource_id="+space+"&subject_type=user&subject_id=alice", ""); rr.Code != 409 {
 		t.Fatalf("removed last owner %d", rr.Code)

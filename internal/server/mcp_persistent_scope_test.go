@@ -15,23 +15,21 @@ func TestMCPPersistentWriteScope(t *testing.T) {
 	}
 	defer release()
 	for _, q := range []string{
-		`INSERT INTO spaces(id,name,description,owner_id,personal) VALUES('pat-space','fixture','','alice',0)`,
-		`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('space','pat-space','user','alice','owner')`,
-		`INSERT INTO projects(id,space_id,parent_id,name,description,inherit_acl) VALUES('pat-a','pat-space','','A','',0),('pat-b','pat-space','','B','',0)`,
-		`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('project','pat-a','user','alice','owner'),('project','pat-b','user','alice','owner')`,
-		`INSERT INTO articles(id,space_id,parent_id,project_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author) VALUES('pat-doc-a','pat-space','','pat-a','A','','','article','active',0,'[]','{}',1,'now','now','alice'),('pat-doc-b','pat-space','','pat-b','B','','','article','active',0,'[]','{}',1,'now','now','alice')`,
+		`INSERT INTO spaces(id,name,description,owner_id) VALUES('pat-a','A','','alice'),('pat-b','B','','alice')`,
+		`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('space','pat-a','user','alice','owner'),('space','pat-b','user','alice','owner')`,
+		`INSERT INTO articles(id,space_id,parent_id,project_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author) VALUES('pat-doc-a','pat-a','','','A','','','article','active',0,'[]','{}',1,'now','now','alice'),('pat-doc-b','pat-b','','','B','','','article','active',0,'[]','{}',1,'now','now','alice')`,
 	} {
 		if _, err = seed.Exec(q); err != nil {
 			t.Fatal(err)
 		}
 	}
-	scope, done, err := root.DB.scopedMCP(ctx, "alice", projScope("write", "pat-a"))
+	scope, done, err := root.DB.scopedMCP(ctx, "alice", spaceScope("write", "pat-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer done()
 	var role string
-	if err = scope.QueryRow(`SELECT corporate_effective_role('alice','pat-space','pat-a')`).Scan(&role); err != nil || role != "editor" {
+	if err = scope.QueryRow(`SELECT corporate_effective_role('alice','pat-a','')`).Scan(&role); err != nil || role != "editor" {
 		t.Fatalf("ceiling=%q err=%v", role, err)
 	}
 	checkAffected := func(q string, want int64) {
@@ -47,8 +45,7 @@ func TestMCPPersistentWriteScope(t *testing.T) {
 	}
 	checkAffected(`UPDATE articles SET body='allowed' WHERE id='pat-doc-a'`, 1)
 	checkAffected(`UPDATE articles SET body='forbidden' WHERE id='pat-doc-b'`, 0)
-	checkAffected(`UPDATE spaces SET name='forbidden' WHERE id='pat-space'`, 0)
-	checkAffected(`UPDATE projects SET name='forbidden' WHERE id='pat-a'`, 0)
+	checkAffected(`UPDATE spaces SET name='forbidden' WHERE id='pat-a'`, 0)
 	checkAffected(`DELETE FROM memberships WHERE resource_id='pat-a'`, 0)
 	for _, table := range []string{"users", "memberships", "security_audit", "mcp_credentials", "mcp_service_accounts"} {
 		var n int
@@ -61,15 +58,15 @@ func TestMCPPersistentWriteScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkAffected(`UPDATE articles SET body='after-demotion' WHERE id='pat-doc-a'`, 0)
-	if err = scope.QueryRow(`SELECT corporate_effective_role('alice','pat-space','pat-a')`).Scan(&role); err != nil || role != "reader" {
+	if err = scope.QueryRow(`SELECT corporate_effective_role('alice','pat-a','')`).Scan(&role); err != nil || role != "reader" {
 		t.Fatalf("demotion=%q err=%v", role, err)
 	}
 	// Missing/invalid modes fail closed, even if scope JSON remains valid.
-	if _, err = scope.Exec(`SELECT set_config('app.mcp_scope','[{"type":"project","id":"pat-a","mode":"bogus"}]',false)`); err != nil {
+	if _, err = scope.Exec(`SELECT set_config('app.mcp_scope','[{"type":"space","id":"pat-a","mode":"bogus"}]',false)`); err != nil {
 		t.Fatal(err)
 	}
 	var absent sql.NullString
-	if err = scope.QueryRow(`SELECT corporate_effective_role('alice','pat-space','pat-a')`).Scan(&absent); err != nil || absent.Valid {
+	if err = scope.QueryRow(`SELECT corporate_effective_role('alice','pat-a','')`).Scan(&absent); err != nil || absent.Valid {
 		t.Fatalf("missing mode allowed role: %v %v", absent, err)
 	}
 	done()
@@ -78,7 +75,7 @@ func TestMCPPersistentWriteScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	var mode string
-	if err = resumed.QueryRow(`SELECT current_setting('app.mcp_scope',true)`).Scan(&mode); err != nil || mode != scopeJSONText(projScope("write", "pat-a")) {
+	if err = resumed.QueryRow(`SELECT current_setting('app.mcp_scope',true)`).Scan(&mode); err != nil || mode != scopeJSONText(spaceScope("write", "pat-a")) {
 		t.Fatalf("resumed mode=%q err=%v", mode, err)
 	}
 	finish()
@@ -106,7 +103,7 @@ func TestMCPPersistentMetadataGuards(t *testing.T) {
 	owner, root := corporateFixture(t)
 	for _, q := range []string{
 		`INSERT INTO mcp_service_accounts(id,owner_id,name) VALUES('svc_alice','alice','Alice'),('svc_bob','bob','Bob')`,
-		`INSERT INTO mcp_credentials(id,owner_id,name,secret_hash,scope,expires_at) VALUES('pat_alice','alice','Alice',repeat('a',64),'[{"type":"project","id":"project","mode":"read"}]',now()+interval '1 day'),('pat_bob','bob','Bob',repeat('b',64),'[{"type":"project","id":"project","mode":"read"}]',now()+interval '1 day')`,
+		`INSERT INTO mcp_credentials(id,owner_id,name,secret_hash,agent_project_ids,expires_at) VALUES('pat_alice','alice','Alice',repeat('a',64),'["project"]',now()+interval '1 day'),('pat_bob','bob','Bob',repeat('b',64),'["project"]',now()+interval '1 day')`,
 	} {
 		if _, err := owner.DB.Exec(q); err != nil {
 			t.Fatal(err)
@@ -124,7 +121,8 @@ func TestMCPPersistentMetadataGuards(t *testing.T) {
 		}
 	}
 	for _, q := range []string{
-		`UPDATE mcp_credentials SET scope='[{"type":"project","id":"expanded","mode":"read"}]' WHERE id='pat_alice'`,
+		`UPDATE mcp_credentials SET agent_project_ids='["expanded"]' WHERE id='pat_alice'`,
+		`UPDATE mcp_credentials SET read_only=true WHERE id='pat_alice'`,
 		`UPDATE mcp_credentials SET owner_id='bob' WHERE id='pat_alice'`,
 		`UPDATE mcp_credentials SET expires_at=expires_at+interval '1 hour' WHERE id='pat_alice'`,
 		`UPDATE mcp_credentials SET mode='write' WHERE id='pat_alice'`,

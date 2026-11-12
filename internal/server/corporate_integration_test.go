@@ -109,7 +109,9 @@ func TestCorporatePostgresIsolation(t *testing.T) {
 		}
 		for _, path := range []string{"/api/spaces", "/api/articles", "/api/search?q=secret", "/api/bootstrap", "/api/export", "/api/catalog", "/api/tags?space_id=" + space} {
 			rr := corporateHTTP(user, "GET", path, "")
-			if strings.Contains(rr.Body.String(), "Hidden deployment secret") || strings.Contains(rr.Body.String(), "Private Alice") || strings.Contains(rr.Body.String(), "classified") {
+			// An administrator sees the bare directory entry (name and owner) of a space without a role, never content.
+			directory := user.principal.ID == "admin" && path == "/api/catalog" && strings.Contains(rr.Body.String(), `"limited":true`)
+			if strings.Contains(rr.Body.String(), "Hidden deployment secret") || strings.Contains(rr.Body.String(), "Private Alice") && !directory || strings.Contains(rr.Body.String(), "classified") {
 				t.Errorf("leak %s: %s", path, rr.Body.String())
 			}
 		}

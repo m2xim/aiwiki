@@ -23,20 +23,6 @@ func userAccessGet(t *testing.T, s *Server, target string) (int, userAccessRespo
 	return rr.Code, out, rr.Body.String()
 }
 
-func userAccessProject(t *testing.T, s *Server, space, parent, name string, inherit bool) string {
-	t.Helper()
-	raw, _ := json.Marshal(map[string]any{"space_id": space, "parent_id": parent, "name": name, "inherit_acl": inherit})
-	rr := corporateHTTP(s, "POST", "/api/projects", string(raw))
-	if rr.Code != 201 {
-		t.Fatalf("project %s: %d %s", name, rr.Code, rr.Body.String())
-	}
-	var p struct {
-		ID string `json:"id"`
-	}
-	json.Unmarshal(rr.Body.Bytes(), &p)
-	return p.ID
-}
-
 func userAccessGrant(t *testing.T, owner *Server, kind, id, subjectType, subject, role string) {
 	t.Helper()
 	if _, err := owner.DB.Exec(`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES(?,?,?,?,?) ON CONFLICT (resource_type,resource_id,subject_type,subject_id) DO UPDATE SET role=EXCLUDED.role`, kind, id, subjectType, subject, role); err != nil {
@@ -105,7 +91,7 @@ func TestCorporateUserAccessEnumeratesOnlyManagedResources(t *testing.T) {
 	userAccessGrant(t, owner, "space", space, "user", "admin", "manager")
 	_, got, body := userAccessGet(t, admin, "bob")
 	item, ok := userAccessFind(got.Resources, "space", space)
-	if !ok || len(got.Resources) != 1 || item.Role != "reader" || !item.Personal || item.Archived || item.Name != "Private Alice" {
+	if !ok || len(got.Resources) != 1 || item.Role != "reader" || item.Personal || item.Archived || item.Name != "Private Alice" {
 		t.Fatalf("manager view: %s", body)
 	}
 	_, got, body = userAccessGet(t, admin, "alice")
@@ -145,111 +131,5 @@ func TestCorporateUserAccessEnumeratesOnlyManagedResources(t *testing.T) {
 	}
 	if _, got, body = userAccessGet(t, admin, "alice"); len(got.Resources) != 0 {
 		t.Fatalf("revoked actor still enumerates: %s", body)
-	}
-}
-
-func TestCorporateUserAccessTeamInheritedAndArchivedProjects(t *testing.T) {
-	owner, root := corporateFixture(t)
-	admin := corporateAs(t, root, "admin")
-	alice := corporateAs(t, root, "alice")
-
-	space := corporateCreateSpace(t, alice)
-	parent := userAccessProject(t, alice, space, "", "Parent project", true)
-	child := userAccessProject(t, alice, space, parent, "Child project", true)
-	if _, err := owner.DB.Exec(`INSERT INTO teams(id,name) VALUES('team-a','Team A')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := owner.DB.Exec(`INSERT INTO team_members(team_id,user_id) VALUES('team-a','bob')`); err != nil {
-		t.Fatal(err)
-	}
-	userAccessGrant(t, owner, "space", space, "team", "team-a", "commenter")
-	userAccessGrant(t, owner, "project", child, "user", "bob", "editor")
-	userAccessGrant(t, owner, "space", space, "user", "admin", "owner")
-
-	_, got, body := userAccessGet(t, admin, "bob")
-	if len(got.Resources) != 3 {
-		t.Fatalf("want space, parent, child: %s", body)
-	}
-	want := map[string]string{space: "commenter", parent: "commenter", child: "editor"}
-	for id, role := range want {
-		kind := "project"
-		if id == space {
-			kind = "space"
-		}
-		if item, ok := userAccessFind(got.Resources, kind, id); !ok || item.Role != role || item.Archived {
-			t.Fatalf("%s %s: %s", kind, id, body)
-		}
-	}
-	for i := 1; i < len(got.Resources); i++ {
-		a, b := got.Resources[i-1], got.Resources[i]
-		if a.ResourceType > b.ResourceType {
-			t.Fatalf("not ordered by resource_type: %s", body)
-		}
-	}
-
-	// Archive flag is reported; roles still apply to archived resources.
-	if rr := corporateHTTP(alice, "PATCH", "/api/projects/"+parent, `{"archived":true}`); rr.Code != 200 {
-		t.Fatalf("archive %d %s", rr.Code, rr.Body.String())
-	}
-	_, got, body = userAccessGet(t, admin, "bob")
-	if item, ok := userAccessFind(got.Resources, "project", parent); !ok || !item.Archived || item.Personal {
-		t.Fatalf("archived metadata: %s", body)
-	}
-	if item, ok := userAccessFind(got.Resources, "project", child); !ok || item.Archived {
-		t.Fatalf("child archived flag must be its own: %s", body)
-	}
-
-	// Disabled target has no effective role anywhere.
-	if _, err := owner.DB.Exec(`UPDATE users SET disabled=1 WHERE id='bob'`); err != nil {
-		t.Fatal(err)
-	}
-	code, got, body := userAccessGet(t, admin, "bob")
-	if code != 200 || len(got.Resources) != 0 || !strings.Contains(body, `"resources":[]`) {
-		t.Fatalf("disabled target: %d %s", code, body)
-	}
-
-	// A disabled administrator is rejected.
-	if _, err := owner.DB.Exec(`UPDATE users SET disabled=1 WHERE id='admin'`); err != nil {
-		t.Fatal(err)
-	}
-	if code, _, body = userAccessGet(t, admin, "alice"); code != 403 {
-		t.Fatalf("disabled admin: %d %s", code, body)
-	}
-}
-
-func TestCorporateUserAccessChildWithoutParentMetadata(t *testing.T) {
-	owner, root := corporateFixture(t)
-	admin := corporateAs(t, root, "admin")
-	alice := corporateAs(t, root, "alice")
-
-	space := corporateCreateSpace(t, alice)
-	hidden := userAccessProject(t, alice, space, "", "Hidden parent title", true)
-	child := userAccessProject(t, alice, space, hidden, "Directly shared child", false)
-	other := userAccessProject(t, alice, space, hidden, "Unmanaged sibling", false)
-	userAccessGrant(t, owner, "project", child, "user", "admin", "manager")
-	userAccessGrant(t, owner, "project", child, "user", "bob", "reader")
-	userAccessGrant(t, owner, "project", other, "user", "admin", "reader")
-	userAccessGrant(t, owner, "project", other, "user", "bob", "reader")
-
-	code, got, body := userAccessGet(t, admin, "bob")
-	if code != 200 || len(got.Resources) != 1 {
-		t.Fatalf("want only the managed child: %d %s", code, body)
-	}
-	item := got.Resources[0]
-	if item.ResourceType != "project" || item.ResourceID != child || item.Name != "Directly shared child" || item.Role != "reader" {
-		t.Fatalf("child entry: %s", body)
-	}
-	for _, secret := range []string{space, hidden, other, "Hidden parent title", "Unmanaged sibling", "Private Alice"} {
-		if strings.Contains(body, secret) {
-			t.Fatalf("response leaks %q: %s", secret, body)
-		}
-	}
-	// Target with no access to the managed child gets nothing.
-	if _, got, body = userAccessGet(t, admin, "reader"); len(got.Resources) != 0 {
-		t.Fatalf("unrelated target listed: %s", body)
-	}
-	// The target's access to a resource the actor cannot manage stays hidden.
-	if _, got, body = userAccessGet(t, admin, "alice"); len(got.Resources) != 1 || got.Resources[0].ResourceID != child {
-		t.Fatalf("alice view must be limited to managed resources: %s", body)
 	}
 }
