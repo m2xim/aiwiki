@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-const mcpInstructions = "AI Wiki workflow: (1) call wiki_bootstrap with the space_id of your project to get its pinned rules in full; " +
+const mcpInstructions = "AI Wiki workflow: (1) call wiki_bootstrap to get the pinned rules in full (with a space_id to narrow to one space); " +
 	"(2) wiki_search to find articles, or wiki_search_sections to find sections and get revision-pinned read_args (ranked, supports Russian and English); (3) for large articles use wiki_read with max_chars=4000 and follow next_read as needed; alternatively use outline=true then anchor; " +
 	"(4) wiki_links shows the parent, children and linked neighbours of an article; (5) use wiki_edit for small changes (replace_section, append, replace_text) instead of resending the whole article; " +
 	"(6) wiki_write creates articles or updates them (unsent fields are kept) and always needs base_revision for updates. " +
@@ -64,7 +64,6 @@ func mcpToolList() []map[string]any {
 	idDesc := "Article id (letters, digits, underscore, hyphen)."
 	article := objectSchema(map[string]any{
 		"space_id":      prop("string", "Space the article belongs to (e.g. general). Required for create."),
-		"project_id":    prop("string", "Project within the space; empty for a direct space document."),
 		"parent_id":     prop("string", "Id of the parent article (tree structure), empty for top level."),
 		"title":         prop("string", "Article title, at most 300 characters. Required for create."),
 		"summary":       prop("string", "Short plain-text description (1-2 sentences) of what the article contains; it is shown in search results and indexed for search, so make it informative."),
@@ -80,29 +79,28 @@ func mcpToolList() []map[string]any {
 	})
 	article["description"] = "Editable article fields. Create: space_id and title required. Update (id given): include base_revision; fields not sent keep their current values."
 	tools := []map[string]any{
-		{"name": "wiki_bootstrap", "description": "Start of every session. Without space_id: returns full pinned instructions of the general space configured by the administrator (its id is general_space_id; a scoped credential also gets the pinned rules of every space in its scope, general first), compact other_pinned (pinned articles of other spaces without bodies), spaces and recent changes. Call it again with the space_id of your project to get that space's pinned rules in full.", "inputSchema": objectSchema(map[string]any{"space_id": prop("string", "Project space id; when given, pinned articles of the general space (general_space_id) and this space are returned in full.")})},
+		{"name": "wiki_bootstrap", "description": "Start of every session. Without space_id: returns full pinned instructions of the general space configured by the administrator (its id is general_space_id), compact other_pinned (pinned articles of other spaces without bodies), spaces and recent changes. Inside an agent project (connection /mcp?project=<id>) it returns the pinned rules of the general space and then of every space of the project in full, plus project (its spaces, modes and your effective rights). A key connected without a project gets the general rules, projects and a guide for choosing one. Call it again with a space_id to get that space's pinned rules in full.", "inputSchema": objectSchema(map[string]any{"space_id": prop("string", "Project space id; when given, pinned articles of the general space (general_space_id) and this space are returned in full.")})},
+		{"name": "wiki_projects", "description": "List the agent projects available to this key (or to you) with their spaces, modes and your effective rights, the current project (current_project_id, empty before one is chosen) and connect_url_template (<origin>/mcp?project={id}). Use it to choose a project: ask the user which one to work in, write the MCP address with ?project=<id> into this repository's MCP settings and note the project in AGENTS.md or CLAUDE.md.", "inputSchema": objectSchema(map[string]any{})},
 		{"name": "wiki_search", "description": "Ranked full-text search over title, summary, tags, properties and body with Russian and English morphology (word forms match). All words must match (AND); if no article matches all words, the best partial matches are returned and mode is \"any\". Results are compact (no body) with score, snippet and matched_in; most relevant first. Filters narrow the result. Paging: if next_offset is present, call again with offset=next_offset.", "inputSchema": objectSchema(map[string]any{
-			"q":          prop("string", "Search words, whitespace separated. Omit to list by recent update."),
-			"space_id":   prop("string", "Only articles of this space."),
-			"project_id": prop("string", "Only articles directly in this project."),
-			"tag":        strArrProp("Only articles having all of these tags (exact match)."),
-			"property":   strArrProp("Only articles having all of these properties, each as key:value (exact match)."),
-			"kind":       prop("string", "Only this kind: article, instruction, research, plan or source."),
-			"pinned":     prop("boolean", "true: only pinned articles."),
-			"limit":      prop("integer", "Page size, default 20, maximum 100."),
-			"offset":     prop("integer", "Number of results to skip (use next_offset from the previous response)."),
+			"q":        prop("string", "Search words, whitespace separated. Omit to list by recent update."),
+			"space_id": prop("string", "Only articles of this space."),
+			"tag":      strArrProp("Only articles having all of these tags (exact match)."),
+			"property": strArrProp("Only articles having all of these properties, each as key:value (exact match)."),
+			"kind":     prop("string", "Only this kind: article, instruction, research, plan or source."),
+			"pinned":   prop("boolean", "true: only pinned articles."),
+			"limit":    prop("integer", "Page size, default 20, maximum 100."),
+			"offset":   prop("integer", "Number of results to skip (use next_offset from the previous response)."),
 		})},
 		{"name": "wiki_search_sections", "description": "Search sections using their own heading/text, weaker ancestor headings and article identity (title, summary, tags, property values). Common function words are ignored when other terms remain; rare terms and local evidence rank higher. mode all covers effective terms, otherwise partial fallback any. matched_in separates local fields from article context; context-only hits may have empty snippet and need verification. Use revision-pinned read_args directly in wiki_read. Global search excludes archived spaces unless explicitly scoped. Pages reflect current data, not a snapshot. When the server has semantic search (response field semantic), sections are also ranked by meaning, including across Russian and English, and fused with full lexical matches; matched_by tells lexical from semantic, similarity is the cosine score. A semantic-only hit is a candidate, not evidence that the subject exists: read it before relying on it. Argument semantic=false forces lexical search. Response semantic is on, indexing (some sections not embedded yet, see semantic_coverage), unavailable (embedding service down: lexical results) or off.", "inputSchema": objectSchema(map[string]any{
-			"q":          prop("string", "Required nonempty search words; Russian and English morphology."),
-			"space_id":   prop("string", "Only this space; omit for global search."),
-			"project_id": prop("string", "Only this project; omit for all accessible projects."),
-			"kind":       prop("string", "Only this article kind."),
-			"pinned":     prop("boolean", "true: only pinned articles."),
-			"tag":        strArrProp("Require all exact tags."),
-			"property":   strArrProp("Require all exact key:value properties."),
-			"semantic":   prop("boolean", "false: lexical search only. Default true when the server has semantic search."),
-			"limit":      map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Page size, default 5, maximum 20."},
-			"offset":     map[string]any{"type": "integer", "minimum": 0, "description": "Skip this many results; use next_offset when present."},
+			"q":        prop("string", "Required nonempty search words; Russian and English morphology."),
+			"space_id": prop("string", "Only this space; omit for global search."),
+			"kind":     prop("string", "Only this article kind."),
+			"pinned":   prop("boolean", "true: only pinned articles."),
+			"tag":      strArrProp("Require all exact tags."),
+			"property": strArrProp("Require all exact key:value properties."),
+			"semantic": prop("boolean", "false: lexical search only. Default true when the server has semantic search."),
+			"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Page size, default 5, maximum 20."},
+			"offset":   map[string]any{"type": "integer", "minimum": 0, "description": "Skip this many results; use next_offset when present."},
 		}, "q")},
 		{"name": "wiki_read", "description": "Read an article or anchor section (heading to next peer). For bounded text use max_chars=4000; returns text, offset, total_chars, has_more and next_read. Follow next_read verbatim to preserve revision after edits. Without max_chars/offset legacy full body or section is returned. outline=true returns headings without body and cannot combine with bounded mode. revision selects a saved snapshot. Use wiki_comments for discussion.", "inputSchema": objectSchema(map[string]any{
 			"id":        prop("string", idDesc),
@@ -127,7 +125,7 @@ func mcpToolList() []map[string]any {
 		{"name": "wiki_history", "description": "List revisions of an article, newest first, as compact {revision,author,message,created_at} without content. With revision returns that single snapshot in full (wiki_read with revision returns the body in a lighter form).", "inputSchema": objectSchema(map[string]any{"id": prop("string", idDesc), "revision": map[string]any{"type": "integer", "minimum": 1, "description": "Return this revision's full snapshot."}}, "id")},
 		{"name": "wiki_comments", "description": "Read all comments on an article, including resolved comments (field resolved), in chronological order. Mark a comment done with wiki_comment_resolve.", "inputSchema": objectSchema(map[string]any{"id": stringSchema()}, "id")},
 		{"name": "wiki_restore", "description": "Restore a prior revision as a new revision", "inputSchema": objectSchema(map[string]any{"id": stringSchema(), "revision": map[string]any{"type": "integer", "minimum": 1}, "base_revision": map[string]any{"type": "integer", "minimum": 1}, "author": stringSchema(), "message": stringSchema()}, "id", "revision", "base_revision")},
-		{"name": "wiki_comment_resolve", "description": "Mark a comment resolved (or reopen it with resolved=false). Needs a write key; you may resolve your own comments with commenter access and anyone's with editor access to the article's project. Returns the comment.", "inputSchema": objectSchema(map[string]any{"id": prop("string", "Comment id (from wiki_comments)."), "resolved": prop("boolean", "true (default) to resolve, false to reopen.")}, "id")},
+		{"name": "wiki_comment_resolve", "description": "Mark a comment resolved (or reopen it with resolved=false). Needs a write key; you may resolve your own comments with commenter access and anyone's with editor access to the article's space. Returns the comment.", "inputSchema": objectSchema(map[string]any{"id": prop("string", "Comment id (from wiki_comments)."), "resolved": prop("boolean", "true (default) to resolve, false to reopen.")}, "id")},
 		{"name": "wiki_comment", "description": "Add a comment to an article heading", "inputSchema": objectSchema(map[string]any{"id": stringSchema(), "anchor": stringSchema(), "body": stringSchema(), "author": stringSchema()}, "id", "body")},
 	}
 	return append(tools, artifactToolList()...)
@@ -148,6 +146,8 @@ func (s *Server) callTool(params map[string]json.RawMessage) any {
 	switch name {
 	case "wiki_bootstrap":
 		return s.toolBootstrap(args)
+	case "wiki_projects":
+		return s.toolProjects(args)
 	case "wiki_search":
 		return s.toolSearch(args)
 	case "wiki_search_sections":
@@ -325,7 +325,7 @@ type searchItem struct {
 
 func (s *Server) toolSearch(args map[string]json.RawMessage) any {
 	ar := newArgs(args)
-	p := SearchParams{ProjectID: ar.str("project_id"), Q: ar.str("q"), SpaceID: ar.str("space_id"), Kind: ar.str("kind"), Pinned: ar.boolean("pinned"), Limit: 20, AllowAny: true}
+	p := SearchParams{Q: ar.str("q"), SpaceID: ar.str("space_id"), Kind: ar.str("kind"), Pinned: ar.boolean("pinned"), Limit: 20, AllowAny: true}
 	limit, offset := ar.integer("limit"), ar.integer("offset")
 	p.Tags = ar.strings("tag")
 	p.Properties = ar.strings("property")
@@ -614,18 +614,39 @@ func (s *Server) generalSpaceID(q queryer) string {
 	return v
 }
 
-// scopeSpaces returns the distinct spaces that appear in an MCP key scope.
-func scopeSpaces(views []mcpScopeView) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, v := range views {
-		if v.SpaceID != "" && !seen[v.SpaceID] {
-			seen[v.SpaceID] = true
-			out = append(out, v.SpaceID)
-		}
-	}
-	return out
+// connectURLTemplate is built from the configured public origin, never from the Host header.
+func (s *Server) connectURLTemplate() string {
+	return s.allowedOrigin + "/mcp?project={id}"
 }
+
+// agentProjectsFor lists the projects visible to this request: a key sees only its own list.
+func (s *Server) agentProjectsFor(ids []string) []agentProject {
+	if s.DB == nil || !s.DB.pg {
+		return []agentProject{}
+	}
+	readOnly := s.principal != nil && s.principal.MCPReadOnly
+	list, err := loadAgentProjects(s.DB, ids, readOnly)
+	if err != nil {
+		return []agentProject{}
+	}
+	return list
+}
+
+func (s *Server) toolProjects(args map[string]json.RawMessage) any {
+	if bad := newArgs(args).fail(); bad != nil {
+		return bad
+	}
+	if s.DB == nil || !s.DB.pg {
+		return toolOK(map[string]any{"current_project_id": "", "projects": []agentProject{}, "connect_url_template": s.connectURLTemplate()})
+	}
+	current := ""
+	if s.principal != nil {
+		current = s.principal.MCPProjectID
+	}
+	return toolOK(map[string]any{"current_project_id": current, "projects": s.agentProjectsFor(nil), "connect_url_template": s.connectURLTemplate()})
+}
+
+const mcpIntrospectionGuide = "This key has no project selected, so only wiki_bootstrap and wiki_projects work. Ask the user which project to work in and show them the list in projects (names and spaces). Then write the MCP address <origin>/mcp?project=<id> (connect_url_template) into this repository's MCP settings and note the chosen project in AGENTS.md or CLAUDE.md so you do not ask again. Pinned rules of the general space are included below."
 
 func (s *Server) toolBootstrap(args map[string]json.RawMessage) any {
 	ar := newArgs(args)
@@ -633,6 +654,8 @@ func (s *Server) toolBootstrap(args map[string]json.RawMessage) any {
 	if bad := ar.fail(); bad != nil {
 		return bad
 	}
+	introspect := s.principal != nil && s.principal.MCPIntrospect
+	inProject := s.principal != nil && s.principal.MCPProjectID != "" && s.DB.pg
 	spaces := []Space{}
 	rows, e := s.DB.Query("SELECT id,name,description,archived_at FROM spaces WHERE archived_at IS NULL ORDER BY name")
 	if e != nil {
@@ -649,43 +672,51 @@ func (s *Server) toolBootstrap(args map[string]json.RawMessage) any {
 		live = "deleted_at IS NULL AND status<>'archived' AND corporate_container_writable(space_id,project_id)"
 	}
 	out := map[string]any{"spaces": spaces}
-	// A scoped credential may not see whole spaces, so it would never learn the space_id
-	// of its elements (required by wiki_write and wiki_bootstrap). Return its own scope
-	// elements with display names; nothing new becomes visible.
-	var scopeViews []mcpScopeView
-	if s.principal != nil && s.principal.MCPScope != nil {
-		for _, v := range mcpScopeViews(s.DB, s.principal.MCPScope) {
-			if v.Type == "project" && v.SpaceID == "" {
-				continue // archived or not visible
-			}
-			scopeViews = append(scopeViews, v)
-		}
-		if scopeViews == nil {
-			scopeViews = []mcpScopeView{}
-		}
-		out["scope"] = scopeViews
-	}
 	general := s.generalSpaceID(s.DB)
 	out["general_space_id"] = general
+	var projectSpaces []string
+	if inProject {
+		// The agent project of this connection: its composition and what this agent may do in each space.
+		for _, p := range s.agentProjectsFor([]string{s.principal.MCPProjectID}) {
+			p := p
+			out["project"] = &p
+		}
+	}
+	if s.principal != nil && s.principal.MCPScope != nil && !introspect {
+		// The session scope names the project's spaces; row-level security still decides what is readable.
+		seen := map[string]bool{general: true}
+		for _, el := range s.principal.MCPScope {
+			if el.Type == "space" && !seen[el.ID] {
+				seen[el.ID] = true
+				projectSpaces = append(projectSpaces, el.ID)
+			}
+		}
+	}
+	if introspect {
+		out["projects"] = s.agentProjectsFor(nil)
+		out["connect_url_template"] = s.connectURLTemplate()
+		space = "" // introspection cannot narrow to other spaces
+	}
 	var instructions []Article
 	recentWhere, recentArgs := live, []any{}
 	order := " ORDER BY CASE WHEN space_id=? THEN 0 ELSE 1 END,title,id"
 	if space == "" {
 		full := []any{general}
-		if scopeViews != nil {
-			for _, sp := range scopeSpaces(scopeViews) {
-				if sp != general {
-					full = append(full, sp)
-				}
-			}
+		for _, sp := range projectSpaces {
+			full = append(full, sp)
 		}
 		marks := strings.TrimSuffix(strings.Repeat("?,", len(full)), ",")
 		instructions = s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND space_id IN ("+marks+")"+order, append(append([]any{}, full...), general)...)
-		others := s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND space_id NOT IN ("+marks+") ORDER BY space_id,title,id", full...)
-		out["other_pinned"] = compactAll(others)
+		if !introspect {
+			others := s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND space_id NOT IN ("+marks+") ORDER BY space_id,title,id", full...)
+			out["other_pinned"] = compactAll(others)
+		}
 		out["guide"] = "Only pinned rules of the general space configured by the administrator (general_space_id) are included in full, listed first. other_pinned lists pinned articles of other spaces without bodies. Call wiki_bootstrap again with the space_id of your project to get its pinned rules in full, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates."
-		if scopeViews != nil {
-			out["guide"] = "This credential is limited to the elements of scope (a space element covers the whole space; a project element covers the project and its subprojects; each has its own read/write mode) plus the general space configured by the administrator (general_space_id, always readable). Pinned rules of the general space and of every space in scope are included in full, general first. Call wiki_bootstrap again with the space_id of one of them to narrow to it, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates. To create an article pass the space_id (and project_id) of a writable scope element."
+		if inProject {
+			out["guide"] = "You work in the agent project in project: its spaces with their modes and your effective rights (effective: write, comment or read) are listed there; the general space is always readable. Pinned rules of the general space come first, then those of the project's spaces, all in full. Call wiki_bootstrap again with a space_id to narrow to one space, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates. Write only where effective is write."
+		}
+		if introspect {
+			out["guide"] = mcpIntrospectionGuide
 		}
 	} else {
 		instructions = s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND (space_id=? OR space_id=?)"+order, general, space, general)

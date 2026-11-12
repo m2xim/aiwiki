@@ -30,7 +30,6 @@ var roleScopePolicies = map[string]string{
 var roleScopeReadPolicies = []string{
 	"article_fts/corporate_fts_read",
 	"articles/corporate_articles_mismatch_probe",
-	"articles/corporate_articles_project_move_read",
 	"articles/corporate_articles_read",
 	"articles/storage_quota_probe_articles",
 	"attachments/corporate_attachments_read",

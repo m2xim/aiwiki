@@ -202,8 +202,16 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	switch q.Method {
 	case "initialize":
 		instructions := mcpInstructions
-		if s.principal != nil && s.principal.MCPScope != nil {
-			instructions = "Persistent access limited to the scope " + jsonText(s.principal.MCPScope) + ": each element is a space (the whole space) or a project (the project and all its subprojects) with its own mode read or write. The general space configured by the administrator (shared rules, see general_space_id in wiki_bootstrap) is always readable; it is writable only if listed as a space element with mode write and you have editor access there. Current owner ACLs still apply; no administration. Use wiki_search_sections then revision-pinned bounded reads (max_chars=4000); edits require base_revision. Access expires at " + s.principal.MCPExpiresAt.UTC().Format("2006-01-02T15:04:05Z") + "."
+		switch {
+		case s.principal != nil && s.principal.MCPIntrospect:
+			instructions = "This persistent key is connected without a project. Only wiki_bootstrap and wiki_projects are available. Call wiki_projects, show the user the list (names and spaces) and ask which project to work in; then write " + s.connectURLTemplate() + " (with the chosen id) into this repository's MCP settings and note the project in AGENTS.md or CLAUDE.md. Access expires at " + s.principal.MCPExpiresAt.UTC().Format("2006-01-02T15:04:05Z") + "."
+		case s.principal != nil && s.principal.MCPScope != nil:
+			instructions = "Persistent access inside one agent project (" + s.principal.MCPProjectID + "): a set of spaces, each read or write. The general space is always readable (writable only if the project lists it with write). Your right in a space is the lower of the project mode and the key owner's role there; a read-only key never writes. wiki_bootstrap shows the project with your effective rights. No administration. Use wiki_search_sections then revision-pinned bounded reads (max_chars=4000); edits require base_revision." + func() string {
+				if !s.principal.MCPExpiresAt.IsZero() {
+					return " Access expires at " + s.principal.MCPExpiresAt.UTC().Format("2006-01-02T15:04:05Z") + "."
+				}
+				return ""
+			}()
 		}
 		result = map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]string{"name": "aiwiki", "version": "1.0"}, "instructions": instructions}
 	case "ping":

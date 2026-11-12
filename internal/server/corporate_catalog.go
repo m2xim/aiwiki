@@ -8,9 +8,9 @@ import (
 )
 
 type catalogArticleStatsRow struct {
-	spaceID, projectID string
-	updated            any
-	tags               []byte
+	spaceID string
+	updated any
+	tags    []byte
 }
 
 func (s *Server) corporateCatalog(w http.ResponseWriter, r *http.Request) {
@@ -19,23 +19,20 @@ func (s *Server) corporateCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type catalogSpace struct {
-		Limited       bool             `json:"limited,omitempty"`
-		ID            string           `json:"id"`
-		Name          string           `json:"name"`
-		Description   string           `json:"description"`
-		Personal      bool             `json:"personal"`
-		ArticleCount  int              `json:"article_count"`
-		LastUpdated   string           `json:"last_updated,omitempty"`
-		Tags          []string         `json:"tags"`
-		EffectiveRole string           `json:"effective_role,omitempty"`
-		Projects      []catalogProject `json:"projects"`
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		Description   string   `json:"description"`
+		Personal      bool     `json:"personal"`
+		ArticleCount  int      `json:"article_count"`
+		LastUpdated   string   `json:"last_updated,omitempty"`
+		Tags          []string `json:"tags"`
+		EffectiveRole string   `json:"effective_role,omitempty"`
 	}
 	type spaceRow struct {
 		id, name, description string
-		personal              int
 		role                  string
 	}
-	rows, err := s.DB.Query(`SELECT id,name,description,personal FROM spaces WHERE archived_at IS NULL ORDER BY name,id`)
+	rows, err := s.DB.Query(`SELECT id,name,description FROM spaces WHERE archived_at IS NULL ORDER BY name,id`)
 	if err != nil {
 		apiErr(w, 500, "database error")
 		return
@@ -43,7 +40,7 @@ func (s *Server) corporateCatalog(w http.ResponseWriter, r *http.Request) {
 	spaceRows := make([]spaceRow, 0)
 	for rows.Next() {
 		var item spaceRow
-		if rows.Scan(&item.id, &item.name, &item.description, &item.personal) != nil {
+		if rows.Scan(&item.id, &item.name, &item.description) != nil {
 			rows.Close()
 			apiErr(w, 500, "database error")
 			return
@@ -55,6 +52,10 @@ func (s *Server) corporateCatalog(w http.ResponseWriter, r *http.Request) {
 	if rowsErr != nil || closeErr != nil {
 		apiErr(w, 500, "database error")
 		return
+	}
+	personal := map[string]bool{}
+	if s.outsideMCP() {
+		personal = s.personalSpaceSet()
 	}
 	spaces := make([]catalogSpace, 0, len(spaceRows))
 	spaceIndex := make(map[string]int, len(spaceRows))
@@ -68,73 +69,10 @@ func (s *Server) corporateCatalog(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		spaceIndex[item.id] = len(spaces)
-		spaces = append(spaces, catalogSpace{ID: item.id, Name: item.name, Description: item.description, Personal: item.personal != 0, EffectiveRole: item.role, Tags: []string{}, Projects: []catalogProject{}})
-	}
-	projectRows, err := s.DB.Query(`SELECT id,space_id,parent_id,name,description,inherit_acl FROM projects WHERE archived_at IS NULL ORDER BY name,id`)
-	if err != nil {
-		apiErr(w, 500, "database error")
-		return
-	}
-	type projectRow struct {
-		item    catalogProject
-		inherit int
-	}
-	projectItems := make([]projectRow, 0)
-	for projectRows.Next() {
-		var item projectRow
-		if projectRows.Scan(&item.item.ID, &item.item.SpaceID, &item.item.ParentID, &item.item.Name, &item.item.Description, &item.inherit) != nil {
-			projectRows.Close()
-			apiErr(w, 500, "database error")
-			return
-		}
-		projectItems = append(projectItems, item)
-	}
-	rowsErr = projectRows.Err()
-	closeErr = projectRows.Close()
-	if rowsErr != nil || closeErr != nil {
-		apiErr(w, 500, "database error")
-		return
-	}
-	visibleProjects := make([]catalogProject, 0, len(projectItems))
-	projectIndex := make(map[string]int, len(projectItems))
-	projectSpace := make(map[string]string, len(projectItems))
-	for _, row := range projectItems {
-		role, roleErr := corporateRole(s.DB, actor, "project", row.item.ID)
-		if roleErr != nil {
-			apiErr(w, 500, "database error")
-			return
-		}
-		if role == "" {
-			continue
-		}
-		if row.item.ParentID != "" {
-			parentRole, parentErr := corporateRole(s.DB, actor, "project", row.item.ParentID)
-			if parentErr != nil {
-				apiErr(w, 500, "database error")
-				return
-			}
-			if parentRole == "" {
-				row.item.ParentID = ""
-			}
-		}
-		row.item.InheritACL = row.inherit != 0
-		row.item.EffectiveRole = role
-		row.item.Tags = []string{}
-		projectIndex[row.item.ID] = len(visibleProjects)
-		projectSpace[row.item.ID] = row.item.SpaceID
-		visibleProjects = append(visibleProjects, row.item)
-	}
-	for _, project := range visibleProjects {
-		idx, exists := spaceIndex[project.SpaceID]
-		if !exists {
-			idx = len(spaces)
-			spaceIndex[project.SpaceID] = idx
-			spaces = append(spaces, catalogSpace{ID: project.SpaceID, Name: "Проекты с отдельным доступом", Limited: true, Tags: []string{}, Projects: []catalogProject{}})
-		}
-		spaces[idx].Projects = append(spaces[idx].Projects, project)
+		spaces = append(spaces, catalogSpace{ID: item.id, Name: item.name, Description: item.description, Personal: personal[item.id], EffectiveRole: item.role, Tags: []string{}})
 	}
 	// Article RLS applies to this query before counts and tags are accumulated.
-	articleRows, err := s.DB.Query(`SELECT space_id,project_id,updated_at,tags FROM articles WHERE deleted_at IS NULL`)
+	articleRows, err := s.DB.Query(`SELECT space_id,updated_at,tags FROM articles WHERE deleted_at IS NULL`)
 	if err != nil {
 		apiErr(w, 500, "database error")
 		return
@@ -142,7 +80,7 @@ func (s *Server) corporateCatalog(w http.ResponseWriter, r *http.Request) {
 	articleItems := make([]catalogArticleStatsRow, 0)
 	for articleRows.Next() {
 		var item catalogArticleStatsRow
-		if articleRows.Scan(&item.spaceID, &item.projectID, &item.updated, &item.tags) != nil {
+		if articleRows.Scan(&item.spaceID, &item.updated, &item.tags) != nil {
 			articleRows.Close()
 			apiErr(w, 500, "database error")
 			return
@@ -155,53 +93,46 @@ func (s *Server) corporateCatalog(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "database error")
 		return
 	}
-	projectCounts := make(map[string]int)
-	projectLatest := make(map[string]string)
-	projectTags := make(map[string]map[string]bool)
-	projectParents := make(map[string]string, len(visibleProjects))
-	for _, project := range visibleProjects {
-		projectParents[project.ID] = project.ParentID
-	}
 	for _, article := range articleItems {
-		spaceIdx, visibleSpace := spaceIndex[article.spaceID]
-		if visibleSpace && (!spaces[spaceIdx].Limited || projectSpace[article.projectID] == article.spaceID) {
-			spaces[spaceIdx].ArticleCount++
-			spaces[spaceIdx].LastUpdated = laterCatalogDate(spaces[spaceIdx].LastUpdated, catalogDate(article.updated))
-			addCatalogTags(&spaces[spaceIdx].Tags, article.tags)
-		}
-		if article.projectID == "" || projectSpace[article.projectID] != article.spaceID {
-			continue
-		}
-		seenProjects := make(map[string]bool)
-		for projectID := article.projectID; projectID != ""; projectID = projectParents[projectID] {
-			if seenProjects[projectID] {
-				break
-			}
-			seenProjects[projectID] = true
-			if _, visible := projectIndex[projectID]; !visible || projectSpace[projectID] != article.spaceID {
-				break
-			}
-			projectCounts[projectID]++
-			projectLatest[projectID] = laterCatalogDate(projectLatest[projectID], catalogDate(article.updated))
-			if projectTags[projectID] == nil {
-				projectTags[projectID] = make(map[string]bool)
-			}
-			addCatalogTagSet(projectTags[projectID], article.tags)
+		if idx, visible := spaceIndex[article.spaceID]; visible {
+			spaces[idx].ArticleCount++
+			spaces[idx].LastUpdated = laterCatalogDate(spaces[idx].LastUpdated, catalogDate(article.updated))
+			addCatalogTags(&spaces[idx].Tags, article.tags)
 		}
 	}
 	for i := range spaces {
-		for j := range spaces[i].Projects {
-			project := &spaces[i].Projects[j]
-			project.ArticleCount = projectCounts[project.ID]
-			project.LastUpdated = projectLatest[project.ID]
-			for tag := range projectTags[project.ID] {
-				project.Tags = append(project.Tags, tag)
-			}
-			sort.Strings(project.Tags)
-		}
 		sort.Strings(spaces[i].Tags)
 	}
-	writeJSON(w, 200, spaces)
+	out := make([]any, 0, len(spaces))
+	for _, sp := range spaces {
+		out = append(out, sp)
+	}
+	// A system administrator also gets the spaces they hold no role in, as bare directory entries:
+	// id, name, owner and the personal flag only (no description, article count, tags or content).
+	if s.adminOutsideMCP(s.DB) {
+		limited, lerr := s.DB.Query(`SELECT id,name,owner_name,personal FROM corporate_admin_space_directory()`)
+		if lerr != nil {
+			apiErr(w, 500, "database error")
+			return
+		}
+		for limited.Next() {
+			var id, name, owner string
+			var personal bool
+			if limited.Scan(&id, &name, &owner, &personal) != nil {
+				limited.Close()
+				apiErr(w, 500, "database error")
+				return
+			}
+			out = append(out, map[string]any{"id": id, "name": name, "owner_name": owner, "personal": personal, "limited": true})
+		}
+		lerr = limited.Err()
+		limited.Close()
+		if lerr != nil {
+			apiErr(w, 500, "database error")
+			return
+		}
+	}
+	writeJSON(w, 200, out)
 }
 
 func catalogDate(value any) string {
@@ -250,17 +181,4 @@ func addCatalogTagSet(target map[string]bool, raw []byte) {
 			}
 		}
 	}
-}
-
-type catalogProject struct {
-	ID            string   `json:"id"`
-	SpaceID       string   `json:"space_id"`
-	ParentID      string   `json:"parent_id"`
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	InheritACL    bool     `json:"inherit_acl"`
-	ArticleCount  int      `json:"article_count"`
-	LastUpdated   string   `json:"last_updated,omitempty"`
-	Tags          []string `json:"tags"`
-	EffectiveRole string   `json:"effective_role,omitempty"`
 }

@@ -17,11 +17,11 @@ import (
 // the SQL function corporate_move_impact (the same chain recursion as
 // corporate_effective_role); this file never re-implements inheritance.
 
+// projectsRemovedText is the answer to everything that still addresses the removed folders.
+const projectsRemovedText = "projects inside spaces were removed"
+
 const (
 	moveMaxArticles = 500
-	moveMaxProjects = 100
-	// moveMaxArtifacts bounds the artifacts visible to the actor in a moved subtree.
-	moveMaxArtifacts = 2000
 )
 
 type moveTarget struct {
@@ -93,30 +93,13 @@ type moveArticle struct {
 	Deleted  bool
 }
 
-// moveArtifact is an artifact of a moved project subtree that the actor can see.
-type moveArtifact struct {
-	ID       string
-	Revision int
-}
-
-type moveProject struct {
-	ID       string
-	ParentID string
-	SpaceID  string
-	archived bool
-}
-
 type movePlan struct {
 	req      moveRequest
 	actor    string
 	articles []moveArticle // article kind: root first; project kind: articles whose space changes
-	projects []moveProject // project kind: parents before children
-	// artifacts: project kind, space change only; visible to the actor (their RLS)
-	artifacts []moveArtifact
-	preview   movePreview
-	root      Article
-	project   corporateProject
-	access    []moveAccess
+	preview  movePreview
+	root     Article
+	access   []moveAccess
 }
 
 var moveRoleRank = map[string]int{"": 0, "reader": 1, "commenter": 2, "editor": 3, "manager": 4, "owner": 5}
@@ -147,9 +130,6 @@ func moveContainerInfo(q interface{ QueryRow(string, ...any) *sql.Row }, actor, 
 	if moveRank(q, actor, space, "") >= 1 {
 		_ = q.QueryRow(`SELECT name FROM spaces WHERE id=?`, space).Scan(&c.SpaceName)
 	}
-	if project != "" && moveRank(q, actor, space, project) >= 1 {
-		_ = q.QueryRow(`SELECT name FROM projects WHERE id=?`, project).Scan(&c.ProjectName)
-	}
 	return c
 }
 
@@ -169,7 +149,19 @@ func (s *Server) moveHandler(w http.ResponseWriter, r *http.Request, apply bool)
 		return
 	}
 	var req moveRequest
-	if corporateDecode(r, &req) != nil || (req.Kind != "article" && req.Kind != "project") || req.ID == "" ||
+	if corporateDecode(r, &req) != nil {
+		apiErr(w, 400, "invalid input")
+		return
+	}
+	if req.Kind == "project" {
+		apiErr(w, http.StatusGone, projectsRemovedText)
+		return
+	}
+	if req.Target.ProjectID != "" {
+		apiErr(w, http.StatusBadRequest, projectsRemovedText)
+		return
+	}
+	if req.Kind != "article" || req.ID == "" ||
 		len(req.ID) > 200 || len(req.Target.SpaceID) > 200 || len(req.Target.ProjectID) > 200 || len(req.Target.ParentID) > 200 || len(req.Fingerprint) > 200 {
 		apiErr(w, 400, "invalid input")
 		return
@@ -204,11 +196,7 @@ func (s *Server) moveHandler(w http.ResponseWriter, r *http.Request, apply bool)
 		return
 	}
 	var out map[string]any
-	if req.Kind == "article" {
-		out, merr = s.moveApplyArticle(tx, plan)
-	} else {
-		out, merr = s.moveApplyProject(tx, plan)
-	}
+	out, merr = s.moveApplyArticle(tx, plan)
 	if merr != nil {
 		apiErr(w, merr.code, merr.msg)
 		return
@@ -364,171 +352,7 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 		sourceInfo = moveContainerInfo(tx, actor, root.SpaceID, root.ProjectID)
 		targetInfo = moveContainerInfo(tx, actor, t.SpaceID, t.ProjectID)
 	} else {
-		if t.ProjectID != "" {
-			return nil, moveFail(400, "a project moves to target.parent_id, not target.project_id")
-		}
-		var p corporateProject
-		var inherit int
-		if err := tx.QueryRow(`SELECT id,space_id,parent_id,name,description,inherit_acl,coalesce(archived_at,'') FROM projects WHERE id=?`, req.ID).Scan(&p.ID, &p.SpaceID, &p.ParentID, &p.Name, &p.Description, &inherit, &p.ArchivedAt); err != nil {
-			return nil, moveFail(404, "project not found")
-		}
-		p.InheritACL = inherit != 0
-		switch rank := moveRank(tx, actor, p.SpaceID, p.ID); {
-		case rank < 1:
-			return nil, moveFail(404, "project not found")
-		case rank < 5:
-			return nil, moveFail(403, movePermProject)
-		}
-		if p.SpaceID == t.SpaceID && p.ParentID == t.ParentID {
-			return nil, moveFail(400, "project is already there")
-		}
-		if t.ParentID != "" {
-			var one int
-			if tx.QueryRow(`SELECT 1 FROM projects WHERE id=? AND space_id=?`, t.ParentID, t.SpaceID).Scan(&one) != nil {
-				return nil, moveFail(404, "target not found")
-			}
-		}
-		if moveRank(tx, actor, t.SpaceID, t.ParentID) < 1 {
-			return nil, moveFail(404, "target not found")
-		}
-		if moveRank(tx, actor, t.SpaceID, t.ParentID) < 4 {
-			return nil, moveFail(403, movePermProject)
-		}
-		loadProjects := func() ([]moveProject, bool, *moveError) {
-			rows, err := tx.Query(`WITH RECURSIVE sub(id,depth,path) AS (
-			SELECT id,0,ARRAY[id]::text[] FROM projects WHERE id=?
-			UNION ALL
-			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<63
-		) SELECT p.id,p.parent_id,p.space_id,coalesce(p.archived_at,'')<>'',corporate_role_rank(corporate_effective_role(?,p.space_id,p.id)) FROM sub JOIN projects p ON p.id=sub.id ORDER BY sub.depth,p.id LIMIT ?`+lockSuffix(lock, " FOR NO KEY UPDATE OF p"), req.ID, actor, moveMaxProjects+1)
-			if err != nil {
-				return nil, false, moveDBFail(err)
-			}
-			defer rows.Close()
-			var items []moveProject
-			seen := map[string]bool{}
-			denied := false
-			for rows.Next() {
-				var item moveProject
-				var archived bool
-				var rank int
-				if err = rows.Scan(&item.ID, &item.ParentID, &item.SpaceID, &archived, &rank); err != nil {
-					return nil, false, moveFail(500, "database error")
-				}
-				if seen[item.ID] {
-					continue
-				}
-				seen[item.ID] = true
-				if rank < 4 {
-					denied = true
-				}
-				if archived {
-					item.archived = true
-				}
-				items = append(items, item)
-			}
-			if rows.Err() != nil {
-				return nil, false, moveFail(500, "database error")
-			}
-			return items, denied, nil
-		}
-		projects, denied, merr := loadProjects()
-		if merr != nil {
-			return nil, merr
-		}
-		for pass := 0; lock; pass++ {
-			again, againDenied, merr := loadProjects()
-			if merr != nil {
-				return nil, merr
-			}
-			same := len(again) == len(projects)
-			for i := 0; same && i < len(projects); i++ {
-				same = projects[i].ID == again[i].ID && projects[i].ParentID == again[i].ParentID
-			}
-			projects, denied = again, againDenied
-			if same {
-				break
-			}
-			if pass >= 3 {
-				return nil, moveFail(409, "project subtree is changing; retry")
-			}
-		}
-		if len(projects) > moveMaxProjects {
-			return nil, moveFail(400, "move too large")
-		}
-		// One answer for every permission refusal, so a hidden sub-project cannot be probed.
-		if denied {
-			return nil, moveFail(403, movePermProject)
-		}
-		for _, item := range projects {
-			if item.archived {
-				return nil, moveFail(409, "the project subtree contains an archived project")
-			}
-			if item.ID == t.ParentID {
-				return nil, moveFail(400, "a project cannot be moved into itself or its descendants")
-			}
-		}
-		plan.projects = projects
-		if !moveWritable(tx, p.SpaceID, p.ID) || !moveWritable(tx, t.SpaceID, t.ParentID) {
-			return nil, moveFail(409, "source or target container is archived")
-		}
-		arows, err := tx.Query(`WITH RECURSIVE sub(id,depth,path) AS (
-			SELECT id,0,ARRAY[id]::text[] FROM projects WHERE id=?
-			UNION ALL
-			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<63
-		) SELECT a.id,a.revision,a.parent_id,coalesce(a.deleted_at,'')<>'' FROM articles a WHERE a.project_id IN (SELECT id FROM sub) AND a.space_id<>? ORDER BY a.id LIMIT ?`+lockSuffix(lock, " FOR NO KEY UPDATE OF a"), req.ID, t.SpaceID, moveMaxArticles+1)
-		if err != nil {
-			return nil, moveDBFail(err)
-		}
-		for arows.Next() {
-			var item moveArticle
-			if err = arows.Scan(&item.ID, &item.Revision, &item.Parent, &item.Deleted); err != nil {
-				arows.Close()
-				return nil, moveFail(500, "database error")
-			}
-			plan.articles = append(plan.articles, item)
-		}
-		err = arows.Err()
-		arows.Close()
-		if err != nil {
-			return nil, moveFail(500, "database error")
-		}
-		if len(plan.articles) > moveMaxArticles {
-			return nil, moveFail(400, "move too large")
-		}
-		if p.SpaceID != t.SpaceID {
-			// Artifacts follow their project. Only those the actor can see are listed
-			// (ordinary RLS), so hidden private ones are neither counted nor disclosed.
-			// The warning does not depend on what the actor sees.
-			xrows, err := tx.Query(`WITH RECURSIVE sub(id,depth,path) AS (
-			SELECT id,0,ARRAY[id]::text[] FROM projects WHERE id=?
-			UNION ALL
-			SELECT c.id,sub.depth+1,sub.path||c.id FROM projects c JOIN sub ON c.parent_id=sub.id WHERE NOT c.id=ANY(sub.path) AND sub.depth<63
-		) SELECT a.id,a.revision FROM artifacts a WHERE a.project_id IN (SELECT id FROM sub) ORDER BY a.id LIMIT ?`, req.ID, moveMaxArtifacts+1)
-			if err != nil {
-				return nil, moveDBFail(err)
-			}
-			for xrows.Next() {
-				var item moveArtifact
-				if err = xrows.Scan(&item.ID, &item.Revision); err != nil {
-					xrows.Close()
-					return nil, moveFail(500, "database error")
-				}
-				plan.artifacts = append(plan.artifacts, item)
-			}
-			err = xrows.Err()
-			xrows.Close()
-			if err != nil {
-				return nil, moveFail(500, "database error")
-			}
-			if len(plan.artifacts) > moveMaxArtifacts {
-				return nil, moveFail(400, "move too large")
-			}
-			warnings = append(warnings, "Артефакты проекта переедут вместе с ним. Авторы личных артефактов сохранят к ним доступ, только если у них есть права в новом месте; их публичные ссылки перестанут работать, если прав не будет.")
-		}
-		plan.project = p
-		tcontainer = t.ParentID
-		sourceInfo = moveContainerInfo(tx, actor, p.SpaceID, p.ParentID)
-		targetInfo = moveContainerInfo(tx, actor, t.SpaceID, t.ParentID)
+		return nil, moveFail(http.StatusGone, projectsRemovedText)
 	}
 
 	// Access impact, computed and authorized by the database.
@@ -600,7 +424,7 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 		warnings = []string{}
 	}
 	plan.access = access
-	plan.preview = movePreview{Articles: len(plan.articles), Projects: len(plan.projects), Artifacts: len(plan.artifacts), Source: sourceInfo, Target: targetInfo,
+	plan.preview = movePreview{Articles: len(plan.articles), Projects: 0, Artifacts: 0, Source: sourceInfo, Target: targetInfo,
 		Access: access, UsersGaining: gaining, UsersLosing: losing, Warnings: warnings}
 	plan.preview.Fingerprint = moveFingerprint(plan)
 	return plan, nil
@@ -627,16 +451,6 @@ func moveFingerprint(plan *movePlan) string {
 		articles = append(articles, item{ID: a.ID, A: fmt.Sprint(a.Revision), B: a.Parent})
 	}
 	sort.Slice(articles, func(i, j int) bool { return articles[i].ID < articles[j].ID })
-	projects := make([]item, 0, len(plan.projects))
-	for _, p := range plan.projects {
-		projects = append(projects, item{ID: p.ID, A: p.ParentID, B: p.SpaceID})
-	}
-	sort.Slice(projects, func(i, j int) bool { return projects[i].ID < projects[j].ID })
-	artifacts := make([]item, 0, len(plan.artifacts))
-	for _, a := range plan.artifacts {
-		artifacts = append(artifacts, item{ID: a.ID, A: fmt.Sprint(a.Revision)})
-	}
-	sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].ID < artifacts[j].ID })
 	grants := make([]grant, 0, len(plan.access))
 	for _, g := range plan.access {
 		b, a := "", ""
@@ -655,19 +469,17 @@ func moveFingerprint(plan *movePlan) string {
 		return grants[i].I < grants[j].I
 	})
 	raw, _ := json.Marshal(struct {
-		V         int        `json:"v"`
-		Kind      string     `json:"kind"`
-		ID        string     `json:"id"`
-		Target    moveTarget `json:"target"`
-		Actor     string     `json:"actor"`
-		Base      int        `json:"base"`
-		Articles  []item     `json:"articles"`
-		Projects  []item     `json:"projects"`
-		Artifacts []item     `json:"artifacts"`
-		Grants    []grant    `json:"grants"`
-		Gaining   int        `json:"gaining"`
-		Losing    int        `json:"losing"`
-	}{1, plan.req.Kind, plan.req.ID, plan.req.Target, plan.actor, plan.req.BaseRevision, articles, projects, artifacts, grants, plan.preview.UsersGaining, plan.preview.UsersLosing})
+		V        int        `json:"v"`
+		Kind     string     `json:"kind"`
+		ID       string     `json:"id"`
+		Target   moveTarget `json:"target"`
+		Actor    string     `json:"actor"`
+		Base     int        `json:"base"`
+		Articles []item     `json:"articles"`
+		Grants   []grant    `json:"grants"`
+		Gaining  int        `json:"gaining"`
+		Losing   int        `json:"losing"`
+	}{1, plan.req.Kind, plan.req.ID, plan.req.Target, plan.actor, plan.req.BaseRevision, articles, grants, plan.preview.UsersGaining, plan.preview.UsersLosing})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
@@ -760,56 +572,6 @@ func (s *Server) moveApplyArticle(tx *transaction, plan *movePlan) (map[string]a
 	return map[string]any{"articles": len(plan.articles), "projects": 0, "root": root}, nil
 }
 
-func (s *Server) moveApplyProject(tx *transaction, plan *movePlan) (map[string]any, *moveError) {
-	if err := moveSetMarker(tx, "project", plan.req.ID); err != nil {
-		return nil, moveFail(500, "database error")
-	}
-	// The articles are read before the projects move: afterwards their stored
-	// space no longer matches their project and the read policy hides them.
-	loaded, merr := moveLoadPlanned(tx, plan.articles)
-	if merr != nil {
-		return nil, merr
-	}
-	t := plan.req.Target
-	for _, p := range plan.projects {
-		var err error
-		if p.ID == plan.req.ID {
-			_, err = tx.Exec(`UPDATE projects SET parent_id=?,space_id=? WHERE id=?`, t.ParentID, t.SpaceID, p.ID)
-		} else if p.SpaceID != t.SpaceID {
-			_, err = tx.Exec(`UPDATE projects SET space_id=? WHERE id=?`, t.SpaceID, p.ID)
-		}
-		if err != nil {
-			return nil, moveDBFail(err)
-		}
-	}
-	now, author := stamp(), s.changeAuthor(plan.actor)
-	for _, item := range loaded {
-		if merr := s.moveArticleRevision(tx, item, t.SpaceID, item.ProjectID, nil, "Перенос вместе с проектом", now, author); merr != nil {
-			return nil, merr
-		}
-	}
-	// Artifacts of the whole subtree (inherit, private and deleted ones, also
-	// those the actor cannot see) follow in the same transaction. The database
-	// function reads the target space from the projects and counts what it moved.
-	var artifactsMoved int
-	if err := tx.QueryRow(`SELECT artifact_follow_project_move(?)`, plan.req.ID).Scan(&artifactsMoved); err != nil {
-		return nil, moveDBFail(err)
-	}
-	details := moveAuditDetails(plan)
-	details["artifacts"] = artifactsMoved
-	if err := corporateAudit(tx, plan.actor, "move.project", "project", plan.req.ID, details); err != nil {
-		return nil, moveFail(500, "database error")
-	}
-	var root corporateProject
-	var inherit int
-	if err := tx.QueryRow(`SELECT id,space_id,parent_id,name,description,inherit_acl,coalesce(archived_at,'') FROM projects WHERE id=?`, plan.req.ID).Scan(&root.ID, &root.SpaceID, &root.ParentID, &root.Name, &root.Description, &inherit, &root.ArchivedAt); err != nil {
-		return nil, moveFail(500, "database error")
-	}
-	root.InheritACL = inherit != 0
-	// "artifacts" is the number visible to the actor, as in the preview.
-	return map[string]any{"articles": len(plan.articles), "projects": len(plan.projects), "artifacts": len(plan.artifacts), "root": root}, nil
-}
-
 // moveLoadArticle reads an article without FOR UPDATE: the row lock would need
 // the UPDATE policy and hide articles of archived containers, which the move
 // rules must report as a conflict rather than as "not found".
@@ -829,10 +591,6 @@ func moveLoadPlanned(tx *transaction, items []moveArticle) ([]Article, *moveErro
 	}
 	return out, nil
 }
-
-// movePermProject is the single answer to every permission refusal of a project
-// move (owner, target, sub-project roles), so the reason cannot be probed.
-const movePermProject = "move is not permitted: a project move needs the owner role on the project and the manager role on the target and on all its sub-projects"
 
 func lockSuffix(lock bool, suffix string) string {
 	if lock {

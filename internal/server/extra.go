@@ -65,7 +65,7 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request, aid string) {
 	// A content restore never changes lifecycle state. In particular, a historic
 	// deleted snapshot cannot be used to bypass the explicit undelete endpoint.
 	a.DeletedAt = cur.DeletedAt
-	if s.principal != nil && (cur.SpaceID != a.SpaceID || cur.ParentID != a.ParentID || cur.ProjectID != a.ProjectID) {
+	if s.principal != nil && (cur.SpaceID != a.SpaceID || cur.ParentID != a.ParentID) {
 		apiErr(w, 400, "corporate restore cannot change article container or parent")
 		return
 	}

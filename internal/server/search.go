@@ -9,7 +9,6 @@ import (
 // SearchParams is the shared input of REST GET /api/articles and MCP wiki_search.
 // Tags and Properties ("key:value") are exact AND filters; Q is free text.
 type SearchParams struct {
-	ProjectID  string
 	Q          string
 	SpaceID    string
 	Kind       string
@@ -58,10 +57,6 @@ func (s *Server) searchArticles(ctx context.Context, p SearchParams) (SearchResu
 	args := []any{}
 	if p.SpaceID != "" {
 		args = append(args, p.SpaceID)
-	}
-	if p.ProjectID != "" {
-		where = append(where, "a.project_id=?")
-		args = append(args, p.ProjectID)
 	}
 	if p.Kind != "" {
 		where = append(where, "a.kind=?")

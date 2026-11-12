@@ -97,10 +97,6 @@ func (s *Server) toolSearchSections(args map[string]json.RawMessage) any {
 		where = append(where, "a.space_id=?")
 		queryArgs = append(queryArgs, spaceID)
 	}
-	if projectID := ar.str("project_id"); projectID != "" {
-		where = append(where, "a.project_id=?")
-		queryArgs = append(queryArgs, projectID)
-	}
 	if bad := ar.fail(); bad != nil {
 		return bad
 	}

@@ -32,6 +32,8 @@ type database struct {
 	release  func()
 	resume   func(context.Context) (*database, func(), error)
 	activeTx []*sql.Tx
+	// sessionScope is the scope computed by the database for an agent-project session.
+	sessionScope []mcpScopeElement
 }
 
 // transaction is a *sql.Tx whose statements are bound for the database dialect.
@@ -180,15 +182,65 @@ func (d *database) scoped(ctx context.Context, userID string) (*database, func()
 // scopedMCP pins the session user and an optional MCP key scope to one connection.
 // A nil scope means unrestricted; a non-nil scope is carried verbatim in app.mcp_scope.
 func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScopeElement, actor ...string) (*database, func(), error) {
-	actorID := ""
-	if len(actor) > 0 && actor[0] != userID {
-		actorID = actor[0] // service-account authorship; empty when it equals the user
+	var scopeText string
+	if scope != nil && len(scope) > 0 {
+		encoded, err := json.Marshal(scope)
+		if err != nil {
+			return nil, nil, err
+		}
+		scopeText = string(encoded)
 	}
-	if scope != nil && len(scope) == 0 {
+	return d.scopedSession(ctx, agentSession{userID: userID, scope: scope, scopeText: scopeText, actor: firstString(actor)})
+}
+
+func firstString(list []string) string {
+	if len(list) > 0 {
+		return list[0]
+	}
+	return ""
+}
+
+// agentSession describes one request's database context. credential and project are set for
+// MCP requests that name an agent project (project may be empty: introspection); scopeText, when
+// non-empty, is the exact app.mcp_scope text computed by the database.
+type agentSession struct {
+	userID, actor     string
+	credential        string
+	project           string
+	scope             []mcpScopeElement
+	scopeText         string
+	resolveFromDB     bool // compute the scope in SQL from credential/project
+	resolvedFromOwner bool // no credential: OAuth session that named a project
+}
+
+// errAgentProjectUnavailable: the project is not in the key's list, was deleted or is not visible.
+var errAgentProjectUnavailable = errors.New("project is not available for this key")
+
+// placeholderScope is installed while the real scope is being computed: scoped, general space only.
+const placeholderScope = `[{"type":"space","id":"_","mode":"read"}]`
+
+// scopedAgent pins a connection for an MCP request that works inside an agent project (or in
+// introspection mode when project is empty). The scope is computed by corporate_mcp_project_scope
+// (key) or corporate_user_project_scope (OAuth) on every call, so project edits apply to the next request.
+func (d *database) scopedAgent(ctx context.Context, userID, actor, credential, project string) (*database, func(), []mcpScopeElement, error) {
+	view, cleanup, err := d.scopedSession(ctx, agentSession{userID: userID, actor: actor, credential: credential, project: project, resolveFromDB: true})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return view, cleanup, view.sessionScope, nil
+}
+
+func (d *database) scopedSession(ctx context.Context, a agentSession) (*database, func(), error) {
+	userID := a.userID
+	actorID := ""
+	if a.actor != userID {
+		actorID = a.actor // service-account authorship; empty when it equals the user
+	}
+	if a.scope != nil && len(a.scope) == 0 {
 		return nil, nil, errors.New("invalid MCP scope")
 	}
 	if !d.pg {
-		if scope != nil {
+		if a.scope != nil || a.resolveFromDB {
 			return nil, nil, errors.New("MCP scopes require PostgreSQL")
 		}
 		return &database{pool: d.pool}, func() {}, nil
@@ -199,28 +251,49 @@ func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScop
 	if userID == "" {
 		return nil, nil, errors.New("scoped database requires a user id")
 	}
-	scopeText := ""
-	if scope != nil {
-		encoded, err := json.Marshal(scope)
-		if err != nil {
-			return nil, nil, err
-		}
-		scopeText = string(encoded)
+	scopeText := a.scopeText
+	if a.resolveFromDB {
+		scopeText = placeholderScope
 	}
 	conn, err := d.pool.Conn(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	var gotUser, gotScope, gotActor string
-	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_scope', $2, false), set_config('app.actor_id', $3, false)`, userID, scopeText, actorID).Scan(&gotUser, &gotScope, &gotActor)
-	if err == nil && (gotUser != userID || gotScope != scopeText || gotActor != actorID) {
+	var gotUser, gotScope, gotActor, gotProject, gotCred string
+	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_scope', $2, false), set_config('app.actor_id', $3, false), set_config('app.mcp_project', $4, false), set_config('app.mcp_credential', $5, false)`, userID, scopeText, actorID, a.project, a.credential).Scan(&gotUser, &gotScope, &gotActor, &gotProject, &gotCred)
+	if err == nil && (gotUser != userID || gotScope != scopeText || gotActor != actorID || gotProject != a.project || gotCred != a.credential) {
 		err = errors.New("session scope was not applied")
+	}
+	var resolved []mcpScopeElement
+	if err == nil && a.resolveFromDB {
+		var computed sql.NullString
+		if a.credential != "" {
+			err = conn.QueryRowContext(ctx, `SELECT corporate_mcp_project_scope($1, $2)::text`, a.credential, a.project).Scan(&computed)
+		} else {
+			err = conn.QueryRowContext(ctx, `SELECT corporate_user_project_scope($1, $2)::text`, userID, a.project).Scan(&computed)
+		}
+		switch {
+		case err != nil:
+		case !computed.Valid || computed.String == "":
+			err = errAgentProjectUnavailable
+		default:
+			if json.Unmarshal([]byte(computed.String), &resolved) != nil || len(resolved) == 0 {
+				err = errors.New("invalid project scope")
+			}
+		}
+		if err == nil {
+			scopeText = computed.String
+			err = conn.QueryRowContext(ctx, `SELECT set_config('app.mcp_scope', $1, false)`, scopeText).Scan(&gotScope)
+			if err == nil && gotScope != scopeText {
+				err = errors.New("session scope was not applied")
+			}
+		}
 	}
 	if err != nil {
 		discardConn(conn)
 		return nil, nil, err
 	}
-	view := &database{pg: true, conn: conn, ctx: ctx}
+	view := &database{pg: true, conn: conn, ctx: ctx, sessionScope: resolved}
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
@@ -233,9 +306,9 @@ func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScop
 				discardConn(conn)
 				return
 			}
-			var clearedUser, clearedScope, clearedActor string
-			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_scope', '', false), set_config('app.actor_id', '', false)`).Scan(&clearedUser, &clearedScope, &clearedActor)
-			if err != nil || clearedUser != "" || clearedScope != "" || clearedActor != "" {
+			var clearedUser, clearedScope, clearedActor, clearedProject, clearedCred string
+			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_scope', '', false), set_config('app.actor_id', '', false), set_config('app.mcp_project', '', false), set_config('app.mcp_credential', '', false)`).Scan(&clearedUser, &clearedScope, &clearedActor, &clearedProject, &clearedCred)
+			if err != nil || clearedUser != "" || clearedScope != "" || clearedActor != "" || clearedProject != "" || clearedCred != "" {
 				discardConn(conn)
 				return
 			}
@@ -243,9 +316,19 @@ func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScop
 		})
 	}
 	view.release = cleanup
-	resumeScope := append([]mcpScopeElement(nil), scope...)
-	view.resume = func(ctx context.Context) (*database, func(), error) {
-		return d.scopedMCP(ctx, userID, resumeScope, actorID)
+	if a.resolveFromDB {
+		view.resume = func(ctx context.Context) (*database, func(), error) {
+			v, c, _, err := d.scopedAgent(ctx, userID, a.actor, a.credential, a.project)
+			return v, c, err
+		}
+	} else {
+		resumeScope := append([]mcpScopeElement(nil), a.scope...)
+		if a.scope == nil {
+			resumeScope = nil
+		}
+		view.resume = func(ctx context.Context) (*database, func(), error) {
+			return d.scopedMCP(ctx, userID, resumeScope, actorID)
+		}
 	}
 	return view, cleanup, nil
 }
