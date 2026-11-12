@@ -35,9 +35,7 @@ func newGPEnv(t *testing.T) *gpEnv {
 	}
 	for _, sp := range []string{"gp_general", "gp_other"} {
 		x(`INSERT INTO spaces(id,name,description,owner_id,personal) VALUES(?,?, '', '',0)`, sp, sp)
-		pr := sp + "_proj"
-		x(`INSERT INTO projects(id,space_id,parent_id,name,description,inherit_acl) VALUES(?,?, '', ?, '',1)`, pr, sp, pr)
-		for _, a := range [][2]string{{sp + "_root_art", ""}, {sp + "_proj_art", pr}} {
+		for _, a := range [][2]string{{sp + "_root_art", ""}, {sp + "_proj_art", ""}} {
 			x(`INSERT INTO articles(id,space_id,parent_id,project_id,title,summary,body,kind,status,pinned,tags,properties,revision,created_at,updated_at,author,deleted_at) VALUES(?,?, '', ?, ?, '', 'body', 'article','active',1,'[]','{}',1,'now','now','admin',NULL)`, a[0], sp, a[1], a[0])
 			x(`INSERT INTO article_fts(article_id,title) VALUES(?,?)`, a[0], a[0])
 		}
@@ -102,7 +100,7 @@ func (e *gpEnv) as(user, mode string, projects ...string) *Server {
 	if mode == "" {
 		db, cleanup, err = e.root.DB.scoped(context.Background(), user)
 	} else {
-		db, cleanup, err = e.root.DB.scopedMCP(context.Background(), user, projScope(mode, projects...))
+		db, cleanup, err = e.root.DB.scopedMCP(context.Background(), user, spaceScope(mode, projects...))
 	}
 	if err != nil {
 		e.t.Fatal(err)
@@ -112,7 +110,7 @@ func (e *gpEnv) as(user, mode string, projects ...string) *Server {
 	cp.DB = db
 	cp.principal = &Principal{ID: user, Name: user, Admin: user == "admin"}
 	if mode != "" {
-		cp.principal.MCPScope, cp.principal.MCPDelegationID = projScope(mode, projects...), "pat_test"
+		cp.principal.MCPScope, cp.principal.MCPDelegationID = spaceScope(mode, projects...), "pat_test"
 	}
 	return &cp
 }
@@ -144,11 +142,11 @@ func TestGeneralSpaceImplicitReadPostgres(t *testing.T) {
 	if err := alice.DB.QueryRow(`SELECT count(*) FROM spaces WHERE id='gp_general'`).Scan(&n); err != nil || n != 1 {
 		t.Errorf("general space row n=%d err=%v", n, err)
 	}
-	if alice.gpCanWrite("gp_general", "") || alice.gpCanWrite("gp_general", "gp_general_proj") {
+	if alice.gpCanWrite("gp_general", "") || alice.gpCanWrite("gp_general", "") {
 		t.Error("implicit reader can write general")
 	}
 	bob := e.as("bob", "")
-	if !bob.gpCanWrite("gp_general", "gp_general_proj") || bob.gpCanWrite("gp_other", "gp_other_proj") {
+	if !bob.gpCanWrite("gp_general", "") || bob.gpCanWrite("gp_other", "") {
 		t.Error("explicit editor writes wrong")
 	}
 	// disabled users get nothing
@@ -181,7 +179,7 @@ func TestGeneralSpaceImplicitReadPostgres(t *testing.T) {
 
 func TestGeneralSpaceMCPPostgres(t *testing.T) {
 	e := newGPEnv(t)
-	listed := "gp_other_proj"
+	listed := "gp_other"
 	// read key not listing general: reads general, not write, still sees listed, not others
 	ro := e.as("bob", "read", listed)
 	for id, want := range map[string]bool{"gp_general_root_art": true, "gp_general_proj_art": true, "gp_other_proj_art": false, "gp_other_root_art": false} {
@@ -189,7 +187,7 @@ func TestGeneralSpaceMCPPostgres(t *testing.T) {
 			t.Errorf("read key readable(%s)=%v want %v", id, got, want)
 		}
 	}
-	if ro.gpCanWrite("gp_general", "gp_general_proj") {
+	if ro.gpCanWrite("gp_general", "") {
 		t.Error("read key writes general")
 	}
 	// bob has no grant in gp_other => key lists it but sees nothing there
@@ -199,24 +197,24 @@ func TestGeneralSpaceMCPPostgres(t *testing.T) {
 	}
 	// a write key that does not list general as a write element still only reads it
 	rw := e.as("bob", "write", listed)
-	if rw.gpCanWrite("gp_general", "gp_general_proj") || !rw.gpReadable("gp_general_proj_art") {
+	if rw.gpCanWrite("gp_general", "") || !rw.gpReadable("gp_general_proj_art") {
 		t.Error("implicit general must be read-only even for a write key")
 	}
 	// explicit space element with write + owner editor in general
-	rw = e.asScope("bob", mcpScopeElement{"project", listed, "write"}, mcpScopeElement{"space", "gp_general", "write"})
-	if !rw.gpCanWrite("gp_general", "gp_general_proj") || !rw.gpCanWrite("gp_general", "") {
+	rw = e.asScope("bob", mcpScopeElement{"space", listed, "write"}, mcpScopeElement{"space", "gp_general", "write"})
+	if !rw.gpCanWrite("gp_general", "") {
 		t.Error("explicit general write with editor owner cannot write general")
 	}
 	// ... but a key never exceeds its owner (alice is only an implicit reader)
-	if e.asScope("alice", mcpScopeElement{"space", "gp_general", "write"}).gpCanWrite("gp_general", "gp_general_proj") {
+	if e.asScope("alice", mcpScopeElement{"space", "gp_general", "write"}).gpCanWrite("gp_general", "") {
 		t.Error("write key with implicit-reader owner writes general")
 	}
 	// reference function role values
 	var role string
-	if err := rw.DB.QueryRow(`SELECT coalesce(corporate_effective_role('bob','gp_general','gp_general_proj'),'')`).Scan(&role); err != nil || role != "editor" {
+	if err := rw.DB.QueryRow(`SELECT coalesce(corporate_effective_role('bob','gp_general',''),'')`).Scan(&role); err != nil || role != "editor" {
 		t.Errorf("role=%q err=%v", role, err)
 	}
-	if err := ro.DB.QueryRow(`SELECT coalesce(corporate_effective_role('bob','gp_other','gp_other_root'),'')`).Scan(&role); err != nil || role != "" {
+	if err := ro.DB.QueryRow(`SELECT coalesce(corporate_effective_role('bob','gp_other',''),'')`).Scan(&role); err != nil || role != "" {
 		t.Errorf("unlisted role=%q err=%v", role, err)
 	}
 	// no admin/space administration via MCP
@@ -291,7 +289,7 @@ func TestGeneralSpaceBootstrapPostgres(t *testing.T) {
 		}
 		return r
 	}
-	scoped := e.as("bob", "read", "gp_other_proj")
+	scoped := e.as("bob", "read", "gp_other")
 	out := call(scoped, map[string]any{})
 	if out["general_space_id"] != "gp_general" {
 		t.Errorf("general_space_id=%v", out["general_space_id"])
@@ -305,9 +303,9 @@ func TestGeneralSpaceBootstrapPostgres(t *testing.T) {
 	if _, err := e.owner.DB.Exec(`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('space','gp_other','user','bob','reader')`); err != nil {
 		t.Fatal(err)
 	}
-	out = call(e.as("bob", "read", "gp_other_proj"), map[string]any{})
+	out = call(e.as("bob", "read", "gp_other"), map[string]any{})
 	list := ids(out["instructions"])
-	if len(list) != 3 || !strings.HasPrefix(list[0], "gp_general_") || !strings.HasPrefix(list[1], "gp_general_") || list[2] != "gp_other_proj_art" {
+	if len(list) != 4 || !strings.HasPrefix(list[0], "gp_general_") || !strings.HasPrefix(list[1], "gp_general_") || !strings.HasPrefix(list[2], "gp_other_") || !strings.HasPrefix(list[3], "gp_other_") {
 		t.Errorf("layered instructions=%v", list)
 	}
 	// other_pinned must not repeat full ones

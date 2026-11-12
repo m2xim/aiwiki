@@ -41,4 +41,9 @@ type Principal struct {
 	MCPActorID      string            `json:"-"` // distinct service-account authorship; ID remains sponsor for ACLs
 	MCPBearer       bool              `json:"-"` // signed in with a provider bearer token on /mcp
 	MCPClientID     string            `json:"-"` // azp/client_id of that token, sanitised; "unknown" when absent
+	// Persistent key authority (set at admission; the session scope itself is computed per request).
+	MCPKeyProjects []string `json:"-"` // non-nil: a persistent key and the projects it lists
+	MCPReadOnly    bool     `json:"-"`
+	MCPProjectID   string   `json:"-"` // the agent project of this request ("" = introspection or no project)
+	MCPIntrospect  bool     `json:"-"` // a key without ?project=: only wiki_bootstrap and wiki_projects
 }

@@ -52,6 +52,9 @@ func (s *Server) migrateCorporate() error {
 	if err := s.migrateSemantic(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateAgentProjects(ctx); err != nil {
+		return err
+	}
 	return s.migrateRoleScope(ctx)
 }
 
@@ -159,8 +162,9 @@ func (s *Server) corporateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/teams", s.corporateTeams)
 	mux.HandleFunc("/api/teams/{id}", s.corporateTeam)
 	mux.HandleFunc("/api/teams/{id}/members", s.corporateTeamMembers)
-	mux.HandleFunc("/api/projects", s.corporateProjects)
-	mux.HandleFunc("/api/projects/{id}", s.corporateProject)
+	mux.HandleFunc("/api/projects", projectsRemoved)
+	mux.HandleFunc("/api/projects/{id}", projectsRemoved)
+	s.registerAgentProjectRoutes(mux)
 	mux.HandleFunc("/api/access", s.corporateAccess)
 	mux.HandleFunc("GET /api/access/effective", s.corporateEffectiveAccess)
 	mux.HandleFunc("GET /api/catalog", s.corporateCatalog)
@@ -256,24 +260,53 @@ AND (?='' OR u.id<>?)`, resource.kind, resource.id, deactivateTeam, teamID, excl
 }
 
 func corporateRole(q interface{ QueryRow(string, ...any) *sql.Row }, who, kind, id string) (string, error) {
-	var spaceID, projectID string
-	switch kind {
-	case "space":
-		spaceID = id
-	case "project":
-		projectID = id
-		if err := q.QueryRow(`SELECT space_id FROM projects WHERE id=?`, id).Scan(&spaceID); err != nil {
-			return "", err
-		}
-	default:
+	if kind != "space" {
 		return "", errors.New("invalid resource type")
 	}
 	var role sql.NullString
-	err := q.QueryRow(`SELECT corporate_effective_role(?,?,?)`, who, spaceID, projectID).Scan(&role)
+	err := q.QueryRow(`SELECT corporate_effective_role(?,?,'')`, who, id).Scan(&role)
 	if err != nil || !role.Valid {
 		return "", err
 	}
 	return role.String, nil
+}
+
+// projectsRemoved answers every request that still addresses the removed folders inside spaces.
+func projectsRemoved(w http.ResponseWriter, r *http.Request) {
+	apiErr(w, http.StatusGone, projectsRemovedText)
+}
+
+// outsideMCP reports a browser-style session: not a persistent key and not an OAuth bearer.
+func (s *Server) outsideMCP() bool {
+	p := s.principal
+	return p != nil && p.MCPScope == nil && p.MCPKeyProjects == nil && p.MCPDelegationID == "" && p.MCPActorID == "" && !p.MCPBearer && !p.MCPIntrospect
+}
+
+// adminOutsideMCP: a system administrator in a browser session, confirmed by the users table.
+func (s *Server) adminOutsideMCP(q interface{ QueryRow(string, ...any) *sql.Row }) bool {
+	if !s.outsideMCP() || !s.principal.Admin {
+		return false
+	}
+	var admin, disabled int
+	return q.QueryRow(`SELECT admin,disabled FROM users WHERE id=?`, s.principal.ID).Scan(&admin, &disabled) == nil && admin == 1 && disabled == 0
+}
+
+// corporateSpaceRole is the caller's effective rank name on a space. A system administrator may manage
+// the roles of every existing space, with or without a role of their own: without one the result is
+// "owner" for the purpose of the role-management endpoints only (the content stays closed, the
+// database policies do not follow this).
+func (s *Server) corporateSpaceRole(q interface{ QueryRow(string, ...any) *sql.Row }, actor, id string) (role string, viaAdmin bool, err error) {
+	role, err = corporateRole(q, actor, "space", id)
+	if err != nil {
+		return "", false, err
+	}
+	if s.adminOutsideMCP(q) {
+		var exists bool
+		if q.QueryRow(`SELECT corporate_admin_space_exists(?)`, id).Scan(&exists) == nil && exists && !corporateAtLeast(role, "owner") {
+			return "owner", true, nil
+		}
+	}
+	return role, false, nil
 }
 
 func corporateAtLeast(role, minimum string) bool {
@@ -281,8 +314,16 @@ func corporateAtLeast(role, minimum string) bool {
 		map[string]int{"reader": 1, "commenter": 2, "editor": 3, "manager": 4, "owner": 5}[minimum]
 }
 
-func corporateManageResource(w http.ResponseWriter, r *http.Request, q interface{ QueryRow(string, ...any) *sql.Row }, actor, kind, id string, ownerOnly bool) bool {
-	role, err := corporateRole(q, actor, kind, id)
+func (s *Server) corporateManageResource(w http.ResponseWriter, r *http.Request, q interface{ QueryRow(string, ...any) *sql.Row }, actor, kind, id string, ownerOnly bool) bool {
+	if kind == "project" {
+		apiErr(w, http.StatusGone, projectsRemovedText)
+		return false
+	}
+	if kind != "space" {
+		apiErr(w, http.StatusNotFound, "resource not found")
+		return false
+	}
+	role, _, err := s.corporateSpaceRole(q, actor, id)
 	if err != nil || !corporateAtLeast(role, map[bool]string{true: "owner", false: "manager"}[ownerOnly]) {
 		apiErr(w, http.StatusNotFound, "resource not found")
 		return false
@@ -755,10 +796,15 @@ func (s *Server) corporateSpaceCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.outsideMCP() {
+		apiErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
 	var in struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		Personal    *bool  `json:"personal"`
+		// Personal is accepted and ignored: a space is personal while its owner is its only member.
+		Personal *bool `json:"personal"`
 	}
 	if corporateDecode(r, &in) != nil {
 		apiErr(w, 400, "invalid input")
@@ -769,25 +815,6 @@ func (s *Server) corporateSpaceCreate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "invalid input")
 		return
 	}
-	personal := true
-	if in.Personal != nil {
-		personal = *in.Personal
-	}
-	if s.personal {
-		// One owner: spaces stay personal=0, as in the imported data (docs/PERSONAL.md).
-		personal = false
-	}
-	if !personal && !s.principal.Admin {
-		apiErr(w, 403, "forbidden")
-		return
-	}
-	if !personal {
-		var admin int
-		if err := s.DB.QueryRow(`SELECT admin FROM users WHERE id=? AND disabled=0`, actor).Scan(&admin); err != nil || admin != 1 {
-			apiErr(w, 403, "forbidden")
-			return
-		}
-	}
 	id := newID()
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -795,11 +822,11 @@ func (s *Server) corporateSpaceCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`INSERT INTO spaces(id,name,description,owner_id,personal) VALUES(?,?,?,?,?)`, id, in.Name, in.Description, actor, boolInt(personal)); err == nil {
+	if _, err = tx.Exec(`INSERT INTO spaces(id,name,description,owner_id) VALUES(?,?,?,?)`, id, in.Name, in.Description, actor); err == nil {
 		_, err = tx.Exec(`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('space',?,'user',?,'owner') ON CONFLICT DO NOTHING`, id, actor)
 	}
 	if err == nil {
-		err = corporateAudit(tx, actor, "space.create", "space", id, map[string]any{"personal": personal})
+		err = corporateAudit(tx, actor, "space.create", "space", id, map[string]any{})
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -808,284 +835,7 @@ func (s *Server) corporateSpaceCreate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "database error")
 		return
 	}
-	writeJSON(w, 201, map[string]any{"id": id, "name": in.Name, "description": in.Description, "personal": personal, "owner_id": actor})
-}
-
-type corporateProject struct {
-	EffectiveRole string `json:"effective_role,omitempty"`
-	ID            string `json:"id"`
-	SpaceID       string `json:"space_id"`
-	ParentID      string `json:"parent_id"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	InheritACL    bool   `json:"inherit_acl"`
-	ArchivedAt    string `json:"archived_at,omitempty"`
-}
-
-func (s *Server) corporateProjects(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.corporateActor(w, r, false)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		spaceID := r.URL.Query().Get("space_id")
-		query := `SELECT id,space_id,parent_id,name,description,inherit_acl,coalesce(archived_at,'') FROM projects`
-		args := []any{}
-		if spaceID != "" {
-			query += ` WHERE space_id=?`
-			args = append(args, spaceID)
-		}
-		query += ` ORDER BY name,id`
-		rows, err := s.DB.Query(query, args...)
-		if err != nil {
-			apiErr(w, 500, "database error")
-			return
-		}
-		items := make([]corporateProject, 0)
-		for rows.Next() {
-			var item corporateProject
-			var inherit int
-			if rows.Scan(&item.ID, &item.SpaceID, &item.ParentID, &item.Name, &item.Description, &inherit, &item.ArchivedAt) != nil {
-				apiErr(w, 500, "database error")
-				return
-			}
-			item.InheritACL = inherit != 0
-			items = append(items, item)
-		}
-		rowsErr := rows.Err()
-		closeErr := rows.Close()
-		if rowsErr != nil || closeErr != nil {
-			apiErr(w, 500, "database error")
-			return
-		}
-		out := make([]corporateProject, 0, len(items))
-		for _, item := range items {
-			role, roleErr := corporateRole(s.DB, actor, "project", item.ID)
-			if roleErr != nil || role == "" {
-				continue
-			}
-			item.EffectiveRole = role
-			if item.ParentID != "" {
-				parentRole, _ := corporateRole(s.DB, actor, "project", item.ParentID)
-				if parentRole == "" {
-					item.ParentID = ""
-				}
-			}
-			out = append(out, item)
-		}
-		writeJSON(w, 200, out)
-	case http.MethodPost:
-		var in struct {
-			SpaceID     string `json:"space_id"`
-			ParentID    string `json:"parent_id"`
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			InheritACL  *bool  `json:"inherit_acl"`
-		}
-		if corporateDecode(r, &in) != nil {
-			apiErr(w, 400, "invalid input")
-			return
-		}
-		in.Name, ok = corporateName(in.Name, 160)
-		if !ok || in.SpaceID == "" || utf8.RuneCountInString(in.Description) > 4000 {
-			apiErr(w, 400, "invalid input")
-			return
-		}
-		if in.ParentID == "" && !corporateManageResource(w, r, s.DB, actor, "space", in.SpaceID, false) {
-			return
-		}
-		if in.ParentID != "" {
-			if !corporateManageResource(w, r, s.DB, actor, "project", in.ParentID, false) {
-				return
-			}
-			var parentSpace string
-			if err := s.DB.QueryRow(`SELECT space_id FROM projects WHERE id=?`, in.ParentID).Scan(&parentSpace); err != nil || parentSpace != in.SpaceID {
-				apiErr(w, 400, "invalid parent")
-				return
-			}
-			var depth int
-			if err := s.DB.QueryRow(`WITH RECURSIVE chain(id,parent_id,depth,path) AS (SELECT id,parent_id,1,ARRAY[id]::text[] FROM projects WHERE id=? UNION ALL SELECT p.id,p.parent_id,c.depth+1,c.path||p.id FROM chain c JOIN projects p ON p.id=c.parent_id WHERE c.depth<65 AND NOT p.id=ANY(c.path)) SELECT coalesce(max(depth),0) FROM chain`, in.ParentID).Scan(&depth); err != nil || depth >= 64 {
-				apiErr(w, 400, "project hierarchy exceeds limit")
-				return
-			}
-		}
-		var writable bool
-		if err := s.DB.QueryRow("SELECT corporate_container_writable(?,?)", in.SpaceID, in.ParentID).Scan(&writable); err != nil || !writable {
-			apiErr(w, 403, "container is not writable")
-			return
-		}
-		inherit := true
-		if in.InheritACL != nil {
-			inherit = *in.InheritACL
-		}
-		id := newID()
-		tx, err := s.DB.Begin()
-		if err != nil {
-			apiErr(w, 500, "database error")
-			return
-		}
-		defer tx.Rollback()
-		if err = corporateLockOwners(tx); err != nil {
-			apiErr(w, 500, "database error")
-			return
-		}
-		if in.ParentID != "" {
-			var lockedSpace string
-			if err = tx.QueryRow(`SELECT space_id FROM projects WHERE id=? FOR SHARE`, in.ParentID).Scan(&lockedSpace); err != nil || lockedSpace != in.SpaceID {
-				apiErr(w, 400, "invalid parent")
-				return
-			}
-		}
-		parentKind, parentID := "space", in.SpaceID
-		if in.ParentID != "" {
-			parentKind, parentID = "project", in.ParentID
-		}
-		parentRole, err := corporateRole(tx, actor, parentKind, parentID)
-		if err != nil || (parentRole != "owner" && parentRole != "manager") {
-			apiErr(w, 403, "project creation is not permitted")
-			return
-		}
-		if !inherit && parentRole != "owner" {
-			apiErr(w, 403, "only a parent owner may create a closed project")
-			return
-		}
-		if err = tx.QueryRow("SELECT corporate_container_writable(?,?)", in.SpaceID, in.ParentID).Scan(&writable); err != nil || !writable {
-			apiErr(w, 403, "container is not writable")
-			return
-		}
-		creatorRole := "manager"
-		if parentRole == "owner" {
-			creatorRole = "owner"
-		}
-		if _, err = tx.Exec(`INSERT INTO projects(id,space_id,parent_id,name,description,inherit_acl) VALUES(?,?,?,?,?,?)`, id, in.SpaceID, in.ParentID, in.Name, in.Description, boolInt(inherit)); err == nil {
-			_, err = tx.Exec("INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('project',?,'user',?,?)", id, actor, creatorRole)
-			if err == nil {
-				err = corporateAudit(tx, actor, "project.create", "project", id, map[string]any{"space_id": in.SpaceID, "parent_id": in.ParentID})
-			}
-		}
-		if err == nil {
-			err = tx.Commit()
-		}
-		if err != nil {
-			apiErr(w, 500, "database error")
-			return
-		}
-		writeJSON(w, 201, corporateProject{ID: id, SpaceID: in.SpaceID, ParentID: in.ParentID, Name: in.Name, Description: in.Description, InheritACL: inherit})
-	default:
-		apiErr(w, 405, "method not allowed")
-	}
-}
-
-func (s *Server) corporateProject(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.corporateActor(w, r, false)
-	if !ok {
-		return
-	}
-	id := r.PathValue("id")
-	if id == "" || !corporateManageResource(w, r, s.DB, actor, "project", id, false) {
-		return
-	}
-	if r.Method != http.MethodPatch {
-		apiErr(w, 405, "method not allowed")
-		return
-	}
-	var in struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-		Archived    *bool   `json:"archived"`
-		InheritACL  *bool   `json:"inherit_acl"`
-		ParentID    *string `json:"parent_id"`
-		SpaceID     *string `json:"space_id"`
-	}
-	if corporateDecode(r, &in) != nil || in.Name == nil && in.Description == nil && in.Archived == nil && in.InheritACL == nil && in.ParentID == nil && in.SpaceID == nil {
-		apiErr(w, 400, "invalid input")
-		return
-	}
-	if in.ParentID != nil || in.SpaceID != nil {
-		apiErr(w, 400, "project moves require an access-impact preview: use POST /api/moves/preview and /api/moves/apply")
-		return
-	}
-	if in.InheritACL != nil {
-		if !corporateManageResource(w, r, s.DB, actor, "project", id, true) {
-			return
-		}
-	}
-	tx, err := s.DB.Begin()
-	if err != nil {
-		apiErr(w, 500, "database error")
-		return
-	}
-	defer tx.Rollback()
-	if err = corporateLockOwners(tx); err != nil {
-		apiErr(w, 500, "database error")
-		return
-	}
-	if role, err := corporateRole(tx, actor, "project", id); err != nil || (role != "owner" && role != "manager") {
-		apiErr(w, 403, "project management is not permitted")
-		return
-	}
-	var current corporateProject
-	var inherit int
-	if err = tx.QueryRow(`SELECT id,space_id,parent_id,name,description,inherit_acl,coalesce(archived_at,'') FROM projects WHERE id=? FOR UPDATE`, id).Scan(&current.ID, &current.SpaceID, &current.ParentID, &current.Name, &current.Description, &inherit, &current.ArchivedAt); err != nil {
-		apiErr(w, 404, "project not found")
-		return
-	}
-	current.InheritACL = inherit != 0
-	original := current
-	if in.Name != nil {
-		current.Name, ok = corporateName(*in.Name, 160)
-		if !ok {
-			apiErr(w, 400, "invalid input")
-			return
-		}
-	}
-	if in.Description != nil {
-		if utf8.RuneCountInString(*in.Description) > 4000 {
-			apiErr(w, 400, "invalid input")
-			return
-		}
-		current.Description = *in.Description
-	}
-	if in.Archived != nil {
-		if *in.Archived && current.ArchivedAt == "" {
-			current.ArchivedAt = time.Now().UTC().Format(time.RFC3339)
-		} else if !*in.Archived {
-			current.ArchivedAt = ""
-		}
-	}
-	if in.InheritACL != nil {
-		role, err := corporateRole(tx, actor, "project", id)
-		if err != nil || role != "owner" {
-			apiErr(w, 403, "only an owner may change inheritance")
-			return
-		}
-	}
-	if in.InheritACL != nil && *in.InheritACL != current.InheritACL {
-		parentKind, parentID := "space", current.SpaceID
-		if current.ParentID != "" {
-			parentKind, parentID = "project", current.ParentID
-		}
-		parentRole, err := corporateRole(tx, actor, parentKind, parentID)
-		if err != nil || parentRole != "owner" {
-			apiErr(w, 403, "inheritance changes require a parent owner")
-			return
-		}
-	}
-	if in.InheritACL != nil {
-		current.InheritACL = *in.InheritACL
-	}
-	if _, err = tx.Exec(`UPDATE projects SET name=?,description=?,archived_at=?,inherit_acl=? WHERE id=?`, current.Name, current.Description, nullString(current.ArchivedAt), boolInt(current.InheritACL), id); err == nil {
-		err = corporateAudit(tx, actor, "project.update", "project", id, map[string]any{"renamed": current.Name != original.Name, "description_changed": current.Description != original.Description, "archived_before": original.ArchivedAt != "", "archived_after": current.ArchivedAt != "", "inherit_before": original.InheritACL, "inherit_after": current.InheritACL})
-	}
-	if err == nil {
-		err = tx.Commit()
-	}
-	if err != nil {
-		apiErr(w, 500, "database error")
-		return
-	}
-	writeJSON(w, 200, current)
+	writeJSON(w, 201, map[string]any{"id": id, "name": in.Name, "description": in.Description, "personal": !s.personal, "owner_id": actor})
 }
 
 func (s *Server) corporateUserDirectory(w http.ResponseWriter, r *http.Request) {
@@ -1093,8 +843,12 @@ func (s *Server) corporateUserDirectory(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if !s.outsideMCP() {
+		apiErr(w, http.StatusForbidden, "access denied")
+		return
+	}
 	kind, id := r.URL.Query().Get("resource_type"), r.URL.Query().Get("resource_id")
-	if id == "" || !corporateManageResource(w, r, s.DB, actor, kind, id, false) {
+	if id == "" || !s.corporateManageResource(w, r, s.DB, actor, kind, id, false) {
 		return
 	}
 	rows, err := s.DB.Query(`SELECT id,name FROM users WHERE disabled=0 ORDER BY name,id LIMIT 200`)
@@ -1134,8 +888,12 @@ func (s *Server) corporateAccess(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.outsideMCP() {
+		apiErr(w, http.StatusForbidden, "access denied")
+		return
+	}
 	kind, id := r.URL.Query().Get("resource_type"), r.URL.Query().Get("resource_id")
-	if id == "" || !corporateManageResource(w, r, s.DB, actor, kind, id, false) {
+	if id == "" || !s.corporateManageResource(w, r, s.DB, actor, kind, id, false) {
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -1194,7 +952,7 @@ func (s *Server) corporateAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Permissions are checked again after taking the ACL mutation lock.
-	role, err := corporateRole(tx, actor, kind, id)
+	role, viaAdmin, err := s.corporateSpaceRole(tx, actor, id)
 	if err != nil || (role != "owner" && role != "manager") {
 		apiErr(w, 403, "access denied")
 		return
@@ -1244,7 +1002,7 @@ func (s *Server) corporateAccess(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		action = "access.remove"
 	}
-	if err = corporateAudit(tx, actor, action, kind, id, map[string]any{"subject_type": grant.SubjectType, "subject_id": grant.SubjectID, "previous_role": previous, "role": grant.Role}); err == nil {
+	if err = corporateAudit(tx, actor, action, kind, id, map[string]any{"subject_type": grant.SubjectType, "subject_id": grant.SubjectID, "previous_role": previous, "role": grant.Role, "via_admin": viaAdmin}); err == nil {
 		err = tx.Commit()
 	}
 	if err != nil {
@@ -1280,8 +1038,16 @@ func (s *Server) corporateEffectiveAccess(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	if !s.outsideMCP() {
+		apiErr(w, http.StatusForbidden, "access denied")
+		return
+	}
 	kind, id := r.URL.Query().Get("resource_type"), r.URL.Query().Get("resource_id")
-	if id == "" || (kind != "space" && kind != "project") {
+	if kind == "project" {
+		apiErr(w, http.StatusGone, projectsRemovedText)
+		return
+	}
+	if id == "" || kind != "space" {
 		apiErr(w, 400, "resource_type and resource_id are required")
 		return
 	}
@@ -1289,7 +1055,7 @@ func (s *Server) corporateEffectiveAccess(w http.ResponseWriter, r *http.Request
 	if target == "" {
 		target = actor
 	}
-	if target != actor && !corporateManageResource(w, r, s.DB, actor, kind, id, false) {
+	if target != actor && !s.corporateManageResource(w, r, s.DB, actor, kind, id, false) {
 		return
 	}
 	role, err := corporateRole(s.DB, target, kind, id)
@@ -1308,24 +1074,11 @@ func (s *Server) corporateEffectiveAccess(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	spaceID, projectID := id, ""
-	if kind == "project" {
-		projectID = id
-		if err = s.DB.QueryRow(`SELECT space_id FROM projects WHERE id=?`, id).Scan(&spaceID); err != nil {
-			apiErr(w, 404, "resource not found")
-			return
-		}
-	}
-	rows, err := s.DB.Query(`WITH RECURSIVE chain(id,parent_id,inherit_acl,path,depth) AS (
-SELECT id,parent_id,inherit_acl,ARRAY[id]::text[],0 FROM projects WHERE ?<>'' AND id=? AND space_id=?
-UNION ALL SELECT p.id,p.parent_id,p.inherit_acl,c.path||p.id,c.depth+1 FROM chain c JOIN projects child ON child.id=c.id JOIN projects p ON p.id=child.parent_id AND p.space_id=child.space_id WHERE c.inherit_acl=1 AND c.parent_id<>'' AND c.depth<64 AND NOT p.id=ANY(c.path)
-), scopes(resource_type,resource_id) AS (
-SELECT 'project',id FROM chain UNION SELECT 'space',? WHERE ?='' OR EXISTS(SELECT 1 FROM chain root WHERE root.parent_id='' AND root.inherit_acl=1)
-), principals(subject_type,subject_id) AS (
+	rows, err := s.DB.Query(`WITH principals(subject_type,subject_id) AS (
 SELECT 'user',u.id FROM users u WHERE u.id=? AND u.disabled=0
 UNION SELECT 'team',tm.team_id FROM team_members tm JOIN teams t ON t.id=tm.team_id AND t.archived_at IS NULL JOIN users u ON u.id=tm.user_id AND u.disabled=0 WHERE tm.user_id=?
 )
-SELECT m.resource_type,m.resource_id,m.subject_type,m.subject_id,m.role FROM memberships m JOIN scopes s USING(resource_type,resource_id) JOIN principals p USING(subject_type,subject_id) ORDER BY m.resource_type,m.resource_id,m.subject_type,m.subject_id`, projectID, projectID, spaceID, spaceID, projectID, target, target)
+SELECT m.resource_type,m.resource_id,m.subject_type,m.subject_id,m.role FROM memberships m JOIN principals p USING(subject_type,subject_id) WHERE m.resource_type='space' AND m.resource_id=? ORDER BY m.subject_type,m.subject_id`, target, target, id)
 	if err != nil {
 		apiErr(w, 500, "database error")
 		return
@@ -1352,14 +1105,10 @@ SELECT m.resource_type,m.resource_id,m.subject_type,m.subject_id,m.role FROM mem
 		return
 	}
 	rows.Close()
-	visibleSources := sources[:0]
-	for _, source := range sources {
-		actorRole, err := corporateRole(s.DB, actor, source.ResourceType, source.ResourceID)
-		if err == nil && (actorRole == "owner" || actorRole == "manager") {
-			visibleSources = append(visibleSources, source)
-		}
+	// Only managers (and administrators) of the space see which grants produce the role.
+	if actorRole, _, rerr := s.corporateSpaceRole(s.DB, actor, id); rerr != nil || !corporateAtLeast(actorRole, "manager") {
+		sources = sources[:0]
 	}
-	sources = visibleSources
 	var result any
 	if role != "" {
 		result = role

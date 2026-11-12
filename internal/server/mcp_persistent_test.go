@@ -119,9 +119,13 @@ func (e *persistentEnv) user(sub string) (*Server, string) {
 	return &cp, uid
 }
 
-// seed creates space s1 owned by alice with projects:
-// pa, pb, pe (alice editor), pr (alice reader), pn (alice: nothing),
-// parch (archived, alice editor), pbob (bob editor).
+// seed creates spaces and agent projects. Agent projects (named like the old folders for brevity):
+//
+//	pa, pb, pe  alice's private projects over sa/sb/se (alice editor there), mode write
+//	pr          alice's private project over sr (alice reader), mode write
+//	pn          bob's private project (invisible to alice)
+//	pub         bob's public project over sbob (alice has no role there)
+//	pbob        bob's private project over sbob
 func (e *persistentEnv) seed(alice, bob string) {
 	e.t.Helper()
 	db, done, err := e.owner.DB.scoped(context.Background(), alice)
@@ -130,15 +134,42 @@ func (e *persistentEnv) seed(alice, bob string) {
 	}
 	e.t.Cleanup(done)
 	e.seedDB = db
-	e.seedExec(`INSERT INTO spaces(id,name,owner_id) VALUES('s1','Space',?)`, alice)
-	for _, p := range []string{"pa", "pb", "pe", "pr", "pn", "parch", "pbob"} {
-		e.seedExec(`INSERT INTO projects(id,space_id,name) VALUES(?,?,?)`, p, "s1", p)
+	bdb, bdone, err := e.owner.DB.scoped(context.Background(), bob)
+	if err != nil {
+		e.t.Fatal(err)
 	}
-	e.seedExec(`UPDATE projects SET archived_at='2020-01-01T00:00:00Z' WHERE id='parch'`)
-	for p, role := range map[string]string{"pa": "editor", "pb": "editor", "pe": "editor", "pr": "reader", "parch": "editor"} {
-		e.member(p, alice, role)
+	e.t.Cleanup(bdone)
+	for _, sp := range []string{"sa", "sb", "se", "sr", "sarch"} {
+		e.seedExec(`INSERT INTO spaces(id,name,owner_id) VALUES(?,?,?)`, sp, "Space "+sp, alice)
 	}
-	e.member("pbob", bob, "editor")
+	e.seedExec(`UPDATE spaces SET archived_at='2020-01-01T00:00:00Z' WHERE id='sarch'`)
+	for sp, role := range map[string]string{"sa": "editor", "sb": "editor", "se": "editor", "sr": "reader", "sarch": "editor"} {
+		e.member(sp, alice, role)
+	}
+	for _, sp := range []string{"sn", "sbob"} {
+		if _, err := bdb.Exec(`INSERT INTO spaces(id,name,owner_id) VALUES(?,?,?)`, sp, "Space "+sp, bob); err != nil {
+			e.t.Fatal(err)
+		}
+		if _, err := bdb.Exec(`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('space',?,'user',?,'owner')`, sp, bob); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	for p, space := range map[string]string{"pa": "sa", "pb": "sb", "pe": "se", "pr": "sr"} {
+		e.seedExec(`INSERT INTO agent_projects(id,name,owner_id,visibility) VALUES(?,?,?,'private')`, p, p, alice)
+		e.seedExec(`INSERT INTO agent_project_spaces(project_id,row_id,space_id,mode) VALUES(?,?,?,'write')`, p, "row_"+p, space)
+	}
+	for p, vis := range map[string]string{"pn": "private", "pub": "public", "pbob": "private"} {
+		space := "sbob"
+		if p == "pn" {
+			space = "sn"
+		}
+		if _, err := bdb.Exec(`INSERT INTO agent_projects(id,name,owner_id,visibility) VALUES(?,?,?,?)`, p, p, bob, vis); err != nil {
+			e.t.Fatal(err)
+		}
+		if _, err := bdb.Exec(`INSERT INTO agent_project_spaces(project_id,row_id,space_id,mode) VALUES(?,?,?,'write')`, p, "row_"+p, space); err != nil {
+			e.t.Fatal(err)
+		}
+	}
 }
 
 func (e *persistentEnv) seedExec(q string, args ...any) {
@@ -148,9 +179,9 @@ func (e *persistentEnv) seedExec(q string, args ...any) {
 	}
 }
 
-func (e *persistentEnv) member(project, user, role string) {
+func (e *persistentEnv) member(space, user, role string) {
 	e.t.Helper()
-	e.seedExec(`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('project',?,'user',?,?)`, project, user, role)
+	e.seedExec(`INSERT INTO memberships(resource_type,resource_id,subject_type,subject_id,role) VALUES('space',?,'user',?,?)`, space, user, role)
 }
 
 func (e *persistentEnv) exec(q string, args ...any) {
@@ -194,6 +225,17 @@ func (e *persistentEnv) call(s *Server, route persistentRoute, method, body, id 
 	rec := httptest.NewRecorder()
 	route(&cp)(rec, req)
 	return rec
+}
+
+// requestScope computes the session scope of a key's request for a project, as the HTTP handler does.
+func (e *persistentEnv) requestScope(p Principal, project string) ([]mcpScopeElement, bool, error) {
+	view, done, scope, err := e.root.DB.scopedAgent(context.Background(), p.ID, p.MCPActorID, p.MCPDelegationID, project)
+	if err != nil {
+		return nil, false, err
+	}
+	defer done()
+	_ = view
+	return scope, true, nil
 }
 
 func persistentJSON(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
@@ -357,11 +399,9 @@ func TestMCPPersistentTokenShapeAndHash(t *testing.T) {
 	}
 }
 
-func TestMCPPersistentStoredScopeParsing(t *testing.T) {
-	for _, raw := range []string{``, `null`, `[]`, `[1]`, `["a"]`, `{"a":1}`, `"a"`, `[{"type":"project","id":"a","mode":"read"}`,
-		`[{"type":"project","id":"../x","mode":"read"}]`, `[{"type":"project","id":"a","mode":"admin"}]`, `[{"type":"team","id":"a","mode":"read"}]`,
-		`[{"type":"project","id":"a","mode":"read"},{"type":"project","id":"a","mode":"write"}]`, `[{"type":"project","id":"","mode":"read"}]`} {
-		if p, ok := mcpPersistentScope([]byte(raw)); ok {
+func TestMCPPersistentStoredProjectsParsing(t *testing.T) {
+	for _, raw := range []string{``, `null`, `[]`, `[1]`, `{"a":1}`, `"a"`, `["a"`, `["../x"]`, `[""]`, `["a","a"]`, `[{"type":"project","id":"a","mode":"read"}]`} {
+		if p, ok := mcpPersistentProjects([]byte(raw)); ok {
 			t.Fatalf("%q must fail closed, got %v", raw, p)
 		}
 	}
@@ -369,12 +409,12 @@ func TestMCPPersistentStoredScopeParsing(t *testing.T) {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("p%d", i)
 	}
-	raw, _ := json.Marshal(projScope("read", ids...))
-	if _, ok := mcpPersistentScope(raw); ok {
-		t.Fatal("too many elements must fail closed")
+	raw, _ := json.Marshal(ids)
+	if _, ok := mcpPersistentProjects(raw); ok {
+		t.Fatal("too many projects must fail closed")
 	}
-	if p, ok := mcpPersistentScope([]byte(`[{"type":"project","id":"pa","mode":"read"},{"type":"space","id":"pa","mode":"write"}]`)); !ok || len(p) != 2 {
-		t.Fatalf("valid scope rejected: %v %v", p, ok)
+	if p, ok := mcpPersistentProjects([]byte(`["pa","pb"]`)); !ok || len(p) != 2 {
+		t.Fatalf("valid list rejected: %v %v", p, ok)
 	}
 }
 
@@ -392,17 +432,17 @@ func TestMCPPersistentMintListRevokeLifecycle(t *testing.T) {
 		t.Fatalf("empty list: %s", got)
 	}
 
-	out := e.mint(alice, `{"name":"  agent  ","project_ids":["pb","pa"],"mode":"write","ttl_seconds":3600}`, http.StatusCreated)
+	out := e.mint(alice, `{"name":"  agent  ","projects":["pb","pa"],"ttl_seconds":3600}`, http.StatusCreated)
 	token, _ := out["token"].(string)
 	id, _ := out["id"].(string)
 	if !strings.HasPrefix(token, mcpPersistentPrefix) || len(token) != len(mcpPersistentPrefix)+mcpPersistentSecretLen || !mcpPersistentWellFormed(token) {
 		t.Fatalf("bad token shape %q", token)
 	}
-	if !strings.HasPrefix(id, "pat_") || out["name"] != "agent" || out["mode"] != nil || out["project_ids"] != nil || len(out) != 6 {
+	if !strings.HasPrefix(id, "pat_") || out["name"] != "agent" || out["mode"] != nil || out["scope"] != nil || out["read_only"] != false || len(out) != 7 {
 		t.Fatalf("bad mint response: %v", out)
 	}
-	if sc, _ := json.Marshal(out["scope"]); !strings.Contains(string(sc), `"id":"pa","mode":"write"`) || strings.Index(string(sc), `"id":"pa"`) > strings.Index(string(sc), `"id":"pb"`) {
-		t.Fatalf("scope not sorted or wrong: %s", sc)
+	if sc, _ := json.Marshal(out["projects"]); string(sc) != `[{"available":true,"id":"pb","name":"pb","visibility":"private"},{"available":true,"id":"pa","name":"pa","visibility":"private"}]` {
+		t.Fatalf("projects: %s", sc)
 	}
 	created, err1 := time.Parse(time.RFC3339Nano, out["created_at"].(string))
 	expires, err2 := time.Parse(time.RFC3339Nano, out["expires_at"].(string))
@@ -429,16 +469,19 @@ func TestMCPPersistentMintListRevokeLifecycle(t *testing.T) {
 	// The token authenticates as an exact-project, non-admin sponsor principal.
 	before := e.prov.count()
 	p := e.mustAuth(token)
-	if p.ID != aliceID || p.Issuer != e.iss || p.Subject != "alice" || p.Admin || !mcpScopeHasWrite(p.MCPScope) ||
+	if p.ID != aliceID || p.Issuer != e.iss || p.Subject != "alice" || p.Admin || p.MCPReadOnly || p.MCPScope != nil ||
 		p.MCPDelegationID != id || p.MCPActorID != aliceID || !p.MCPExpiresAt.Equal(expires) ||
-		len(p.MCPScope) != 2 || p.MCPScope[0].ID != "pa" || p.MCPScope[1].ID != "pb" {
+		len(p.MCPKeyProjects) != 2 || p.MCPKeyProjects[0] != "pb" || p.MCPKeyProjects[1] != "pa" {
 		t.Fatalf("bad principal: %+v", p)
 	}
 	if e.prov.count() != before+1 {
 		t.Fatalf("a valid request re-verifies the credential once: %d", e.prov.count()-before)
 	}
-	if !mcpScopedTool(&p, "wiki_write") || !mcpScopedTool(&p, "wiki_read") || mcpScopedTool(&p, "wiki_delete") {
-		t.Fatal("write credential tool scope")
+	// The session scope is computed per request from the project, so the admitted principal
+	// carries none yet; with a project named it has write elements.
+	sc, ok, _ := e.requestScope(p, "pa")
+	if !ok || !mcpScopeHasWrite(sc) || !mcpScopedTool(&Principal{MCPScope: sc}, "wiki_write") || mcpScopedTool(&Principal{MCPScope: sc}, "wiki_delete") {
+		t.Fatalf("write credential tool scope: %v %v", sc, ok)
 	}
 
 	// Listing: own metadata only, never secrets, hashes or owners.
@@ -487,8 +530,8 @@ func TestMCPPersistentMintListRevokeLifecycle(t *testing.T) {
 	for _, m := range []string{"PUT", "POST", "GET"} {
 		e.expect(e.call(alice, persistentCredentialR, m, "", id), 405)
 	}
-	// PATCH edits projects/mode of a live key; this one is revoked.
-	e.expect(e.call(alice, persistentCredentialR, "PATCH", `{"project_ids":["pa"],"mode":"read"}`, id), 404)
+	// PATCH edits projects/read_only of a live key; this one is revoked.
+	e.expect(e.call(alice, persistentCredentialR, "PATCH", `{"projects":["pa"],"read_only":true}`, id), 404)
 	for _, m := range []string{"PUT", "DELETE", "PATCH"} {
 		e.expect(e.call(alice, persistentCredentials, m, "", ""), 405)
 	}
@@ -505,25 +548,27 @@ func TestMCPPersistentMintValidation(t *testing.T) {
 		many[i] = fmt.Sprintf(`"p%d"`, i)
 	}
 	for _, body := range []string{
-		`{"name":"","project_ids":["pa"]}`,
-		`{"name":"   ","project_ids":["pa"]}`,
-		`{"name":"` + strings.Repeat("x", 81) + `","project_ids":["pa"]}`,
-		`{"name":"n","project_ids":[]}`,
+		`{"name":"","projects":["pa"]}`,
+		`{"name":"   ","projects":["pa"]}`,
+		`{"name":"` + strings.Repeat("x", 81) + `","projects":["pa"]}`,
+		`{"name":"n","projects":[]}`,
 		`{"name":"n"}`,
-		`{"name":"n","project_ids":[` + strings.Join(many, ",") + `]}`,
-		`{"name":"n","project_ids":["pa","pa"]}`,
-		`{"name":"n","project_ids":["../x"]}`,
-		`{"name":"n","project_ids":[""]}`,
-		`{"name":"n","project_ids":["pa"],"mode":"admin"}`,
-		`{"name":"n","project_ids":["pa"],"mode":"WRITE"}`,
-		`{"name":"n","project_ids":["pa"],"ttl_seconds":59}`,
-		`{"name":"n","project_ids":["pa"],"ttl_seconds":-1}`,
-		`{"name":"n","project_ids":["pa"],"ttl_seconds":15552001}`, // 180 days + 1s
-		`{"name":"n","project_ids":["pa"],"ttl_seconds":1.5}`,
-		`{"name":"n","project_ids":["pa"],"admin":true}`,
-		`{"name":"n","project_ids":["pa"],"owner_id":"someone"}`,
-		`{"name":"n","project_ids":["pa"],"service_account_id":"a/b"}`,
-		`{"name":"n","project_ids":["pa"]} {}`,
+		`{"name":"n","projects":[` + strings.Join(many, ",") + `]}`,
+		`{"name":"n","projects":["pa","pa"]}`,
+		`{"name":"n","projects":["../x"]}`,
+		`{"name":"n","projects":[""]}`,
+		`{"name":"n","projects":["pa"],"mode":"write"}`, // removed fields
+		`{"name":"n","projects":["pa"],"scope":[]}`,
+		`{"name":"n","project_ids":["pa"]}`,
+		`{"name":"n","projects":["pa"],"read_only":"yes"}`,
+		`{"name":"n","projects":["pa"],"ttl_seconds":59}`,
+		`{"name":"n","projects":["pa"],"ttl_seconds":-1}`,
+		`{"name":"n","projects":["pa"],"ttl_seconds":15552001}`, // 180 days + 1s
+		`{"name":"n","projects":["pa"],"ttl_seconds":1.5}`,
+		`{"name":"n","projects":["pa"],"admin":true}`,
+		`{"name":"n","projects":["pa"],"owner_id":"someone"}`,
+		`{"name":"n","projects":["pa"],"service_account_id":"a/b"}`,
+		`{"name":"n","projects":["pa"]} {}`,
 		`not json`,
 		``,
 	} {
@@ -541,26 +586,27 @@ func TestMCPPersistentMintValidation(t *testing.T) {
 		x, _ := time.Parse(time.RFC3339Nano, out["expires_at"].(string))
 		return x.Sub(c)
 	}
-	out := e.mint(alice, `{"name":"defaults","project_ids":["pa"]}`, http.StatusCreated)
-	if sc, _ := json.Marshal(out["scope"]); !strings.Contains(string(sc), `"mode":"read"`) || span(out) != 30*24*time.Hour {
+	out := e.mint(alice, `{"name":"defaults","projects":["pa"]}`, http.StatusCreated)
+	if out["read_only"] != false || span(out) != 30*24*time.Hour {
 		t.Fatalf("defaults: %v", out)
 	}
-	if out := e.mint(alice, `{"name":"min","project_ids":["pa"],"mode":"read","ttl_seconds":60}`, http.StatusCreated); span(out) != time.Minute {
+	if out := e.mint(alice, `{"name":"min","projects":["pa"],"read_only":true,"ttl_seconds":60}`, http.StatusCreated); span(out) != time.Minute {
 		t.Fatalf("min ttl: %v", out)
 	}
-	if out := e.mint(alice, `{"name":"max","project_ids":["pa"],"ttl_seconds":15552000}`, http.StatusCreated); span(out) != 180*24*time.Hour {
+	if out := e.mint(alice, `{"name":"max","projects":["pa"],"ttl_seconds":15552000}`, http.StatusCreated); span(out) != 180*24*time.Hour {
 		t.Fatalf("max ttl: %v", out)
 	}
 
 	// MCP credentials can never manage credentials.
 	for name, pr := range map[string]*Principal{
-		"scoped":     {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPScope: projScope("read", "pa")},
+		"scoped":     {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPScope: spaceScope("read", "sa")},
+		"keyed":      {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPKeyProjects: []string{"pa"}},
 		"credential": {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPDelegationID: "pat_x"},
 		"actor":      {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPActorID: "svc_x"},
 	} {
 		cp := *alice
 		cp.principal = pr
-		e.expect(e.call(&cp, persistentCredentials, "POST", `{"name":"n","project_ids":["pa"]}`, ""), 403)
+		e.expect(e.call(&cp, persistentCredentials, "POST", `{"name":"n","projects":["pa"]}`, ""), 403)
 		e.expect(e.call(&cp, persistentCredentials, "GET", "", ""), 403)
 		e.expect(e.call(&cp, persistentAccounts, "POST", `{"name":"n"}`, ""), 403)
 		e.expect(e.call(&cp, persistentAccountR, "DELETE", "", "svc_x"), 403)
@@ -578,36 +624,32 @@ func TestMCPPersistentMintProjectPermissions(t *testing.T) {
 	bob, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
 
-	e.mint(alice, `{"name":"n","project_ids":["pr"],"mode":"read"}`, http.StatusCreated)
-	e.mint(alice, `{"name":"n","project_ids":["pe"],"mode":"write"}`, http.StatusCreated)
-	e.mint(bob, `{"name":"n","project_ids":["pbob"],"mode":"write"}`, http.StatusCreated)
+	// Own projects and other people's public projects are allowed; a project grants nothing by itself.
+	e.mint(alice, `{"name":"n","projects":["pr"]}`, http.StatusCreated)
+	e.mint(alice, `{"name":"n","projects":["pe","pub"],"read_only":true}`, http.StatusCreated)
+	e.mint(bob, `{"name":"n","projects":["pbob"]}`, http.StatusCreated)
 	allowed := e.count(`SELECT count(*) FROM mcp_credentials`)
 	audited := e.count(`SELECT count(*) FROM security_audit`)
 
 	for _, body := range []string{
-		`{"name":"n","project_ids":["pr"],"mode":"write"}`,        // reader cannot write
-		`{"name":"n","project_ids":["pe","pr"],"mode":"write"}`,   // one weak project spoils the set
-		`{"name":"n","project_ids":["pn"],"mode":"read"}`,         // no rights
-		`{"name":"n","project_ids":["pa","pn"],"mode":"read"}`,    // one hidden project
-		`{"name":"n","project_ids":["parch"],"mode":"read"}`,      // archived
-		`{"name":"n","project_ids":["parch"],"mode":"write"}`,     // archived
-		`{"name":"n","project_ids":["missing"],"mode":"read"}`,    // unknown
-		`{"name":"n","project_ids":["s1"],"mode":"read"}`,         // a space is not a project
-		`{"name":"n","project_ids":["pbob"],"mode":"read"}`,       // someone else's project
-		`{"name":"n","project_ids":["pbob","pa"],"mode":"write"}`, // mixed ownership
+		`{"name":"n","projects":["pn"]}`,      // someone else's private project
+		`{"name":"n","projects":["pa","pn"]}`, // one hidden project spoils the set
+		`{"name":"n","projects":["missing"]}`, // unknown
+		`{"name":"n","projects":["sa"]}`,      // a space is not a project
+		`{"name":"n","projects":["pbob"]}`,    // bob's private project
 	} {
 		e.mint(alice, body, http.StatusBadRequest)
 	}
-	e.mint(bob, `{"name":"n","project_ids":["pa"],"mode":"read"}`, http.StatusBadRequest)
+	e.mint(bob, `{"name":"n","projects":["pa"]}`, http.StatusBadRequest) // alice's private project
 	if e.count(`SELECT count(*) FROM mcp_credentials`) != allowed || e.count(`SELECT count(*) FROM security_audit`) != audited {
 		t.Fatal("forbidden mints must neither store nor audit anything")
 	}
 
-	// The check happens at mint time against the live ACL.
-	e.seedExec(`DELETE FROM memberships WHERE resource_id='pe' AND subject_id=?`, aliceID)
-	e.mint(alice, `{"name":"n","project_ids":["pe"],"mode":"read"}`, http.StatusBadRequest)
-	e.seedExec(`UPDATE projects SET archived_at='2020-01-01T00:00:00Z' WHERE id='pa'`)
-	e.mint(alice, `{"name":"n","project_ids":["pa"],"mode":"read"}`, http.StatusBadRequest)
+	// The key may list a project whose spaces the owner cannot read: it simply yields no rights.
+	e.mint(alice, `{"name":"n","projects":["pub"]}`, http.StatusCreated)
+	// Visibility is checked at mint time against the live data.
+	e.seedExec(`DELETE FROM agent_projects WHERE id='pe'`)
+	e.mint(alice, `{"name":"n","projects":["pe"]}`, http.StatusBadRequest)
 }
 
 func TestMCPPersistentMintCaps(t *testing.T) {
@@ -615,11 +657,10 @@ func TestMCPPersistentMintCaps(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	body := `{"name":"n","project_ids":["pr"]}`
+	body := `{"name":"n","projects":["pub"]}`
 
 	// Active cap per owner; revoking frees a slot, other owners are unaffected.
 	carol, carolID := e.user("carol")
-	e.member("pr", carolID, "reader")
 	ids := make([]string, 0, mcpPersistentActiveCap)
 	for i := 0; i < mcpPersistentActiveCap; i++ {
 		id, _ := e.mintToken(carol, body)
@@ -642,9 +683,8 @@ func TestMCPPersistentMintCaps(t *testing.T) {
 
 	// Total cap counts revoked and expired credentials too.
 	dave, daveID := e.user("dave")
-	e.member("pr", daveID, "reader")
-	e.exec(`INSERT INTO mcp_credentials(id,owner_id,name,secret_hash,scope,created_at,expires_at,revoked_at)
-SELECT 'pat_bulk'||g::text,?::text,'old',md5(?::text||g::text)||md5(g::text||?::text),'[{"type":"project","id":"pr","mode":"read"}]'::jsonb,now(),now()+interval '1 day',now()
+	e.exec(`INSERT INTO mcp_credentials(id,owner_id,name,secret_hash,agent_project_ids,created_at,expires_at,revoked_at)
+SELECT 'pat_bulk'||g::text,?::text,'old',md5(?::text||g::text)||md5(g::text||?::text),'["pub"]'::jsonb,now(),now()+interval '1 day',now()
 FROM generate_series(1,?) g`, daveID, daveID, daveID, mcpPersistentTotalCap)
 	e.mint(dave, body, http.StatusTooManyRequests)
 	e.exec(`DELETE FROM mcp_credentials WHERE id='pat_bulk1'`)
@@ -653,7 +693,6 @@ FROM generate_series(1,?) g`, daveID, daveID, daveID, mcpPersistentTotalCap)
 
 	// Concurrent mints obey the cap exactly.
 	eve, eveID := e.user("eve")
-	e.member("pr", eveID, "reader")
 	var mu sync.Mutex
 	codes := map[int]int{}
 	var wg sync.WaitGroup
@@ -708,12 +747,12 @@ func TestMCPPersistentServiceAccountLifecycle(t *testing.T) {
 		t.Fatalf("other owner sees the account: %s", rec.Body)
 	}
 	e.expect(e.call(bob, persistentAccountR, "DELETE", "", svc), 404)
-	e.mint(bob, `{"name":"n","project_ids":["pbob"],"service_account_id":"`+svc+`"}`, http.StatusForbidden)
-	e.mint(alice, `{"name":"n","project_ids":["pa"],"service_account_id":"svc_missing"}`, http.StatusForbidden)
+	e.mint(bob, `{"name":"n","projects":["pbob"],"service_account_id":"`+svc+`"}`, http.StatusForbidden)
+	e.mint(alice, `{"name":"n","projects":["pa"],"service_account_id":"svc_missing"}`, http.StatusForbidden)
 
 	// Service-account credentials are attributed to the account, authorised as the sponsor.
-	svcCred, svcToken := e.mintToken(alice, `{"name":"svc","project_ids":["pa"],"mode":"write","service_account_id":"`+svc+`"}`)
-	ownCred, ownToken := e.mintToken(alice, `{"name":"own","project_ids":["pa"]}`)
+	svcCred, svcToken := e.mintToken(alice, `{"name":"svc","projects":["pa"],"service_account_id":"`+svc+`"}`)
+	ownCred, ownToken := e.mintToken(alice, `{"name":"own","projects":["pa"]}`)
 	p := e.mustAuth(svcToken)
 	if p.ID != aliceID || p.MCPActorID != svc || p.MCPDelegationID != svcCred || p.Admin {
 		t.Fatalf("service principal: %+v", p)
@@ -752,7 +791,7 @@ func TestMCPPersistentServiceAccountLifecycle(t *testing.T) {
 	}
 
 	// Permanent: cannot mint for it, repeat is a no-op, nothing re-enables it.
-	e.mint(alice, `{"name":"n","project_ids":["pa"],"service_account_id":"`+svc+`"}`, http.StatusForbidden)
+	e.mint(alice, `{"name":"n","projects":["pa"],"service_account_id":"`+svc+`"}`, http.StatusForbidden)
 	e.expect(e.call(alice, persistentAccountR, "DELETE", "", svc), 204)
 	if n := e.count(`SELECT count(*) FROM security_audit WHERE action='mcp_service_account.disable'`); n != 1 {
 		t.Fatalf("repeat disable audits: %d", n)
@@ -783,7 +822,7 @@ func TestMCPPersistentAuthenticateStates(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	body := `{"name":"n","project_ids":["pa"],"ttl_seconds":600}`
+	body := `{"name":"n","projects":["pa"],"ttl_seconds":600}`
 
 	// Unknown but well-formed.
 	secret, _ := authRandom(32)
@@ -827,21 +866,22 @@ func TestMCPPersistentAuthenticateStates(t *testing.T) {
 	e.exec(`UPDATE users SET subject='alice' WHERE id=?`, aliceID)
 	e.mustAuth(token)
 
-	// Invalid stored scope fails closed.
+	// Invalid stored projects fail closed.
 	// Migration-owner corruption simulation; runtime cannot update authority.
 	e.exec(`ALTER TABLE mcp_credentials DISABLE TRIGGER mcp_credential_immutable`)
 	defer e.exec(`ALTER TABLE mcp_credentials ENABLE TRIGGER mcp_credential_immutable`)
-	for _, scope := range []string{`[{"type":"project","id":"../x","mode":"read"}]`, `[{"type":"project","id":"pa","mode":"read"},{"type":"project","id":"pa","mode":"write"}]`} {
-		e.exec(`UPDATE mcp_credentials SET scope=?::jsonb WHERE id=?`, scope, id)
+	for _, projects := range []string{`["../x"]`, `["pa","pa"]`, `[]`, `[1]`} {
+		e.exec(`ALTER TABLE mcp_credentials DROP CONSTRAINT IF EXISTS mcp_credentials_agent_project_ids_check`)
+		e.exec(`UPDATE mcp_credentials SET agent_project_ids=?::jsonb WHERE id=?`, projects, id)
 		e.mustFail(token, http.StatusUnauthorized)
 	}
-	e.exec(`UPDATE mcp_credentials SET scope='[{"type":"project","id":"pa","mode":"read"}]' WHERE id=?`, id)
+	e.exec(`UPDATE mcp_credentials SET agent_project_ids='["pa"]' WHERE id=?`, id)
 	e.exec(`ALTER TABLE mcp_credentials ENABLE TRIGGER mcp_credential_immutable`)
 	e.mustAuth(token)
 
 	// Service accounts: disabled, or no longer owned by the credential's owner.
 	svc := e.account(alice, "bot")
-	_, svcToken := e.mintToken(alice, `{"name":"n","project_ids":["pa"],"service_account_id":"`+svc+`"}`)
+	_, svcToken := e.mintToken(alice, `{"name":"n","projects":["pa"],"service_account_id":"`+svc+`"}`)
 	e.mustAuth(svcToken)
 	e.exec(`ALTER TABLE mcp_service_accounts DISABLE TRIGGER mcp_service_immutable`)
 	defer e.exec(`ALTER TABLE mcp_service_accounts ENABLE TRIGGER mcp_service_immutable`)
@@ -859,7 +899,7 @@ func TestMCPPersistentLoginWindow(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	id, token := e.mintToken(alice, `{"name":"n","project_ids":["pa"],"ttl_seconds":15552000}`)
+	id, token := e.mintToken(alice, `{"name":"n","projects":["pa"],"ttl_seconds":15552000}`)
 
 	// Evaluated on every request, from the database only.
 	base := e.prov.count()
@@ -897,13 +937,13 @@ func TestMCPPersistentLoginWindowGovernsUseNotManagement(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	body := `{"name":"n","project_ids":["pa"]}`
+	body := `{"name":"n","projects":["pa"]}`
 
 	credA, tokenA := e.mintToken(alice, body)
 	credB, _ := e.mintToken(alice, body)
 	svcA := e.account(alice, "a")
 	svcB := e.account(alice, "b")
-	_, svcTokenA := e.mintToken(alice, `{"name":"n","project_ids":["pa"],"service_account_id":"`+svcA+`"}`)
+	_, svcTokenA := e.mintToken(alice, `{"name":"n","projects":["pa"],"service_account_id":"`+svcA+`"}`)
 
 	// Listing, revocation and disabling never depend on the login window.
 	e.clk.advance(mcpPersistentLoginWindow + time.Hour)
@@ -960,7 +1000,7 @@ func TestMCPPersistentMintRequiresLiveIdentity(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	body := `{"name":"n","project_ids":["pa"]}`
+	body := `{"name":"n","projects":["pa"]}`
 
 	for name, pr := range map[string]*Principal{
 		"subject differs from the id": {ID: aliceID, Issuer: e.iss, Subject: "mallory"},
@@ -996,11 +1036,11 @@ func TestMCPPersistentAuditFailureRollsBack(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	body := `{"name":"n","project_ids":["pa"]}`
+	body := `{"name":"n","projects":["pa"]}`
 
 	svc := e.account(alice, "bot")
 	id, token := e.mintToken(alice, body)
-	svcCred, svcToken := e.mintToken(alice, `{"name":"n","project_ids":["pa"],"service_account_id":"`+svc+`"}`)
+	svcCred, svcToken := e.mintToken(alice, `{"name":"n","projects":["pa"],"service_account_id":"`+svc+`"}`)
 	rows := e.count(`SELECT count(*) FROM mcp_credentials`)
 	accounts := e.count(`SELECT count(*) FROM mcp_service_accounts`)
 
@@ -1038,7 +1078,7 @@ func TestMCPPersistentRateLimit(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	body := `{"name":"n","project_ids":["pa"]}`
+	body := `{"name":"n","projects":["pa"]}`
 	idA, tokenA := e.mintToken(alice, body)
 	_, tokenB := e.mintToken(alice, body)
 
@@ -1081,7 +1121,7 @@ func TestMCPPersistentRateLimitIsAtomicUnderConcurrency(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	_, token := e.mintToken(alice, `{"name":"n","project_ids":["pa"]}`)
+	_, token := e.mintToken(alice, `{"name":"n","projects":["pa"]}`)
 
 	asked := e.prov.count()
 	var mu sync.Mutex
@@ -1115,7 +1155,7 @@ func TestMCPPersistentChangesBetweenChecksAreHonoured(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	body := `{"name":"n","project_ids":["pa"],"ttl_seconds":600}`
+	body := `{"name":"n","projects":["pa"],"ttl_seconds":600}`
 	svc := e.account(alice, "bot")
 	defer e.prov.setHook(nil)
 
@@ -1133,7 +1173,7 @@ func TestMCPPersistentChangesBetweenChecksAreHonoured(t *testing.T) {
 	e.mustAuth(token)
 
 	// Service account disabled meanwhile.
-	_, svcToken := e.mintToken(alice, `{"name":"n","project_ids":["pa"],"service_account_id":"`+svc+`"}`)
+	_, svcToken := e.mintToken(alice, `{"name":"n","projects":["pa"],"service_account_id":"`+svc+`"}`)
 	e.prov.setHook(func() { e.exec(`UPDATE mcp_service_accounts SET disabled=1 WHERE id=?`, svc) })
 	e.mustFail(svcToken, http.StatusForbidden)
 	e.prov.setHook(nil)
@@ -1145,7 +1185,7 @@ func TestMCPPersistentChangesBetweenChecksAreHonoured(t *testing.T) {
 	e.prov.setHook(nil)
 
 	// Login window elapsed meanwhile.
-	_, token = e.mintToken(alice, `{"name":"n","project_ids":["pa"],"ttl_seconds":15552000}`)
+	_, token = e.mintToken(alice, `{"name":"n","projects":["pa"],"ttl_seconds":15552000}`)
 	e.exec(`UPDATE users SET last_login_at=? WHERE id=?`, e.clk.now(), aliceID)
 	e.prov.setHook(func() { e.clk.advance(mcpPersistentLoginWindow) })
 	e.mustFail(token, http.StatusForbidden)
@@ -1156,8 +1196,8 @@ func TestMCPPersistentSurvivesRestartWithoutCache(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	id, token := e.mintToken(alice, `{"name":"n","project_ids":["pa","pb"],"mode":"write"}`)
-	_, other := e.mintToken(alice, `{"name":"n","project_ids":["pa"]}`)
+	id, token := e.mintToken(alice, `{"name":"n","projects":["pa","pb"]}`)
+	_, other := e.mintToken(alice, `{"name":"n","projects":["pa"]}`)
 	before := e.mustAuth(token)
 
 	// A brand new service over the same database knows nothing but the store.
@@ -1176,7 +1216,7 @@ func TestMCPPersistentSurvivesRestartWithoutCache(t *testing.T) {
 	if !ok {
 		t.Fatalf("token must survive a restart: %d %s", rec.Code, rec.Body)
 	}
-	if p.ID != before.ID || p.MCPDelegationID != before.MCPDelegationID || !mcpScopeHasWrite(p.MCPScope) || len(p.MCPScope) != 2 || !p.MCPExpiresAt.Equal(before.MCPExpiresAt) {
+	if p.ID != before.ID || p.MCPDelegationID != before.MCPDelegationID || len(p.MCPKeyProjects) != 2 || !p.MCPExpiresAt.Equal(before.MCPExpiresAt) {
 		t.Fatalf("restarted principal differs: %+v vs %+v", p, before)
 	}
 
@@ -1198,12 +1238,20 @@ func TestMCPPersistentModeMapsToToolScope(t *testing.T) {
 	alice, aliceID := e.user("alice")
 	_, bobID := e.user("bob")
 	e.seed(aliceID, bobID)
-	_, readToken := e.mintToken(alice, `{"name":"r","project_ids":["pe"],"mode":"read"}`)
-	_, writeToken := e.mintToken(alice, `{"name":"w","project_ids":["pe"],"mode":"write"}`)
+	_, readToken := e.mintToken(alice, `{"name":"r","projects":["pe"],"read_only":true}`)
+	_, writeToken := e.mintToken(alice, `{"name":"w","projects":["pe"]}`)
 
 	r, w := e.mustAuth(readToken), e.mustAuth(writeToken)
-	if mcpScopeHasWrite(r.MCPScope) || !mcpScopeHasWrite(w.MCPScope) || r.MCPScope == nil || w.MCPScope == nil {
-		t.Fatalf("modes: %+v %+v", r, w)
+	if !r.MCPReadOnly || w.MCPReadOnly {
+		t.Fatalf("read_only switch: %+v %+v", r, w)
+	}
+	// The scope is computed for the request from the project: read_only forces every element to read.
+	var ok bool
+	if r.MCPScope, ok, _ = e.requestScope(r, "pe"); !ok || mcpScopeHasWrite(r.MCPScope) || len(r.MCPScope) != 1 {
+		t.Fatalf("read-only scope: %+v", r.MCPScope)
+	}
+	if w.MCPScope, ok, _ = e.requestScope(w, "pe"); !ok || !mcpScopeHasWrite(w.MCPScope) {
+		t.Fatalf("write scope: %+v", w.MCPScope)
 	}
 	for _, tool := range []string{"wiki_write", "wiki_edit", "wiki_comment", "wiki_restore"} {
 		if mcpScopedTool(&r, tool) || !mcpScopedTool(&w, tool) {

@@ -252,7 +252,13 @@ func rsLoad(t *testing.T, owner *Server, f *rsFixture) {
 	for _, tbl := range rsForcedTables {
 		exec(`ALTER TABLE ` + tbl + ` NO FORCE ROW LEVEL SECURITY`)
 	}
+	// The equivalence test deliberately builds legacy folder trees to compare corporate_role_scope() with
+	// the reference corporate_effective_role(): the folder guards are lifted for this load only. The checks
+	// come back NOT VALID (the data violates them on purpose); startup-guard tests re-validate a clean schema.
 	exec(`ALTER TABLE projects DISABLE TRIGGER USER`)
+	exec(`ALTER TABLE articles DROP CONSTRAINT IF EXISTS articles_no_project`)
+	exec(`ALTER TABLE revisions DROP CONSTRAINT IF EXISTS revisions_no_project`)
+	exec(`ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_space_only`)
 	exec(`TRUNCATE spaces, users, teams, memberships, corporate_space_state, article_fts CASCADE`)
 	for _, s := range f.spaces {
 		exec(`INSERT INTO spaces(id,name,description,owner_id,personal) VALUES(?,?, '', '',0)`, s, s)
@@ -294,6 +300,9 @@ func rsLoad(t *testing.T, owner *Server, f *rsFixture) {
 		exec(`INSERT INTO favorites(user_id,article_id,created_at) VALUES(?,?,'now')`, fv[0], fv[1])
 	}
 	exec(`ALTER TABLE projects ENABLE TRIGGER USER`)
+	exec(`ALTER TABLE articles ADD CONSTRAINT articles_no_project CHECK (project_id = '') NOT VALID`)
+	exec(`ALTER TABLE revisions ADD CONSTRAINT revisions_no_project CHECK (project_id = '') NOT VALID`)
+	exec(`ALTER TABLE memberships ADD CONSTRAINT memberships_space_only CHECK (resource_type = 'space') NOT VALID`)
 	for _, tbl := range rsForcedTables {
 		exec(`ALTER TABLE ` + tbl + ` FORCE ROW LEVEL SECURITY`)
 	}
@@ -646,13 +655,9 @@ func rsExpectedRows(t *testing.T, conn *sql.Conn, f *rsFixture, user *string) rs
 		readable[id] = true
 	}
 	var e rsExpected
-	// Old articles policy, plus the project-move read policy (only in app.move=project).
+	// The articles read policy (the folder-move read policy no longer exists).
 	e.articles = rsSorted(t, conn, `SELECT a.id FROM unnest($1::text[],$2::text[],$3::text[]) AS a(id,s,p)
-		WHERE public.corporate_article_read_policy(a.s,a.p)
-		   OR (coalesce(current_setting('app.move',true),'')='project' AND a.p<>'' AND EXISTS (
-		        SELECT 1 FROM public.projects pr WHERE pr.id=a.p AND pr.space_id<>a.s
-		          AND public.corporate_role_rank(public.corporate_effective_role(current_setting('app.user_id',true),pr.space_id,pr.id)) >= 3
-		          AND public.corporate_container_writable(pr.space_id,pr.id)))`, aid, as, ap)
+		WHERE public.corporate_article_read_policy(a.s,a.p)`, aid, as, ap)
 	// Old revisions policy: current article readable AND snapshot container readable.
 	var ra, rs, rp, keys []string
 	for _, rv := range f.revisions {
@@ -725,7 +730,7 @@ func TestPostgresRoleScopePoliciesMatchReferencePredicates(t *testing.T) {
 				// move values must change nothing.
 				moves := []string{""}
 				if v.scope == "" {
-					moves = []string{"", "project", "article", "probe"}
+					moves = []string{"", "project", "article", "probe"} // none of these may change anything any more
 				}
 				for _, move := range moves {
 					label := fmt.Sprintf("seed %d user %s variant %s move %q", seed, rsLabel(user), v.name, move)
@@ -770,23 +775,21 @@ func TestPostgresRoleScopePoliciesMatchReferencePredicates(t *testing.T) {
 	t.Logf("%d table/session comparisons; visible rows %v, hidden rows %v", checks, visible, hidden)
 }
 
-// The move policy widens articles only (UPDATE needs SELECT on the old row); the
-// dependants keep their explicit readable-article check. Pinned on a concrete case.
+// The folder-move read policy is gone: a stale app.move marker widens nothing, whatever it says.
 func TestPostgresRoleScopeMoveModeDoesNotWidenRevisions(t *testing.T) {
 	owner, root := corporateFixture(t)
 	f := &rsFixture{
 		spaces: []string{"rs_sp0", "rs_sp1"}, users: []string{"rs_u0"},
 		disabled: map[string]bool{}, archived: map[string]bool{},
-		projects: []rsProject{{"rs_p0", "rs_sp1", "", 1}},
-		members:  []rsMember{{"project", "rs_p0", "user", "rs_u0", "editor"}},
-		// The article sits in sp0 (no grant) but its project lives in sp1 (editor).
-		articles:  []rsArticle{{"rs_a0", "rs_sp0", "rs_p0"}},
-		revisions: []rsRevision{{"rs_a0", "rs_sp0", "rs_p0", 1}},
+		members: []rsMember{{"space", "rs_sp1", "user", "rs_u0", "editor"}},
+		// The article sits in sp0 (no grant); sp1 is the user's.
+		articles:  []rsArticle{{"rs_a0", "rs_sp0", ""}},
+		revisions: []rsRevision{{"rs_a0", "rs_sp0", "", 1}},
 		comments:  []rsChild{{"rs_a0_c0", "rs_a0"}},
 	}
 	rsLoad(t, owner, f)
 	u := "rs_u0"
-	for move, wantArticle := range map[string]int{"": 0, "project": 1} {
+	for _, move := range []string{"", "project", "article", "probe"} {
 		conn, done := rsSession(t, root, &u, rsVariant{"none", ""}, move)
 		var n [3]int
 		for i, tbl := range []string{"articles", "revisions", "comments"} {
@@ -795,8 +798,8 @@ func TestPostgresRoleScopeMoveModeDoesNotWidenRevisions(t *testing.T) {
 			}
 		}
 		done()
-		if n[0] != wantArticle || n[1] != 0 || n[2] != 0 {
-			t.Fatalf("move %q: articles/revisions/comments visible = %v, want [%d 0 0]", move, n, wantArticle)
+		if n != [3]int{} {
+			t.Fatalf("move %q: articles/revisions/comments visible = %v, want none", move, n)
 		}
 	}
 }

@@ -1,4 +1,4 @@
-import type { AccessGrant, CatalogSpace, MovePreview, Project } from './api';
+import type { AccessGrant, CatalogSpace, MovePreview } from './api';
 
 type Role = AccessGrant['role'];
 export type AccessChange = 'gain' | 'lose' | 'upgrade' | 'downgrade';
@@ -35,7 +35,6 @@ export function plural(n: number, one: string, few: string, many: string): strin
 }
 
 export const countArticles = (n: number) => `${n} ${plural(n, 'статья', 'статьи', 'статей')}`;
-export const countProjects = (n: number) => `${n} ${plural(n, 'проект', 'проекта', 'проектов')}`;
 export const countArtifacts = (n: number) => `${n} ${plural(n, 'артефакт', 'артефакта', 'артефактов')}`;
 export const countUsers = (n: number) => `${n} ${plural(n, 'пользователь', 'пользователя', 'пользователей')}`;
 /** «у 1 пользователя», «у 2 пользователей», «у 21 пользователя» (genitive after a preposition). */
@@ -43,8 +42,8 @@ export const countUsersOf = (n: number) => `${n} ${Math.abs(n) % 10 === 1 && Mat
 export const countMembers = (n: number) => `${n} ${plural(n, 'участник', 'участника', 'участников')}`;
 
 /** Summary lines for a preview: what moves and who gains or loses access. */
-export function summarizePreview(p: Pick<MovePreview, 'articles' | 'projects' | 'artifacts' | 'users_gaining' | 'users_losing'>): string[] {
-  const parts = [...(p.projects > 0 ? [countProjects(p.projects)] : []), countArticles(p.articles), ...((p.artifacts ?? 0) > 0 ? [countArtifacts(p.artifacts!)] : [])];
+export function summarizePreview(p: Pick<MovePreview, 'articles' | 'artifacts' | 'users_gaining' | 'users_losing'>): string[] {
+  const parts = [countArticles(p.articles), ...((p.artifacts ?? 0) > 0 ? [countArtifacts(p.artifacts!)] : [])];
   const lines = [`Будет перемещено: ${parts.join(', ')}`];
   const gaining = p.users_gaining || 0, losing = p.users_losing || 0;
   if (gaining) lines.push(`Права расширятся у: ${countUsersOf(gaining)}`);
@@ -53,49 +52,15 @@ export function summarizePreview(p: Pick<MovePreview, 'articles' | 'projects' | 
   return lines;
 }
 
-export type TargetSpace = { space: CatalogSpace; canRoot: boolean; projects: Project[] };
+export type TargetSpace = { space: CatalogSpace };
 
-/** All project ids under `rootId` (including itself), following parent_id. */
-export function projectSubtreeIds(rootId: string, projects: Project[]): Set<string> {
-  const ids = new Set<string>([rootId]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const p of projects) if (!ids.has(p.id) && p.parent_id && ids.has(p.parent_id)) { ids.add(p.id); grew = true; }
-  }
-  return ids;
+/** Spaces the actor may move into: not archived, not limited and managed (manager+) by the actor. */
+export function eligibleTargets(catalog: CatalogSpace[]): TargetSpace[] {
+  return catalog.filter(space => !space.archived_at && !space.limited && canManageRole(space.effective_role)).map(space => ({ space }));
 }
 
-/**
- * Containers the actor may move into. canRoot: the space itself is a valid target (manager+ on the space).
- * Article moves: a space is listed when the space itself or any of its projects is eligible.
- * Project moves: the moved project and its descendants are never offered as parents.
- */
-export function eligibleTargets(catalog: CatalogSpace[], kind: 'article' | 'project', movingProjectId = '', projects?: Project[]): TargetSpace[] {
-  const all = projects ?? catalog.flatMap(s => s.projects || []);
-  const excluded = kind === 'project' && movingProjectId ? projectSubtreeIds(movingProjectId, all) : new Set<string>();
-  const result: TargetSpace[] = [];
-  for (const space of catalog) {
-    if (space.archived_at) continue;
-    const canRoot = canManageRole(space.effective_role);
-    const eligible = (space.projects || []).filter(p => !p.archived_at && canManageRole(p.effective_role) && !excluded.has(p.id));
-    // The server allows a move under any project the actor manages, so a space qualifies through the space root or through one eligible project.
-    if (!canRoot && !eligible.length) continue;
-    result.push({ space, canRoot, projects: eligible });
-  }
-  return result;
-}
-
-type Place = { space_id: string; project_id?: string | null };
-/** True when the target is the article's current space and project (then the move is a plain parent change). */
-export const isSameContainer = (article: Place, target: Place): boolean =>
-  article.space_id === target.space_id && (article.project_id || '') === (target.project_id || '');
-
-/** Role on the container an article lives in: its project from the catalog, else its space; undefined when unknown. */
-export function containerRole(catalog: CatalogSpace[], place: Place): string | undefined {
-  const space = catalog.find(s => s.id === place.space_id);
-  if (!space) return undefined;
-  const project = place.project_id ? (space.projects || []).find(p => p.id === place.project_id) : undefined;
-  return (project ? project.effective_role : undefined) || space.effective_role || undefined;
+/** Role on the space an article lives in; undefined when unknown. */
+export function containerRole(catalog: CatalogSpace[], place: { space_id: string }): string | undefined {
+  return catalog.find(s => s.id === place.space_id)?.effective_role || undefined;
 }
 export const canEditRole = (role?: string | null): boolean => role === 'editor' || role === 'manager' || role === 'owner';

@@ -51,7 +51,6 @@ func TestTrustedCatalog(t *testing.T) {
 		Tags          []string `json:"tags"`
 		Personal      bool     `json:"personal"`
 		EffectiveRole string   `json:"effective_role"`
-		Projects      []any    `json:"projects"`
 	}
 	if err := json.Unmarshal(body, &spaces); err != nil {
 		t.Fatal(err)
@@ -59,7 +58,7 @@ func TestTrustedCatalog(t *testing.T) {
 	byID := map[string]int{}
 	for i, sp := range spaces {
 		byID[sp.ID] = i
-		if sp.Personal || sp.EffectiveRole != "owner" || sp.Projects == nil || len(sp.Projects) != 0 {
+		if sp.Personal || sp.EffectiveRole != "owner" {
 			t.Fatalf("space contract: %+v", sp)
 		}
 	}

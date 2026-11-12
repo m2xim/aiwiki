@@ -36,13 +36,13 @@ type Props = {
 
 export function ArtifactsRoot({ route, spaceId, spaces, theme, go, onDirty, onChanged, onSpace }: Props) {
   const spaceName = spaces.find(space => space.id === spaceId)?.name || spaceId;
-  const list = (): ArtRoute => ({ kind: 'list', space: spaceId, q: '', project: '' });
+  const list = (): ArtRoute => ({ kind: 'list', space: spaceId, q: '' });
   useEffect(() => { document.title = route.kind === 'list' ? `Артефакты · ${spaceName} — AI Wiki` : 'Артефакт — AI Wiki'; }, [route.kind, spaceName]);
-  if (route.kind === 'list') return <ArtifactList spaceId={spaceId} spaceName={spaceName} q={route.q} project={route.project} reloadKey={0}
-    onFilters={(q, project) => go({ kind: 'list', space: spaceId, q, project }, true)}
+  if (route.kind === 'list') return <ArtifactList spaceId={spaceId} spaceName={spaceName} q={route.q} reloadKey={0}
+    onFilters={q => go({ kind: 'list', space: spaceId, q }, true)}
     onOpen={id => go({ kind: 'page', id, mode: 'view', revision: null })}
-    onCreate={() => go({ kind: 'new', space: spaceId, project: route.project })}/>;
-  if (route.kind === 'new') return <ArtifactEditor spaces={spaces} initialSpace={route.space || spaceId} initialProject={route.project} theme={theme}
+    onCreate={() => go({ kind: 'new', space: spaceId })}/>;
+  if (route.kind === 'new') return <ArtifactEditor spaces={spaces} initialSpace={route.space || spaceId} theme={theme}
     onDirty={onDirty} onCancel={() => go(list())} onReload={() => undefined}
     onSaved={(saved: ArtifactDetail) => { onChanged(); go({ kind: 'page', id: saved.id, mode: 'view', revision: null }, true); }}/>;
   return <ArtifactPage key={route.id} id={route.id} mode={route.mode} revision={route.revision} spaces={spaces} theme={theme} go={go}

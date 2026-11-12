@@ -142,7 +142,7 @@ func TestStorageQuotaArtifacts(t *testing.T) {
 		t.Fatalf("create: %d %s", code, body)
 	}
 	// an artifact inside a project, for the MCP key below
-	ap := e.artEnvArtifact(e.space, e.proj, "alice", rep('z', 10))
+	ap := e.artEnvArtifact(e.space, "", "alice", rep('z', 10))
 	// A hash counts once per artifact, not once per space: the same content in a
 	// second artifact is paid for again (no credit for what another artifact holds).
 	if code, body, _ = e.artFile("alice", nil, rep('a', 1000)); code != 201 {
@@ -188,7 +188,7 @@ func TestStorageQuotaArtifacts(t *testing.T) {
 
 	// MCP: the tool error says the same, with no numbers.
 	rw := e.mcpAs("alice", "write", e.proj)
-	isErr, text := mcpCall(rw, "wiki_artifact_write", map[string]any{"space_id": e.space, "project_id": e.proj, "title": "mcp", "files": []map[string]any{{"path": "index.html", "content": rep('m', 50)}}})
+	isErr, text := mcpCall(rw, "wiki_artifact_write", map[string]any{"space_id": e.space, "title": "mcp", "files": []map[string]any{{"path": "index.html", "content": rep('m', 50)}}})
 	if !isErr || !strings.Contains(text, spaceQuotaMessage) || strings.ContainsAny(text, "0123456789") {
 		t.Errorf("MCP create: %v %q", isErr, text)
 	}
@@ -542,16 +542,7 @@ func TestStorageQuotaMovesMayOvershoot(t *testing.T) {
 		t.Error("deleting an article in an overfull space")
 	}
 
-	// An artifact moves with its project, too.
-	proj := e.project(a, "", "С артефактом", true)
-	d := e.artEnvArtifact(a, proj, "alice", rep('k', 100))
-	r := mv(projectMove(proj, b, ""))
-	if r.Code != 200 {
-		t.Fatalf("project move: %d %s", r.Code, r.Raw)
-	}
-	if got := e.usedBy("bob", b); got != 900 {
-		t.Errorf("used after the project move: %d", got)
-	}
+	d := e.artEnvArtifact(a, "", "alice", rep('k', 100))
 	// An artifact can still be deleted and its title changed there.
 	path := "/api/artifacts/" + d.ID
 	if code, raw := e.do("alice", "PUT", path, map[string]any{"base_revision": 1, "title": "Переименован"}); code != 200 {

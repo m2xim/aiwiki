@@ -1,5 +1,13 @@
 # Safe moves with access-impact preview (corporate mode)
 
+> **Update (agent projects).** Projects inside spaces (folders with their own
+> access) were removed. Everything below about projects, `project_id`,
+> sub-projects and project moves is historical: moves now happen only between
+> spaces (`kind: "article"`, `target: {space_id, parent_id}`), the preview has no
+> `project` fields or `projects` counter, and old `/api/projects` endpoints answer
+> 410 `projects inside spaces were removed`. "Projects" in the product now means
+> agent projects, see [MCP-PERSISTENT-ACCESS.md](MCP-PERSISTENT-ACCESS.md).
+
 Status: server side implemented (2026-10-22), covered by PostgreSQL tests in
 `internal/server/corporate_moves_postgres_test.go`. Trusted SQLite mode keeps its
 current move behaviour and is not changed by this work; the endpoints are not

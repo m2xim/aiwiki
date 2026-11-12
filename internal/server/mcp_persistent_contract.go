@@ -1,7 +1,6 @@
 package server
 
 import (
-	"sort"
 	"strings"
 	"time"
 )
@@ -17,14 +16,15 @@ type mcpPersistentAccess struct {
 }
 
 type mcpCredential struct {
-	ID               string         `json:"id"`
-	Name             string         `json:"name"`
-	OwnerID          string         `json:"-"`
-	ServiceAccountID string         `json:"service_account_id,omitempty"`
-	Scope            []mcpScopeView `json:"scope"`
-	CreatedAt        time.Time      `json:"created_at"`
-	ExpiresAt        time.Time      `json:"expires_at"`
-	RevokedAt        *time.Time     `json:"revoked_at,omitempty"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	OwnerID          string           `json:"-"`
+	ServiceAccountID string           `json:"service_account_id,omitempty"`
+	Projects         []mcpProjectView `json:"projects"`
+	ReadOnly         bool             `json:"read_only"`
+	CreatedAt        time.Time        `json:"created_at"`
+	ExpiresAt        time.Time        `json:"expires_at"`
+	RevokedAt        *time.Time       `json:"revoked_at,omitempty"`
 }
 
 type mcpServiceAccount struct {
@@ -43,16 +43,14 @@ type mcpScopeElement struct {
 	Mode string `json:"mode"`
 }
 
-// mcpScopeView is the element as shown to clients, with display data.
-type mcpScopeView struct {
-	Type    string `json:"type"`
-	ID      string `json:"id"`
-	Mode    string `json:"mode"`
-	Name    string `json:"name"`
-	SpaceID string `json:"space_id"`
+// mcpProjectView is a project of a key as shown to the key owner. An unavailable project (deleted or
+// no longer visible) carries no name.
+type mcpProjectView struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Visibility string `json:"visibility"`
+	Available  bool   `json:"available"`
 }
-
-func (e mcpScopeElement) key() string { return e.Type + "\x00" + e.ID }
 
 // mcpScopeHasWrite reports whether any element is writable.
 func mcpScopeHasWrite(scope []mcpScopeElement) bool {
@@ -64,25 +62,11 @@ func mcpScopeHasWrite(scope []mcpScopeElement) bool {
 	return false
 }
 
-// mcpScopeNormalize validates and canonically orders a scope. ok is false for shape errors.
-func mcpScopeNormalize(in []mcpScopeElement) ([]mcpScopeElement, bool) {
-	if len(in) < 1 {
-		return nil, false
-	}
-	seen := make(map[string]bool, len(in))
-	out := make([]mcpScopeElement, 0, len(in))
-	for _, e := range in {
-		if (e.Type != "space" && e.Type != "project") || (e.Mode != "read" && e.Mode != "write") || !validPathID(e.ID) || seen[e.key()] {
-			return nil, false
-		}
-		seen[e.key()] = true
-		out = append(out, e)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].key() < out[j].key() })
-	return out, true
-}
-
 func mcpScopedTool(p *Principal, name string) bool {
+	if p != nil && p.MCPIntrospect {
+		// A key without ?project=: only the introductory calls.
+		return name == "wiki_bootstrap" || name == "wiki_projects"
+	}
 	if p == nil || p.MCPScope == nil || mcpReadTool(name) {
 		return true
 	}
@@ -98,7 +82,7 @@ func mcpScopedTool(p *Principal, name string) bool {
 
 func mcpReadTool(name string) bool {
 	switch name {
-	case "wiki_bootstrap", "wiki_search", "wiki_search_sections", "wiki_read", "wiki_links", "wiki_history", "wiki_comments", "wiki_artifact_list", "wiki_artifact_read":
+	case "wiki_bootstrap", "wiki_projects", "wiki_search", "wiki_search_sections", "wiki_read", "wiki_links", "wiki_history", "wiki_comments", "wiki_artifact_list", "wiki_artifact_read":
 		return true
 	}
 	return false

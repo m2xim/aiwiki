@@ -17,11 +17,10 @@ func artifactToolList() []map[string]any {
 	}, "path")
 	return []map[string]any{
 		{"name": "wiki_artifact_list", "description": "List interactive artifacts (HTML/JS applications with files) you can see, newest first. q searches title, description and the visible text of the files.", "inputSchema": objectSchema(map[string]any{
-			"space_id":   prop("string", "Only artifacts of this space."),
-			"project_id": prop("string", "Only artifacts directly in this project."),
-			"q":          prop("string", "Search words (all must match)."),
-			"limit":      prop("integer", "Page size, default 20, maximum 100."),
-			"offset":     prop("integer", "Number of results to skip."),
+			"space_id": prop("string", "Only artifacts of this space."),
+			"q":        prop("string", "Search words (all must match)."),
+			"limit":    prop("integer", "Page size, default 20, maximum 100."),
+			"offset":   prop("integer", "Number of results to skip."),
 		})},
 		{"name": "wiki_artifact_read", "description": "Read an artifact. Without path returns the manifest (files with size, sha256, mime) of the revision. With path returns one text file in bounded chunks of Unicode code points (max_chars, default 4000, at most 16000) pinned to a revision: follow next_read verbatim to continue; offset greater than 0 requires an explicit revision.", "inputSchema": objectSchema(map[string]any{
 			"id":        prop("string", "Artifact id."),
@@ -33,7 +32,6 @@ func artifactToolList() []map[string]any {
 		{"name": "wiki_artifact_write", "description": "Create an artifact (no id; space_id, title and an index.html file required) or change one (id + base_revision). An update is partial: only the listed files are written or deleted, other files, title and description keep their values. A stale base_revision returns a revision conflict. Visibility, sharing and deletion are not available through MCP. The request is limited to about 3 MB.", "inputSchema": objectSchema(map[string]any{
 			"id":            prop("string", "Id of the artifact to change; omit to create."),
 			"space_id":      prop("string", "Create only: space of the artifact."),
-			"project_id":    prop("string", "Create only: project within the space."),
 			"title":         prop("string", "Title, at most 300 characters (required on create)."),
 			"description":   prop("string", "Short description, at most 2000 characters."),
 			"base_revision": map[string]any{"type": "integer", "minimum": 1, "description": "Revision you last read; required when updating."},
@@ -45,7 +43,7 @@ func artifactToolList() []map[string]any {
 
 func (s *Server) toolArtifactList(args map[string]json.RawMessage) any {
 	ar := newArgs(args)
-	space, project, q := ar.str("space_id"), ar.str("project_id"), ar.str("q")
+	space, q := ar.str("space_id"), ar.str("q")
 	limit, offset := ar.integer("limit"), ar.integer("offset")
 	if bad := ar.fail(); bad != nil {
 		return bad
@@ -59,7 +57,7 @@ func (s *Server) toolArtifactList(args map[string]json.RawMessage) any {
 	if offset < 0 {
 		offset = 0
 	}
-	items, err := s.listArtifacts(space, project, q, limit, offset)
+	items, err := s.listArtifacts(space, q, limit, offset)
 	if err != nil {
 		return toolErr("database error")
 	}
@@ -117,7 +115,7 @@ func (s *Server) toolArtifactRead(args map[string]json.RawMessage) any {
 		return toolErr("revision not found")
 	}
 	if path == "" {
-		out := map[string]any{"id": a.ID, "title": a.Title, "description": a.Description, "space_id": a.SpaceID, "project_id": a.ProjectID, "visibility": a.Visibility, "revision": rev, "current_revision": a.Revision, "updated_at": a.UpdatedAt, "files": publicManifest(files)}
+		out := map[string]any{"id": a.ID, "title": a.Title, "description": a.Description, "space_id": a.SpaceID, "visibility": a.Visibility, "revision": rev, "current_revision": a.Revision, "updated_at": a.UpdatedAt, "files": publicManifest(files)}
 		if a.DeletedAt != "" {
 			out["deleted_at"] = a.DeletedAt
 		}

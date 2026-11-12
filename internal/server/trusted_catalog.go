@@ -11,15 +11,14 @@ const trustedCatalogMaxTags = 20
 // single-user mode: every active space, full access, no projects.
 func (s *Server) trustedCatalog(w http.ResponseWriter, r *http.Request) {
 	type catalogSpace struct {
-		ID            string           `json:"id"`
-		Name          string           `json:"name"`
-		Description   string           `json:"description"`
-		Personal      bool             `json:"personal"`
-		ArticleCount  int              `json:"article_count"`
-		LastUpdated   string           `json:"last_updated,omitempty"`
-		Tags          []string         `json:"tags"`
-		EffectiveRole string           `json:"effective_role,omitempty"`
-		Projects      []catalogProject `json:"projects"`
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		Description   string   `json:"description"`
+		Personal      bool     `json:"personal"`
+		ArticleCount  int      `json:"article_count"`
+		LastUpdated   string   `json:"last_updated,omitempty"`
+		Tags          []string `json:"tags"`
+		EffectiveRole string   `json:"effective_role,omitempty"`
 	}
 	rows, err := s.DB.Query(`SELECT id,name,description FROM spaces WHERE archived_at IS NULL ORDER BY name,id`)
 	if err != nil {
@@ -37,7 +36,6 @@ func (s *Server) trustedCatalog(w http.ResponseWriter, r *http.Request) {
 		}
 		item.EffectiveRole = "owner"
 		item.Tags = []string{}
-		item.Projects = []catalogProject{}
 		index[item.ID] = len(spaces)
 		spaces = append(spaces, item)
 	}

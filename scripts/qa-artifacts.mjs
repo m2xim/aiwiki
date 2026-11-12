@@ -125,14 +125,14 @@ assert.ok(refreshDelay('2099-01-01T00:00:00Z', now) <= 2 ** 31 - 1);
 // ---- Routes.
 assert.equal(parseArtRoute(''), null);
 assert.equal(parseArtRoute('?article=x'), null);
-assert.deepEqual(parseArtRoute('?view=artifacts&space=s1&q=%D1%82%D0%B5%D1%81%D1%82&project=p'), { kind: 'list', space: 's1', q: 'тест', project: 'p' });
-assert.deepEqual(parseArtRoute('?view=artifact-new&space=s1'), { kind: 'new', space: 's1', project: '' });
+assert.deepEqual(parseArtRoute('?view=artifacts&space=s1&q=%D1%82%D0%B5%D1%81%D1%82'), { kind: 'list', space: 's1', q: 'тест' });
+assert.deepEqual(parseArtRoute('?view=artifact-new&space=s1'), { kind: 'new', space: 's1' });
 assert.deepEqual(parseArtRoute('?artifact=a1'), { kind: 'page', id: 'a1', mode: 'view', revision: null });
 assert.deepEqual(parseArtRoute('?artifact=a1&view=edit'), { kind: 'page', id: 'a1', mode: 'edit', revision: null });
 assert.deepEqual(parseArtRoute('?artifact=a1&view=history&revision=3'), { kind: 'page', id: 'a1', mode: 'history', revision: 3 });
 assert.deepEqual(parseArtRoute('?artifact=a1&view=history&revision=-3'), { kind: 'page', id: 'a1', mode: 'history', revision: null });
 for (const route of [
-  { kind: 'list', space: 's 1', q: 'а&б=в', project: '' }, { kind: 'list', space: '', q: '', project: 'p' }, { kind: 'new', space: 's', project: 'p' },
+  { kind: 'list', space: 's 1', q: 'а&б=в' }, { kind: 'list', space: '', q: '' }, { kind: 'new', space: 's' },
   { kind: 'page', id: 'a/1', mode: 'view', revision: null }, { kind: 'page', id: 'a1', mode: 'history', revision: 4 }, { kind: 'page', id: 'a1', mode: 'edit', revision: null },
 ]) assert.deepEqual(parseArtRoute(new URL(artRouteUrl(route), 'http://x').search), route, artRouteUrl(route));
 assert.equal(artRouteUrl({ kind: 'page', id: 'a1', mode: 'view', revision: null }), '/?artifact=a1');

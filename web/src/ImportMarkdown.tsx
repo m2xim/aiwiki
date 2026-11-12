@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, ImagePlus, Upload, X } from 'lucide-react';
-import { client, type Article, type Project, type Space } from './api';
+import { client, type Article, type Space } from './api';
 import { Markdown } from './markdown';
 import {
   IMAGE_EXT, MARKDOWN_EXT, MAX_ATTACHMENT_BYTES, MAX_MARKDOWN_BYTES, WARNING_TITLES, analyzeMarkdown, deriveTitle, normalizeText,
@@ -9,7 +9,7 @@ import {
 import './ImportMarkdown.css';
 
 type Props = {
-  spaces: Space[]; projects: Project[]; corporate: boolean; defaultSpaceId: string; author: string;
+  spaces: Space[]; defaultSpaceId: string; author: string;
   onClose(): void; onImported(article: Article): void;
 };
 type Report = { article: Article; errors: string[] };
@@ -17,7 +17,7 @@ type Report = { article: Article; errors: string[] };
 const sizeText = (n: number) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} МБ` : `${Math.max(1, Math.round(n / 1024))} КБ`;
 const imageKey = (f: File) => `${f.webkitRelativePath || f.name}|${f.size}|${f.lastModified}`;
 
-export function ImportMarkdownDialog({ spaces, projects, corporate, defaultSpaceId, author, onClose, onImported }: Props) {
+export function ImportMarkdownDialog({ spaces, defaultSpaceId, author, onClose, onImported }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const markdownInput = useRef<HTMLInputElement>(null);
   const imagesInput = useRef<HTMLInputElement>(null);
@@ -30,7 +30,6 @@ export function ImportMarkdownDialog({ spaces, projects, corporate, defaultSpace
   const [titleTouched, setTitleTouched] = useState(false);
   const usable = useMemo(() => spaces.filter(s => !s.archived_at), [spaces]);
   const [spaceId, setSpaceId] = useState(() => usable.find(s => s.id === defaultSpaceId)?.id || usable[0]?.id || '');
-  const [projectId, setProjectId] = useState('');
   const [tab, setTab] = useState<'preview' | 'report'>('preview');
   const [matches, setMatches] = useState<Article[]>([]);
   const [matchNote, setMatchNote] = useState('');
@@ -39,15 +38,6 @@ export function ImportMarkdownDialog({ spaces, projects, corporate, defaultSpace
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [report, setReport] = useState<Report | null>(null);
-
-  const space = usable.find(s => s.id === spaceId);
-  const spaceProjects = useMemo(() => projects.filter(p => p.space_id === spaceId && !p.archived_at), [projects, spaceId]);
-  // Same rule as the article editor: a limited space (projects with separate access) has no direct documents.
-  const projectRequired = corporate && Boolean(space?.limited);
-  useEffect(() => {
-    if (!corporate) { setProjectId(''); return; }
-    setProjectId(current => spaceProjects.some(p => p.id === current) ? current : projectRequired ? spaceProjects[0]?.id || '' : '');
-  }, [corporate, spaceProjects, projectRequired]);
 
   const parsed = useMemo(() => {
     if (raw === null) return null;
@@ -73,12 +63,12 @@ export function ImportMarkdownDialog({ spaces, projects, corporate, defaultSpace
       client.articles({ space_id: spaceId, q: trimmedTitle, limit: '100' }).then(list => {
         if (cancelled) return;
         const wanted = trimmedTitle.toLowerCase();
-        const found = list.filter(a => !a.deleted_at && a.title.trim().toLowerCase() === wanted && (!corporate || (a.project_id || '') === projectId));
+        const found = list.filter(a => !a.deleted_at && a.title.trim().toLowerCase() === wanted);
         setMatches(found); setUpdateId(found[0]?.id || '');
       }).catch(() => { if (!cancelled) setMatchNote('Не удалось проверить, есть ли статья с таким названием.'); });
     }, 300);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [trimmedTitle, spaceId, projectId, corporate]);
+  }, [trimmedTitle, spaceId]);
 
   const readMarkdown = useCallback(async (file: File) => {
     if (file.size > MAX_MARKDOWN_BYTES) { setFileError(`Файл «${file.name}» больше 2 МБ (${sizeText(file.size)}).`); return; }
@@ -113,7 +103,7 @@ export function ImportMarkdownDialog({ spaces, projects, corporate, defaultSpace
     else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus(); }
   };
 
-  const canSave = Boolean(parsed && trimmedTitle && spaceId && (!projectRequired || projectId) && (mode === 'new' || updateId) && !saving);
+  const canSave = Boolean(parsed && trimmedTitle && spaceId && (mode === 'new' || updateId) && !saving);
   const save = async () => {
     if (!parsed || !canSave) return;
     setSaving(true); setError('');
@@ -137,7 +127,7 @@ export function ImportMarkdownDialog({ spaces, projects, corporate, defaultSpace
     try {
       if (mode === 'new') {
         article = await client.createArticle({
-          space_id: spaceId, project_id: corporate ? projectId : '', parent_id: '', title: trimmedTitle, summary: fm.data.summary ?? '', body,
+          space_id: spaceId, parent_id: '', title: trimmedTitle, summary: fm.data.summary ?? '', body,
           kind: 'article', status: 'draft', pinned: false, tags: fm.data.tags ?? [], properties: {}, author, message: 'Импорт Markdown',
         });
         const urls = await uploadAll(article.id);
@@ -208,13 +198,7 @@ export function ImportMarkdownDialog({ spaces, projects, corporate, defaultSpace
               <input value={title} maxLength={300} disabled={saving} onChange={event => { setTitle(event.target.value); setTitleTouched(true); }} /></label>
             <label className="md-import-field">Пространство
               <select value={spaceId} disabled={saving} onChange={event => setSpaceId(event.target.value)}>{usable.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-            {corporate && <label className="md-import-field">Проект
-              <select value={projectId} disabled={saving} onChange={event => setProjectId(event.target.value)}>
-                {!projectRequired && <option value="">Без проекта</option>}
-                {spaceProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select></label>}
           </div>
-          {projectRequired && !spaceProjects.length && <p className="md-import-error" role="alert">В этом пространстве нет доступных проектов: выберите другое.</p>}
 
           {matches.length > 0 && <fieldset className="md-import-match" disabled={saving}>
             <legend>Статья с таким названием уже есть</legend>

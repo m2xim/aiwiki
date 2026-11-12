@@ -52,31 +52,50 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 			}
 		}
 	}
-	var space Space
-	mustJSON(call("POST", "/api/corporate/spaces", `{"name":"PAT fixture","personal":true}`, me.CSRF, "", cookie), 201, &space)
-	var project, sibling corporateProject
-	mustJSON(call("POST", "/api/projects", `{"space_id":"`+space.ID+`","name":"Selected"}`, me.CSRF, "", cookie), 201, &project)
-	mustJSON(call("POST", "/api/projects", `{"space_id":"`+space.ID+`","name":"Sibling"}`, me.CSRF, "", cookie), 201, &sibling)
+	var space, other Space
+	mustJSON(call("POST", "/api/corporate/spaces", `{"name":"PAT fixture"}`, me.CSRF, "", cookie), 201, &space)
+	mustJSON(call("POST", "/api/corporate/spaces", `{"name":"PAT sibling"}`, me.CSRF, "", cookie), 201, &other)
+	var project, sibling AgentProjectForTest
+	mustJSON(call("POST", "/api/agent-projects", `{"name":"Selected","visibility":"private","spaces":[{"space_id":"`+space.ID+`","mode":"write"}]}`, me.CSRF, "", cookie), 201, &project)
+	mustJSON(call("POST", "/api/agent-projects", `{"name":"Sibling","visibility":"private","spaces":[{"space_id":"`+other.ID+`","mode":"write"}]}`, me.CSRF, "", cookie), 201, &sibling)
 	var account mcpServiceAccount
 	mustJSON(call("POST", "/api/mcp/service-accounts", `{"name":"Background reviewer"}`, me.CSRF, "", cookie), 201, &account)
 	var issued struct {
 		mcpCredential
 		Token string `json:"token"`
 	}
-	mustJSON(call("POST", "/api/mcp/credentials", `{"name":"Scoped writer","mode":"write","project_ids":["`+project.ID+`"],"service_account_id":"`+account.ID+`"}`, me.CSRF, "", cookie), 201, &issued)
+	mustJSON(call("POST", "/api/mcp/credentials", `{"name":"Scoped writer","projects":["`+project.ID+`"],"service_account_id":"`+account.ID+`"}`, me.CSRF, "", cookie), 201, &issued)
 	if issued.Token == "" {
 		t.Fatal("missing secret")
 	}
-	rpc := func(method string, params any) *httptest.ResponseRecorder {
+	rpcAt := func(path, method string, params any) *httptest.ResponseRecorder {
 		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-		return call("POST", "/mcp", string(b), "", issued.Token, nil)
+		return call("POST", path, string(b), "", issued.Token, nil)
+	}
+	rpc := func(method string, params any) *httptest.ResponseRecorder {
+		return rpcAt("/mcp?project="+project.ID, method, params)
+	}
+	// Without a project only the introductory tools exist.
+	if w := rpcAt("/mcp", "tools/list", map[string]any{}); w.Code != 200 || strings.Contains(w.Body.String(), `"wiki_write"`) || strings.Contains(w.Body.String(), `"wiki_search"`) || !strings.Contains(w.Body.String(), `"wiki_projects"`) {
+		t.Fatalf("introspection tools: %d %s", w.Code, w.Body)
+	}
+	if w := rpcAt("/mcp", "tools/call", map[string]any{"name": "wiki_search", "arguments": map[string]any{}}); w.Code != 200 || !strings.Contains(w.Body.String(), `"isError":true`) {
+		t.Fatalf("introspection search: %d %s", w.Code, w.Body)
+	}
+	// A project outside the key's list is refused, and the answer does not say whether it exists.
+	for _, path := range []string{"/mcp?project=" + sibling.ID, "/mcp?project=nonexistent", "/mcp?project=a/b", "/mcp?project=" + project.ID + "&project=" + sibling.ID} {
+		if w := rpcAt(path, "tools/list", map[string]any{}); w.Code != 403 && w.Code != 400 || strings.Contains(w.Body.String(), "Sibling") {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
+		}
+	}
+	if w := rpcAt("/mcp?project="+sibling.ID, "ping", nil); w.Code != 403 || !strings.Contains(w.Body.String(), "project is not available for this key") {
+		t.Fatalf("foreign project: %d %s", w.Code, w.Body)
 	}
 	w := rpc("tools/list", map[string]any{})
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"wiki_edit"`) {
 		t.Fatalf("writer discovery failed: %d %s", w.Code, w.Body)
 	}
-	// The agent learns where it may write from bootstrap alone: exactly its
-	// projects with their space ids, never the sibling project.
+	// The agent learns where it may write from bootstrap alone: the project, its spaces and effective rights.
 	w = rpc("tools/call", map[string]any{"name": "wiki_bootstrap", "arguments": map[string]any{}})
 	var boot struct {
 		Result struct {
@@ -89,31 +108,29 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 		t.Fatalf("bootstrap failed: %d %s", w.Code, w.Body)
 	}
 	var bootOut struct {
-		Spaces []Space `json:"spaces"`
-		Scope  []struct {
-			Type, ID, Mode, Name, SpaceID string
-		} `json:"scope"`
+		Project AgentProjectForTest `json:"project"`
 	}
-	if err := json.Unmarshal([]byte(strings.ReplaceAll(boot.Result.Content[0].Text, `"space_id"`, `"SpaceID"`)), &bootOut); err != nil {
+	if err := json.Unmarshal([]byte(boot.Result.Content[0].Text), &bootOut); err != nil {
 		t.Fatal(err)
 	}
-	if len(bootOut.Spaces) != 0 || len(bootOut.Scope) != 1 || bootOut.Scope[0].ID != project.ID || bootOut.Scope[0].Type != "project" || bootOut.Scope[0].Name != "Selected" || bootOut.Scope[0].SpaceID != space.ID {
-		t.Fatalf("scoped bootstrap must list exactly its project with its space: %s", boot.Result.Content[0].Text)
+	if bootOut.Project.ID != project.ID || len(bootOut.Project.Spaces) != 1 || bootOut.Project.Spaces[0].SpaceID != space.ID || bootOut.Project.Spaces[0].Effective != "write" || strings.Contains(boot.Result.Content[0].Text, "PAT sibling") {
+		t.Fatalf("bootstrap must show exactly its project: %s", boot.Result.Content[0].Text)
 	}
-	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Service authorship", "space_id": bootOut.Scope[0].SpaceID, "project_id": bootOut.Scope[0].ID, "body": "# Scoped\ncontent", "author": "spoof"}}})
+	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Service authorship", "space_id": space.ID, "body": "# Scoped\ncontent", "author": "spoof"}}})
 	if w.Code != 200 || strings.Contains(w.Body.String(), `"isError":true`) {
 		t.Fatalf("write failed: %d %s", w.Code, w.Body)
 	}
-	// An archived project disappears from bootstrap and comes back on restore.
-	if _, err := owner.DB.Exec(`UPDATE projects SET archived_at='2020-01-01T00:00:00Z' WHERE id=?`, project.ID); err != nil {
-		t.Fatal(err)
+	// Changing the project applies to the very next request: the space leaves it and writes stop.
+	var rowID string
+	for _, r := range project.Spaces {
+		rowID = r.RowID
 	}
-	if w = rpc("tools/call", map[string]any{"name": "wiki_bootstrap", "arguments": map[string]any{}}); w.Code != 200 || !strings.Contains(w.Body.String(), `\"scope\":[]`) {
-		t.Fatalf("archived project still listed: %d %s", w.Code, w.Body)
+	mustJSON(call("PATCH", "/api/agent-projects/"+project.ID, `{"spaces":[{"row_id":"`+rowID+`","mode":"read"}]}`, me.CSRF, "", cookie), 200, nil)
+	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Now read only", "space_id": space.ID}}})
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"isError":true`) {
+		t.Fatalf("a project switched to read still wrote: %d %s", w.Code, w.Body)
 	}
-	if _, err := owner.DB.Exec(`UPDATE projects SET archived_at=NULL WHERE id=?`, project.ID); err != nil {
-		t.Fatal(err)
-	}
+	mustJSON(call("PATCH", "/api/agent-projects/"+project.ID, `{"spaces":[{"row_id":"`+rowID+`","mode":"write"}]}`, me.CSRF, "", cookie), 200, nil)
 	scoped, done, err := owner.DB.scoped(context.Background(), me.User.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +151,7 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), articleID) {
 		t.Fatalf("edited text is not searchable: %d %s", w.Code, w.Body)
 	}
-	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Out of scope", "space_id": space.ID, "project_id": sibling.ID}}})
+	w = rpc("tools/call", map[string]any{"name": "wiki_write", "arguments": map[string]any{"article": map[string]any{"title": "Out of scope", "space_id": other.ID}}})
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"isError":true`) {
 		t.Fatalf("sibling write allowed: %d %s", w.Code, w.Body)
 	}
@@ -143,7 +160,7 @@ func TestMCPPersistentEndToEnd(t *testing.T) {
 		t.Fatalf("native credential authenticated browser path: %d", w.Code)
 	}
 	var actors int
-	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors != 7 { // bootstrap x2, write, edit, search, sibling write, list
+	if err = owner.DB.QueryRow(`SELECT count(*) FROM security_audit WHERE actor_id=? AND action='mcp.credential.request' AND details::jsonb->>'owner_id'=?`, account.ID, me.User.ID).Scan(&actors); err != nil || actors < 8 { // every request of the project connection is audited
 		t.Fatalf("audit actors=%d err=%v", actors, err)
 	}
 	// Local admission: no browser login for longer than the window stops the key.

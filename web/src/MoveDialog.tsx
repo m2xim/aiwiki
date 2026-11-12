@@ -1,29 +1,25 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowRight, FolderInput, UserRound, Users, X } from 'lucide-react';
-import { Article, CatalogSpace, MovePlace, MovePreview, MoveRequest, Project, client } from './api';
+import { Article, CatalogSpace, MovePlace, MovePreview, MoveRequest, client } from './api';
 import { ParentPicker } from './ParentPicker';
-import { AccessChange, canEditRole, canManageRole, containerRole, countMembers, countUsers, describeAccessChange, eligibleTargets, isSameContainer, roleLabel, summarizePreview } from './moveCore';
+import { AccessChange, canEditRole, canManageRole, containerRole, countMembers, countUsers, describeAccessChange, eligibleTargets, roleLabel, summarizePreview } from './moveCore';
 import './MoveDialog.css';
 
-export type MoveSubject = { kind: 'article'; article: Article } | { kind: 'project'; project: Project };
-export type MoveDone = { kind: 'article'; id: string; moved: boolean } | { kind: 'project'; id: string };
+export type MoveSubject = { kind: 'article'; article: Article };
+export type MoveDone = { kind: 'article'; id: string; moved: boolean };
 type Props = { subject: MoveSubject; author: string; onClose: () => void; onDone: (done: MoveDone) => void };
 
 const CHANGE_LABELS: Record<AccessChange, string> = { gain: 'Получит доступ', lose: 'Потеряет доступ', upgrade: 'Права расширятся', downgrade: 'Права сузятся' };
-const place = (p: MovePlace) => [p.space_name || '(скрыто)', p.project_name].filter(Boolean).join(' / ');
+const place = (p: MovePlace) => p.space_name || '(скрыто)';
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function MoveDialog({ subject, author, onClose, onDone }: Props) {
   const uid = useId();
-  const isArticle = subject.kind === 'article';
-  const article = subject.kind === 'article' ? subject.article : null;
-  const project = subject.kind === 'project' ? subject.project : null;
-  const movingId = article?.id || project?.id || '';
+  const article = subject.article;
   const dialogRef = useRef<HTMLDivElement>(null);
   const [catalog, setCatalog] = useState<CatalogSpace[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [spaceId, setSpaceId] = useState('');
-  const [projectId, setProjectId] = useState('');
   const [parentId, setParentId] = useState('');
   const [step, setStep] = useState<'target' | 'preview'>('target');
   const [preview, setPreview] = useState<MovePreview | null>(null);
@@ -46,33 +42,25 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
     return () => { live = false; };
   }, []);
 
-  const targets = useMemo(() => catalog ? eligibleTargets(catalog, subject.kind, project?.id || '') : [], [catalog, subject.kind, project?.id]);
+  const targets = useMemo(() => catalog ? eligibleTargets(catalog) : [], [catalog]);
   const current = targets.find(t => t.space.id === spaceId);
   // Editors (not managers) of the article's container may only change the parent inside it.
-  const parentOnly = Boolean(article && catalog && !canManageRole(containerRole(catalog, article)));
-  const noRights = Boolean(article && catalog && !canEditRole(containerRole(catalog, article)));
+  const parentOnly = Boolean(catalog && !canManageRole(containerRole(catalog, article)));
+  const noRights = Boolean(catalog && !canEditRole(containerRole(catalog, article)));
 
-  // Initial selection: the current container when it is allowed, otherwise the first allowed one.
+  // Initial selection: the current space when it is allowed, otherwise the first allowed one.
   useEffect(() => {
     if (!catalog || spaceId) return;
-    if (article && parentOnly) { setSpaceId(article.space_id); setProjectId(article.project_id || ''); setParentId(article.parent_id || ''); return; }
-    const home = targets.find(t => t.space.id === (article?.space_id || project?.space_id)) || targets[0];
+    if (parentOnly) { setSpaceId(article.space_id); setParentId(article.parent_id || ''); return; }
+    const home = targets.find(t => t.space.id === article.space_id) || targets[0];
     if (!home) return;
     setSpaceId(home.space.id);
-    const fallback = home.canRoot ? '' : home.projects[0]?.id || '';
-    if (article) {
-      const cur = article.project_id || '';
-      setProjectId(cur ? (home.projects.some(p => p.id === cur) ? cur : fallback) : fallback);
-      if (home.space.id === article.space_id) setParentId(article.parent_id || '');
-    } else if (project) {
-      const cur = project.parent_id || '';
-      setParentId(home.space.id === project.space_id && (cur ? home.projects.some(p => p.id === cur) : home.canRoot) ? cur : fallback);
-    }
-  }, [catalog, targets, spaceId, article, project, parentOnly]);
+    if (home.space.id === article.space_id) setParentId(article.parent_id || '');
+  }, [catalog, targets, spaceId, article, parentOnly]);
 
   // Articles of the target space feed the parent picker (articles only).
   useEffect(() => {
-    if (!isArticle || !spaceId) return;
+    if (!spaceId) return;
     let live = true;
     setArticlesLoading(true); setArticlesError(''); setSpaceArticles([]);
     (async () => {
@@ -89,29 +77,22 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
       finally { if (live) setArticlesLoading(false); }
     })();
     return () => { live = false; };
-  }, [isArticle, spaceId]);
+  }, [spaceId]);
 
-  const parentOptions = useMemo(() => spaceArticles.filter(a => !a.deleted_at && (a.project_id || '') === projectId), [spaceArticles, projectId]);
+  const parentOptions = useMemo(() => spaceArticles.filter(a => !a.deleted_at), [spaceArticles]);
 
-  const sameContainer = Boolean(article && spaceId && isSameContainer(article, { space_id: spaceId, project_id: projectId }));
-  const unchanged = article ? sameContainer && parentId === (article.parent_id || '') : Boolean(project && spaceId === project.space_id && parentId === (project.parent_id || ''));
-  const canNext = (Boolean(current) || parentOnly) && !noRights && !unchanged && !busy && (!article || !articlesLoading);
+  const sameContainer = Boolean(spaceId && article.space_id === spaceId);
+  const unchanged = sameContainer && parentId === (article.parent_id || '');
+  const canNext = (Boolean(current) || parentOnly) && !noRights && !unchanged && !busy && !articlesLoading;
 
-  const onSpace = (id: string) => {
-    const t = targets.find(x => x.space.id === id);
-    setSpaceId(id); setError('');
-    if (article) { setProjectId(t?.canRoot ? '' : t?.projects[0]?.id || ''); setParentId(''); }
-    else setParentId(t?.canRoot ? '' : t?.projects[0]?.id || '');
-  };
+  const onSpace = (id: string) => { setSpaceId(id); setError(''); setParentId(''); };
 
-  const request = (fingerprint?: string): MoveRequest => article
-    ? { kind: 'article', id: article.id, base_revision: article.revision, target: { space_id: spaceId, project_id: projectId, parent_id: parentId }, ...(fingerprint ? { fingerprint } : {}) }
-    : { kind: 'project', id: movingId, target: { space_id: spaceId, project_id: '', parent_id: parentId }, ...(fingerprint ? { fingerprint } : {}) };
+  const request = (fingerprint?: string): MoveRequest => ({ kind: 'article', id: article.id, base_revision: article.revision, target: { space_id: spaceId, parent_id: parentId }, ...(fingerprint ? { fingerprint } : {}) });
 
   const next = async () => {
     if (!canNext) return;
     setError('');
-    if (article && sameContainer) {
+    if (sameContainer) {
       setBusy('save');
       try {
         await client.updateArticle(article.id, { parent_id: parentId, base_revision: article.revision, author, message: 'Смена родителя' });
@@ -131,7 +112,7 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
     try {
       const result = await client.moveApply(request(preview.fingerprint));
       if (result.conflict) { setPreview(result.preview); setStale(true); setBusy(''); return; }
-      onDone(article ? { kind: 'article', id: article.id, moved: true } : { kind: 'project', id: movingId });
+      onDone({ kind: 'article', id: article.id, moved: true });
     } catch (e) { setError(message(e)); setBusy(''); }
   };
 
@@ -157,43 +138,33 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
   const titleId = `${uid}-title`;
   // Red confirmation only when someone loses access entirely; a narrower role is shown in the table.
   const loses = Boolean(preview && preview.access.some(row => describeAccessChange(row.before, row.after) === 'lose'));
-  const name = article ? article.title || 'Без названия' : project?.name || '';
+  const name = article.title || 'Без названия';
 
   const targetStep = <>
     {!catalog && !loadError && <p className="move-note" role="status">Загружаем доступные места…</p>}
     {loadError && <p className="move-error" role="alert">{loadError}</p>}
-    {catalog && parentOnly && article && <div className="move-form">
+    {catalog && parentOnly && <div className="move-form">
       {noRights ? <p className="move-note">Недостаточно прав для изменения этой статьи.</p> : <>
-        <p className="move-note">Переносить в другое пространство или проект могут управляющие. Вы можете выбрать другую родительскую статью в этом же месте.</p>
+        <p className="move-note">Переносить в другое пространство могут управляющие. Вы можете выбрать другую родительскую статью в этом же месте.</p>
         <div className="move-field"><span>Родительская статья <small>необязательно</small></span>
           <ParentPicker options={parentOptions} value={parentId} excludeId={article.id} onChange={id => { setParentId(id); setError(''); }}/>
           {articlesLoading && <small className="move-hint" role="status">Загружаем статьи…</small>}
           {articlesError && <small className="move-hint move-hint-error" role="alert">{articlesError}</small>}</div>
         {unchanged && <p className="move-note">Статья уже находится здесь.</p>}</>}
     </div>}
-    {catalog && !parentOnly && !targets.length && <p className="move-note">Нет пространств, куда вы можете переместить {isArticle ? 'статью' : 'проект'}: нужна роль «{roleLabel('manager')}» или «{roleLabel('owner')}».</p>}
+    {catalog && !parentOnly && !targets.length && <p className="move-note">Нет пространств, куда вы можете переместить статью: нужна роль «{roleLabel('manager')}» или «{roleLabel('owner')}».</p>}
     {catalog && !parentOnly && targets.length > 0 && <div className="move-form">
       <label className="move-field"><span>Пространство</span>
         <select aria-label="Пространство" value={spaceId} onChange={e => onSpace(e.target.value)} disabled={Boolean(busy)}>
           {targets.map(t => <option key={t.space.id} value={t.space.id}>{t.space.name}</option>)}
         </select></label>
-      {article && <label className="move-field"><span>Проект</span>
-        <select aria-label="Проект" value={projectId} onChange={e => { setProjectId(e.target.value); setParentId(''); setError(''); }} disabled={Boolean(busy)}>
-          {current?.canRoot && <option value="">Без проекта</option>}
-          {current?.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select></label>}
-      {article && <div className="move-field"><span>Родительская статья <small>необязательно</small></span>
+      <div className="move-field"><span>Родительская статья <small>необязательно</small></span>
         <ParentPicker options={parentOptions} value={parentId} excludeId={article.id} onChange={id => { setParentId(id); setError(''); }}/>
         {articlesLoading && <small className="move-hint" role="status">Загружаем статьи…</small>}
-        {articlesError && <small className="move-hint move-hint-error" role="alert">{articlesError}</small>}</div>}
-      {project && <label className="move-field"><span>Родительский проект</span>
-        <select aria-label="Родительский проект" value={parentId} onChange={e => { setParentId(e.target.value); setError(''); }} disabled={Boolean(busy)}>
-          {current?.canRoot && <option value="">Корень пространства</option>}
-          {current?.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select></label>}
-      {unchanged && <p className="move-note">{article ? 'Статья уже находится здесь.' : 'Проект уже находится здесь.'}</p>}
-      {article && sameContainer && !unchanged && <p className="move-note">Это то же пространство и проект: будет изменён только родитель, без проверки прав доступа.</p>}
-      {article && !sameContainer && <p className="move-note">Вместе со статьёй переместятся все дочерние статьи.</p>}
+        {articlesError && <small className="move-hint move-hint-error" role="alert">{articlesError}</small>}</div>
+      {unchanged && <p className="move-note">Статья уже находится здесь.</p>}
+      {sameContainer && !unchanged && <p className="move-note">Это то же пространство: будет изменён только родитель, без проверки прав доступа.</p>}
+      {!sameContainer && <p className="move-note">Вместе со статьёй переместятся все дочерние статьи.</p>}
     </div>}
   </>;
 
@@ -226,7 +197,7 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
     <div ref={dialogRef} className="move-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="move-head">
         <div><div className="move-eyebrow"><FolderInput size={14} aria-hidden="true"/>{step === 'target' ? 'ШАГ 1 ИЗ 2 · КУДА' : 'ШАГ 2 ИЗ 2 · ПРОВЕРКА'}</div>
-          <h2 id={titleId}>{isArticle ? 'Переместить статью' : 'Переместить проект'}</h2>
+          <h2 id={titleId}>Переместить статью</h2>
           <p className="move-subtitle" title={name}>«{name}»</p></div>
         <button type="button" className="icon-button" onClick={onClose} disabled={busy === 'apply'} aria-label="Закрыть окно перемещения" title="Закрыть (Esc)"><X size={18}/></button>
       </div>
@@ -236,7 +207,7 @@ export function MoveDialog({ subject, author, onClose, onDone }: Props) {
         {step === 'target'
           ? <><button type="button" className="button ghost" onClick={onClose} disabled={Boolean(busy)}>Отмена</button>
             <button type="button" className="button primary move-primary" onClick={() => void next()} disabled={!canNext}>
-              {busy === 'preview' ? 'Проверяем…' : busy === 'save' ? 'Сохраняем…' : article && sameContainer ? 'Сменить родителя' : 'Далее'}</button></>
+              {busy === 'preview' ? 'Проверяем…' : busy === 'save' ? 'Сохраняем…' : sameContainer ? 'Сменить родителя' : 'Далее'}</button></>
           : <><button type="button" className="button ghost" onClick={back} disabled={busy === 'apply'}>Назад</button>
             <button type="button" className={`button primary move-primary${loses ? ' move-danger' : ''}`} onClick={() => void apply()} disabled={Boolean(busy)}>
               {busy === 'apply' ? 'Перемещаем…' : loses ? 'Переместить, несмотря на потерю доступа' : 'Переместить'}</button></>}

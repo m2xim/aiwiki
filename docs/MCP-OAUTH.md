@@ -34,7 +34,7 @@ Why: Keycloak 26.8's `AccessTokenIntrospectionProvider.verifyAudience` ([source,
 | Browser sign-in callback | Browser OIDC client ID audience | Remains browser-client-bound; enabling MCP OAuth does not change the callback audience. |
 | Native personal access token | Its existing exact native scope and validation | Unchanged; these credentials do not become OAuth tokens. |
 
-The scope `aiwiki:mcp` grants the user's full current content ACL. It does not mean read-only access and does not restrict access to selected projects. For narrowed grants (selected projects, read-only ceiling) use a native key (project-scoped PAT); see [persistent MCP access](MCP-PERSISTENT-ACCESS.md). Browser session credentials remain separate from MCP OAuth credentials; both resolve to the same local user when issuer and subject match.
+The scope `aiwiki:mcp` grants the user's full current content ACL. It does not mean read-only access and does not restrict access to an agent project unless `?project=<id>` is given (then the project must be visible to the user). For narrowed grants (agent projects, read-only ceiling) use a native key; see [persistent MCP access](MCP-PERSISTENT-ACCESS.md). Browser session credentials remain separate from MCP OAuth credentials; both resolve to the same local user when issuer and subject match.
 
 External OAuth tokens are checked through OIDC introspection on MCP requests, subject to the identity provider's token lifetime, introspection behavior and directory synchronization/cache. This does not promise immediate visibility of an AD change. Native persistent credentials use their configured admission provider; its upstream directory freshness has the same deployment dependency.
 

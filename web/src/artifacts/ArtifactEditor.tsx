@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, FilePlus2, FileText, Folder, Image as ImageIcon, Pencil, Save, Trash2, Upload } from 'lucide-react';
 import { client, errorStatus } from '../api';
-import type { ArtifactDetail, Project, Space } from '../api';
+import type { ArtifactDetail, Space } from '../api';
 import {
   buildTree, buildUpdate, checkNewPath, contentBytes, diffFiles, draftFromManifest, ENTRY_PATH, formatSize, isImagePath, isTextPath, LIMITS,
   validateDraft, type DraftFile, type TreeNode, type Visibility,
@@ -16,7 +16,6 @@ type Props = {
   artifact?: ArtifactDetail;
   spaces: Space[];
   initialSpace: string;
-  initialProject: string;
   theme: 'light' | 'dark';
   onDirty: (dirty: boolean) => void;
   onSaved: (artifact: ArtifactDetail) => void;
@@ -27,7 +26,7 @@ type Props = {
 
 const fileKey = (file: DraftFile) => `${file.path}\n${file.encoding}\n${file.content}`;
 
-export function ArtifactEditor({ artifact, spaces, initialSpace, initialProject, theme, onDirty, onSaved, onCancel, onReload }: Props) {
+export function ArtifactEditor({ artifact, spaces, initialSpace, theme, onDirty, onSaved, onCancel, onReload }: Props) {
   const creating = !artifact;
   const [templateId, setTemplateId] = useState<TemplateId>('empty');
   const startFiles = useMemo(() => artifact ? draftFromManifest(artifact.manifest) : TEMPLATES[0].files(), [artifact]);
@@ -37,8 +36,6 @@ export function ArtifactEditor({ artifact, spaces, initialSpace, initialProject,
   const [description, setDescription] = useState(artifact?.description || '');
   const [visibility, setVisibility] = useState<Visibility>(artifact?.visibility || 'inherit');
   const [spaceId, setSpaceId] = useState(initialSpace);
-  const [projectId, setProjectId] = useState(initialProject);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [message, setMessage] = useState('');
   const [newName, setNewName] = useState('');
   const [fileError, setFileError] = useState('');
@@ -53,14 +50,6 @@ export function ArtifactEditor({ artifact, spaces, initialSpace, initialProject,
   const [renameError, setRenameError] = useState('');
   const uploadRef = useRef<HTMLInputElement>(null);
   const templateTouched = useRef(false);
-
-  // The project list follows the chosen space (creation only).
-  useEffect(() => {
-    if (!creating || !spaceId) { setProjects([]); return; }
-    let live = true;
-    client.projects(spaceId).then(list => { if (live) setProjects(list.filter(project => !project.archived_at)); }).catch(() => { if (live) setProjects([]); });
-    return () => { live = false; };
-  }, [creating, spaceId]);
 
   const current = files.find(file => file.path === selected) || null;
 
@@ -177,7 +166,7 @@ export function ArtifactEditor({ artifact, spaces, initialSpace, initialProject,
       else {
         const complete = await Promise.all(files.map(ensureLoaded));
         saved = await client.createArtifact({
-          space_id: spaceId, ...(projectId ? { project_id: projectId } : {}), title: title.trim(), description: description.trim(), visibility,
+          space_id: spaceId, title: title.trim(), description: description.trim(), visibility,
           files: complete.map(file => ({ path: file.path, content: file.content || '', encoding: file.encoding })), ...(message.trim() ? { message: message.trim() } : {}),
         });
       }
@@ -222,8 +211,7 @@ export function ArtifactEditor({ artifact, spaces, initialSpace, initialProject,
       <label className="field wide"><span>Название <b>*</b></span><input maxLength={300} value={title} onChange={event => setTitle(event.target.value)} placeholder="Например, воронка продаж" aria-invalid={attempted && !title.trim()}/>{attempted && !title.trim() && <small className="art-error-text">Введите название.</small>}</label>
       <label className="field wide"><span>Описание</span><input value={description} onChange={event => setDescription(event.target.value)} placeholder="Одно предложение: что показывает артефакт"/></label>
       {creating && <>
-        <label className="field"><span>Пространство</span><select value={spaceId} onChange={event => { setSpaceId(event.target.value); setProjectId(''); }}>{!spaceOptions.some(space => space.id === spaceId) && <option value={spaceId}>Выберите…</option>}{spaceOptions.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
-        <label className="field"><span>Проект (необязательно)</span><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">Без проекта</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+        <label className="field"><span>Пространство</span><select value={spaceId} onChange={event => { setSpaceId(event.target.value); }}>{!spaceOptions.some(space => space.id === spaceId) && <option value={spaceId}>Выберите…</option>}{spaceOptions.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
       </>}
       <label className="field"><span>Видимость</span><select value={visibility} disabled={!creating && !artifact!.can_manage} onChange={event => setVisibility(event.target.value as Visibility)}><option value="inherit">Видно участникам пространства</option><option value="private">Только мне</option></select></label>
       <label className="field"><span>Комментарий к версии</span><input value={message} onChange={event => setMessage(event.target.value)} placeholder="Что изменилось (необязательно)"/></label>

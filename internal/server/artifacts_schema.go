@@ -76,7 +76,7 @@ func (d *database) validateArtifactSchema() error {
 		return errors.New("artifact guard triggers are missing or disabled")
 	}
 	var ok bool
-	if err := d.QueryRow(`SELECT (SELECT count(*) FROM pg_proc p WHERE p.oid IN (to_regprocedure('public.artifact_is_admin(text)'),to_regprocedure('public.artifact_revoke_shares()'),to_regprocedure('public.artifact_guard_project_move()')) AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public'])=3
+	if err := d.QueryRow(`SELECT (SELECT count(*) FROM pg_proc p WHERE p.oid IN (to_regprocedure('public.artifact_is_admin(text)'),to_regprocedure('public.artifact_revoke_shares()'),to_regprocedure('public.artifact_guard_project_move()')) AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public, pg_temp'])=3
  AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN (to_regprocedure('public.artifact_is_admin(text)'),to_regprocedure('public.artifact_role(text,text)'),to_regprocedure('public.artifact_can_read(text,text,text,text)'),to_regprocedure('public.artifact_can_write(text,text,text,text)'),to_regprocedure('public.artifact_can_share(text,text,text,text)'),to_regprocedure('public.artifact_guard()'),to_regprocedure('public.artifact_share_guard()'),to_regprocedure('public.artifact_revoke_shares()'),to_regprocedure('public.artifact_guard_project_move()')) AND a.grantee=0)
  AND has_function_privilege(current_user,'public.artifact_role(text,text)','EXECUTE')`).Scan(&ok); err != nil || !ok {
 		return errors.New("artifact functions are missing, not SECURITY DEFINER where required or executable by PUBLIC")
@@ -84,7 +84,7 @@ func (d *database) validateArtifactSchema() error {
 	// v2: deleted artifacts only for restorers, link management without the
 	// writable-container test, link validity as a non-PUBLIC SECURITY DEFINER.
 	if err := d.QueryRow(`SELECT (SELECT count(*) FROM pg_policy p WHERE (p.polrelid='public.artifacts'::regclass AND p.polname='artifacts_read' AND pg_get_expr(p.polqual,p.polrelid) LIKE '%artifact_can_view%') OR (p.polrelid='public.artifact_shares'::regclass AND p.polname IN ('artifact_shares_read','artifact_shares_update') AND pg_get_expr(p.polqual,p.polrelid) LIKE '%artifact_can_manage_links%' AND pg_get_expr(p.polqual,p.polrelid) NOT LIKE '%writable%'))=3
- AND EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.artifact_link_valid(text,text)') AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public'])
+ AND EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.artifact_link_valid(text,text)') AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public, pg_temp'])
  AND has_function_privilege(current_user,'public.artifact_link_valid(text,text)','EXECUTE')
  AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN (to_regprocedure('public.artifact_link_valid(text,text)'),to_regprocedure('public.artifact_can_view(text,text,text,text,text)'),to_regprocedure('public.artifact_can_manage_links(text,text,text,text)')) AND a.grantee=0)`).Scan(&ok); err != nil || !ok {
 		return errors.New("artifact link and deletion policies (schema v2) are missing or executable by PUBLIC")
@@ -113,7 +113,7 @@ func (d *database) validateArtifactMoveSchema() error {
  AND EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid='public.artifacts'::regclass AND p.polname='artifacts_probe_update' AND p.polcmd='w' AND p.polpermissive
      AND pg_get_expr(p.polqual,p.polrelid) ILIKE '%session_user%' AND pg_get_expr(p.polqual,p.polrelid) LIKE '%artifact_probe%'
      AND pg_get_expr(p.polwithcheck,p.polrelid) ILIKE '%session_user%' AND pg_get_expr(p.polwithcheck,p.polrelid) LIKE '%artifact_probe%')
- AND (SELECT count(*) FROM pg_proc p WHERE p.oid IN (to_regprocedure('public.artifact_follow_project_move(text)'),to_regprocedure('public.artifact_guard_project_move()'),to_regprocedure('public.artifact_check_container()'),to_regprocedure('public.artifact_stray_count()')) AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public'])=4
+ AND (SELECT count(*) FROM pg_proc p WHERE p.oid IN (to_regprocedure('public.artifact_follow_project_move(text)'),to_regprocedure('public.artifact_guard_project_move()'),to_regprocedure('public.artifact_check_container()'),to_regprocedure('public.artifact_stray_count()')) AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public, pg_temp'])=4
  AND has_function_privilege(current_user,'public.artifact_follow_project_move(text)','EXECUTE')
  AND has_function_privilege(current_user,'public.artifact_stray_count()','EXECUTE')
  AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid IN (to_regprocedure('public.artifact_follow_project_move(text)'),to_regprocedure('public.artifact_check_container()'),to_regprocedure('public.artifact_reject_project_delete()'),to_regprocedure('public.artifact_stray_count()')) AND a.grantee=0)

@@ -117,13 +117,13 @@ func TestLoadCorporatePostgres(t *testing.T) {
 		var space Space
 		code, b = do("POST", "/api/corporate/spaces", fmt.Sprintf(`{"name":"load-test-%d-%d","personal":true}`, time.Now().Unix(), i), me.CSRF, "", cookie)
 		must(code, 201, b, &space)
-		var project corporateProject
-		code, b = do("POST", "/api/projects", `{"space_id":"`+space.ID+`","name":"Load"}`, me.CSRF, "", cookie)
+		var project AgentProjectForTest
+		code, b = do("POST", "/api/agent-projects", `{"name":"Load","visibility":"private","spaces":[{"space_id":"`+space.ID+`","mode":"write"}]}`, me.CSRF, "", cookie)
 		must(code, 201, b, &project)
 		var issued struct {
 			Token string `json:"token"`
 		}
-		code, b = do("POST", "/api/mcp/credentials", `{"name":"load","mode":"write","project_ids":["`+project.ID+`"]}`, me.CSRF, "", cookie)
+		code, b = do("POST", "/api/mcp/credentials", `{"name":"load","projects":["`+project.ID+`"]}`, me.CSRF, "", cookie)
 		must(code, 201, b, &issued)
 		if issued.Token == "" {
 			t.Fatal("missing key secret")
@@ -141,7 +141,7 @@ func TestLoadCorporatePostgres(t *testing.T) {
 	}
 	call := func(u *loadUser, name string, args map[string]any) outcome {
 		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": seq.Add(1), "method": "tools/call", "params": map[string]any{"name": name, "arguments": args}})
-		r, _ := http.NewRequest("POST", srv.URL+"/mcp", bytes.NewReader(b))
+		r, _ := http.NewRequest("POST", srv.URL+"/mcp?project="+u.project, bytes.NewReader(b))
 		r.Header.Set("Authorization", "Bearer "+u.token)
 		r.Header.Set("Content-Type", "application/json")
 		t0 := time.Now()
@@ -210,7 +210,7 @@ func TestLoadCorporatePostgres(t *testing.T) {
 		return b.String()
 	}
 	create := func(u *loadUser, r *rand.Rand, title string) outcome {
-		o := call(u, "wiki_write", map[string]any{"article": map[string]any{"space_id": u.space, "project_id": u.project, "title": title, "summary": sentence(r), "body": body(r), "kind": "article", "status": "active", "tags": []string{"load-test"}}})
+		o := call(u, "wiki_write", map[string]any{"article": map[string]any{"space_id": u.space, "title": title, "summary": sentence(r), "body": body(r), "kind": "article", "status": "active", "tags": []string{"load-test"}}})
 		if o.err == "" && !o.conflict {
 			id, _ := o.data["id"].(string)
 			rev, _ := o.data["revision"].(float64)
@@ -317,7 +317,7 @@ func TestLoadCorporatePostgres(t *testing.T) {
 					if r.Intn(2) == 0 {
 						q = ru[r.Intn(len(ru))] + " " + ru[r.Intn(len(ru))]
 					}
-					rec("search", call(u, "wiki_search", map[string]any{"q": q, "space_id": u.space, "project_id": u.project, "limit": 20}))
+					rec("search", call(u, "wiki_search", map[string]any{"q": q, "space_id": u.space, "limit": 20}))
 				case p < 85:
 					id := pickID()
 					o := call(u, "wiki_read", map[string]any{"id": id, "outline": true})

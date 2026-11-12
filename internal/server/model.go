@@ -11,11 +11,14 @@ import (
 )
 
 type Space struct {
-	Limited     bool   `json:"limited,omitempty"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	ArchivedAt  string `json:"archived_at,omitempty"`
+	// Corporate mode only: the caller's role in the space and whether the space is personal
+	// (its owner is its only member).
+	EffectiveRole string `json:"effective_role,omitempty"`
+	Personal      *bool  `json:"personal,omitempty"`
 }
 type Article struct {
 	ID         string            `json:"id"`

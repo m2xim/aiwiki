@@ -65,7 +65,7 @@ func (s *Server) articles(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) listArticles(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	p := SearchParams{ProjectID: q.Get("project_id"), Q: q.Get("q"), SpaceID: q.Get("space_id"), Kind: q.Get("kind"), Pinned: q.Get("pinned") == "true", Tags: q["tag"], Properties: q["property"], Limit: 200}
+	p := SearchParams{Q: q.Get("q"), SpaceID: q.Get("space_id"), Kind: q.Get("kind"), Pinned: q.Get("pinned") == "true", Tags: q["tag"], Properties: q["property"], Limit: 200}
 	if n, e := strconv.Atoi(q.Get("limit")); e == nil && n > 0 && n < 200 {
 		p.Limit = n
 	}
@@ -108,7 +108,10 @@ type payload struct {
 
 // articleFields are the editable keys a client may send; on update only the
 // keys present in the request replace current values.
-var articleFields = []string{"project_id", "space_id", "parent_id", "title", "summary", "body", "kind", "status", "pinned", "tags", "properties"}
+var articleFields = []string{"space_id", "parent_id", "title", "summary", "body", "kind", "status", "pinned", "tags", "properties"}
+
+// errProjectsRemoved: the request still names a folder inside a space.
+var errProjectsRemoved = errors.New(projectsRemovedText)
 
 func parseInput(r *http.Request) (Article, payload, map[string]json.RawMessage, error) {
 	var p payload
@@ -126,6 +129,9 @@ func parseInput(r *http.Request) (Article, payload, map[string]json.RawMessage, 
 				present[strings.ToLower(k)] = v
 			}
 		}
+	}
+	if e == nil && p.ProjectID != "" {
+		e = errProjectsRemoved
 	}
 	a, p := articleFromPayload(p)
 	return a, p, present, e
@@ -159,8 +165,6 @@ func mergePresent(old, in Article, present map[string]json.RawMessage) Article {
 			continue
 		}
 		switch k {
-		case "project_id":
-			out.ProjectID = in.ProjectID
 		case "space_id":
 			out.SpaceID = in.SpaceID
 		case "parent_id":
@@ -227,6 +231,10 @@ func (s *Server) parentOK(q interface{ QueryRow(string, ...any) *sql.Row }, a Ar
 }
 func (s *Server) createArticle(w http.ResponseWriter, r *http.Request) {
 	a, p, _, e := parseInput(r)
+	if errors.Is(e, errProjectsRemoved) {
+		apiErr(w, 400, projectsRemovedText)
+		return
+	}
 	if e != nil {
 		apiErr(w, 400, "invalid input")
 		return
@@ -241,20 +249,6 @@ func (s *Server) createArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	if s.DB.pg && a.ProjectID != "" {
-		// Serializes with a project move: it holds the project row FOR NO KEY UPDATE.
-		// Delegated MCP sessions cannot lock the row (no UPDATE policy on projects for
-		// them) and only check that it exists.
-		lockClause := " FOR SHARE"
-		if s.principal != nil && s.principal.MCPScope != nil {
-			lockClause = ""
-		}
-		var one int
-		if tx.QueryRow(`SELECT 1 FROM projects WHERE id=? AND space_id=?`+lockClause, a.ProjectID, a.SpaceID).Scan(&one) != nil {
-			apiErr(w, 400, "could not create article")
-			return
-		}
-	}
 	if e = s.parentOK(tx, a, ""); e != nil {
 		code := 400
 		if e.Error() == "parent article is deleted" {
@@ -389,6 +383,10 @@ func (s *Server) articleRoute(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) updateArticle(w http.ResponseWriter, r *http.Request, aid string) {
 	in, p, present, e := parseInput(r)
+	if errors.Is(e, errProjectsRemoved) {
+		apiErr(w, 400, projectsRemovedText)
+		return
+	}
 	if e != nil || p.BaseRevision < 1 {
 		apiErr(w, 400, "base_revision required")
 		return
@@ -433,8 +431,8 @@ func (s *Server) commitUpdate(aid string, base int, author, message string, muta
 	// In corporate mode a parent change inside the same container is an ordinary
 	// edit (editor+, enforced by RLS and the database trigger); a change of space
 	// or project needs the access-impact preview.
-	if s.principal != nil && (a.SpaceID != old.SpaceID || a.ProjectID != old.ProjectID) {
-		return Article{}, 400, errors.New("moving an article to another space or project requires an access-impact preview: use POST /api/moves/preview and /api/moves/apply")
+	if s.principal != nil && a.SpaceID != old.SpaceID {
+		return Article{}, 400, errors.New("moving an article to another space requires an access-impact preview: use POST /api/moves/preview and /api/moves/apply")
 	}
 	if e = requiredArticle(a); e != nil {
 		return Article{}, 400, e

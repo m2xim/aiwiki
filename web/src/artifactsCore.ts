@@ -169,8 +169,8 @@ export function refreshDelay(expiresAt: string, now: number): number {
 
 // ---- Routes.
 export type ArtRoute =
-  | { kind: 'list'; space: string; q: string; project: string }
-  | { kind: 'new'; space: string; project: string }
+  | { kind: 'list'; space: string; q: string }
+  | { kind: 'new'; space: string }
   | { kind: 'page'; id: string; mode: 'view' | 'edit' | 'history'; revision: number | null };
 
 export function parseArtRoute(search: string): ArtRoute | null {
@@ -181,8 +181,8 @@ export function parseArtRoute(search: string): ArtRoute | null {
     const revision = Number(params.get('revision'));
     return { kind: 'page', id, mode: view === 'edit' || view === 'history' ? view : 'view', revision: Number.isInteger(revision) && revision > 0 ? revision : null };
   }
-  if (view === 'artifacts') return { kind: 'list', space: params.get('space') || '', q: params.get('q') || '', project: params.get('project') || '' };
-  if (view === 'artifact-new') return { kind: 'new', space: params.get('space') || '', project: params.get('project') || '' };
+  if (view === 'artifacts') return { kind: 'list', space: params.get('space') || '', q: params.get('q') || '' };
+  if (view === 'artifact-new') return { kind: 'new', space: params.get('space') || '' };
   return null;
 }
 export function artRouteUrl(route: ArtRoute): string {
@@ -195,7 +195,6 @@ export function artRouteUrl(route: ArtRoute): string {
     params.set('view', route.kind === 'list' ? 'artifacts' : 'artifact-new');
     if (route.space) params.set('space', route.space);
     if (route.kind === 'list' && route.q) params.set('q', route.q);
-    if (route.project) params.set('project', route.project);
   }
   return `/?${params}`;
 }

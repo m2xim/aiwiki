@@ -41,17 +41,13 @@ func (s *Server) corporateUserAccess(w http.ResponseWriter, r *http.Request) {
 SELECT 'space'::text AS resource_type,sp.id AS resource_id,sp.name AS name,
  corporate_effective_role(?,sp.id,'') AS target_role,
  corporate_effective_role(?,sp.id,'') AS actor_role,
- sp.archived_at IS NOT NULL AS archived,sp.personal=1 AS personal
+ sp.archived_at IS NOT NULL AS archived,(SELECT count(*) FROM memberships pm WHERE pm.resource_type='space' AND pm.resource_id=sp.id)=1
+  AND EXISTS(SELECT 1 FROM memberships pm WHERE pm.resource_type='space' AND pm.resource_id=sp.id AND pm.subject_type='user' AND pm.role='owner')
+  AND sp.id<>corporate_general_space() AS personal
 FROM spaces sp
-UNION ALL
-SELECT 'project'::text,p.id,p.name,
- corporate_effective_role(?,p.space_id,p.id),
- corporate_effective_role(?,p.space_id,p.id),
- p.archived_at IS NOT NULL,false
-FROM projects p
 ) access
 WHERE corporate_role_rank(actor_role)>=4 AND corporate_role_rank(target_role)>=1
-ORDER BY resource_type,name,resource_id`, target, actor, target, actor)
+ORDER BY resource_type,name,resource_id`, target, actor)
 	if err != nil {
 		apiErr(w, http.StatusInternalServerError, "database error")
 		return

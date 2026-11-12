@@ -4,7 +4,7 @@ package server
 //
 // A credential is a long-lived bearer secret (aiwiki_pat_ + 32 random bytes,
 // base64url) minted from an authenticated browser session. It names an exact
-// set of projects and a mode (read or write). Only the SHA-256 of the full
+// list of agent projects and a read-only switch. Only the SHA-256 of the full
 // token is stored; the token is shown exactly once, in the mint response.
 //
 // Nothing about a credential is cached in process memory, so restarts and
@@ -43,6 +43,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -67,36 +68,32 @@ const (
 )
 
 type mcpCredentialRequest struct {
-	Name             string            `json:"name"`
-	Scope            []mcpScopeElement `json:"scope"`
-	ProjectIDs       []string          `json:"project_ids"` // legacy
-	Mode             string            `json:"mode"`        // legacy
-	TTLSeconds       int               `json:"ttl_seconds"`
-	ServiceAccountID string            `json:"service_account_id"`
+	Name             string   `json:"name"`
+	Projects         []string `json:"projects"`
+	ReadOnly         bool     `json:"read_only"`
+	TTLSeconds       int      `json:"ttl_seconds"`
+	ServiceAccountID string   `json:"service_account_id"`
+	// Removed per-row fields: any use is answered with "use projects".
+	Scope      json.RawMessage `json:"scope"`
+	ProjectIDs json.RawMessage `json:"project_ids"`
+	Mode       json.RawMessage `json:"mode"`
 }
 
-// mcpScopeFromRequest resolves scope or the legacy project_ids/mode pair (not both).
-// The error text is the 400 message.
-func mcpScopeFromRequest(scope []mcpScopeElement, projectIDs []string, mode string) ([]mcpScopeElement, string) {
-	if scope != nil && (projectIDs != nil || mode != "") {
-		return nil, "invalid scope"
+// mcpProjectIDs validates the project list of a key: 1..20 distinct, well-formed ids.
+func mcpProjectIDs(ids []string) ([]string, bool) {
+	if len(ids) < 1 || len(ids) > mcpPersistentMaxProjects {
+		return nil, false
 	}
-	if scope == nil {
-		if mode == "" {
-			mode = "read"
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !validPathID(id) || seen[id] {
+			return nil, false
 		}
-		for _, id := range projectIDs {
-			scope = append(scope, mcpScopeElement{Type: "project", ID: id, Mode: mode})
-		}
+		seen[id] = true
+		out = append(out, id)
 	}
-	if len(scope) > mcpPersistentMaxProjects {
-		return nil, "too many scope elements"
-	}
-	out, ok := mcpScopeNormalize(scope)
-	if !ok {
-		return nil, "invalid scope"
-	}
-	return out, ""
+	return out, true
 }
 
 // mcpCredentialIssued is the only shape that ever carries the secret.
@@ -189,29 +186,24 @@ func mcpPersistentWellFormed(raw string) bool {
 	return err == nil && len(b) == 32
 }
 
-// mcpPersistentScope parses stored scope data. Anything but a non-empty,
-// duplicate-free array of at most 20 valid elements is refused (fail closed).
-func mcpPersistentScope(raw []byte) ([]mcpScopeElement, bool) {
-	var in []mcpScopeElement
-	if err := json.Unmarshal(raw, &in); err != nil || len(in) > mcpPersistentMaxProjects {
+// mcpPersistentProjects parses the stored project list. Anything but a non-empty, duplicate-free
+// array of at most 20 valid ids is refused (fail closed).
+func mcpPersistentProjects(raw []byte) ([]string, bool) {
+	var in []string
+	if err := json.Unmarshal(raw, &in); err != nil {
 		return nil, false
 	}
-	if _, ok := mcpScopeNormalize(in); !ok {
-		return nil, false
-	}
-	return in, true
+	return mcpProjectIDs(in)
 }
 
-// mcpScopeViews adds display names. Names the caller cannot see (RLS) stay empty.
-func mcpScopeViews(q queryer, scope []mcpScopeElement) []mcpScopeView {
-	out := make([]mcpScopeView, 0, len(scope))
-	for _, e := range scope {
-		v := mcpScopeView{Type: e.Type, ID: e.ID, Mode: e.Mode}
-		if e.Type == "space" {
-			v.SpaceID = e.ID
-			_ = q.QueryRow(`SELECT name FROM spaces WHERE id=?`, e.ID).Scan(&v.Name)
-		} else {
-			_ = q.QueryRow(`SELECT name,space_id FROM projects WHERE id=? AND archived_at IS NULL`, e.ID).Scan(&v.Name, &v.SpaceID)
+// mcpProjectViews describes the projects of a key for its owner. A project that is deleted or no
+// longer visible to the owner is listed as unavailable and carries no name.
+func mcpProjectViews(q queryer, ids []string) []mcpProjectView {
+	out := make([]mcpProjectView, 0, len(ids))
+	for _, id := range ids {
+		v := mcpProjectView{ID: id}
+		if q.QueryRow(`SELECT name,visibility FROM agent_projects WHERE id=?`, id).Scan(&v.Name, &v.Visibility) == nil {
+			v.Available = true
 		}
 		out = append(out, v)
 	}
@@ -225,7 +217,7 @@ func (s *Server) mcpPersistentOwner(w http.ResponseWriter, r *http.Request) (str
 	if !ok {
 		return "", false
 	}
-	if s.principal.MCPScope != nil || s.principal.MCPDelegationID != "" || s.principal.MCPActorID != "" {
+	if !s.outsideMCP() {
 		apiErr(w, http.StatusForbidden, "forbidden")
 		return "", false
 	}
@@ -293,19 +285,19 @@ func (s *Server) mcpCredentials(w http.ResponseWriter, r *http.Request) {
 		s.mcpCredentialMint(w, r, owner)
 		return
 	}
-	rows, err := s.DB.Query(`SELECT id,name,service_account_id,scope,created_at,expires_at,revoked_at FROM mcp_credentials WHERE owner_id=? ORDER BY created_at,id`, owner)
+	rows, err := s.DB.Query(`SELECT id,name,service_account_id,agent_project_ids,read_only,created_at,expires_at,revoked_at FROM mcp_credentials WHERE owner_id=? ORDER BY created_at,id`, owner)
 	if err != nil {
 		log.Printf("mcp persistent: list credentials: %v", err)
 		apiErr(w, http.StatusServiceUnavailable, "database unavailable")
 		return
 	}
 	out := make([]mcpCredential, 0)
-	var scopes [][]mcpScopeElement
+	var lists [][]string
 	for rows.Next() {
 		var c mcpCredential
 		var projects []byte
 		var revoked sql.NullTime
-		if err = rows.Scan(&c.ID, &c.Name, &c.ServiceAccountID, &projects, &c.CreatedAt, &c.ExpiresAt, &revoked); err != nil {
+		if err = rows.Scan(&c.ID, &c.Name, &c.ServiceAccountID, &projects, &c.ReadOnly, &c.CreatedAt, &c.ExpiresAt, &revoked); err != nil {
 			break
 		}
 		c.OwnerID = owner
@@ -314,11 +306,11 @@ func (s *Server) mcpCredentials(w http.ResponseWriter, r *http.Request) {
 			t := revoked.Time.UTC()
 			c.RevokedAt = &t
 		}
-		// Invalid stored scope still lists (so it can be revoked) but grants nothing.
-		if stored, ok := mcpPersistentScope(projects); ok {
-			scopes = append(scopes, stored)
+		// Invalid stored projects still list (so the key can be revoked) but grant nothing.
+		if stored, ok := mcpPersistentProjects(projects); ok {
+			lists = append(lists, stored)
 		} else {
-			scopes = append(scopes, nil)
+			lists = append(lists, nil)
 		}
 		out = append(out, c)
 	}
@@ -332,23 +324,26 @@ func (s *Server) mcpCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i := range out {
-		out[i].Scope = mcpScopeViews(s.DB, scopes[i])
+		out[i].Projects = mcpProjectViews(s.DB, lists[i])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.persistentAccess() != nil, "credentials": out})
 }
 
-// mcpCredentialValidate normalises a mint request; ok is false for any invalid field.
+// mcpCredentialValidate normalises a mint request; msg is the 400 text for any invalid field.
 func mcpCredentialValidate(in mcpCredentialRequest) (mcpCredentialRequest, time.Duration, string) {
+	if in.Scope != nil || in.ProjectIDs != nil || in.Mode != nil {
+		return in, 0, "use projects"
+	}
 	name, ok := corporateName(in.Name, mcpPersistentMaxName)
 	if !ok {
 		return in, 0, "invalid request"
 	}
 	in.Name = name
-	scope, msg := mcpScopeFromRequest(in.Scope, in.ProjectIDs, in.Mode)
-	if msg != "" {
-		return in, 0, msg
+	projects, ok := mcpProjectIDs(in.Projects)
+	if !ok {
+		return in, 0, "invalid projects"
 	}
-	in.Scope, in.ProjectIDs, in.Mode = scope, nil, ""
+	in.Projects = projects
 	if in.ServiceAccountID != "" && !validPathID(in.ServiceAccountID) {
 		return in, 0, "invalid request"
 	}
@@ -405,7 +400,7 @@ func (s *Server) mcpCredentialMint(w http.ResponseWriter, r *http.Request, owner
 		CreatedAt:        now,
 		ExpiresAt:        now.Add(ttl),
 	}
-	scopeJSON, err := json.Marshal(in.Scope)
+	projectsJSON, err := json.Marshal(in.Projects)
 	if err != nil {
 		mcpPersistentWriteErr(w, err)
 		return
@@ -425,7 +420,7 @@ func (s *Server) mcpCredentialMint(w http.ResponseWriter, r *http.Request, owner
 				return err
 			}
 		}
-		if err := mcpPersistentCheckScope(tx, owner, in.Scope); err != nil {
+		if err := mcpPersistentCheckProjects(tx, in.Projects); err != nil {
 			return err
 		}
 		var active, total int
@@ -435,12 +430,12 @@ func (s *Server) mcpCredentialMint(w http.ResponseWriter, r *http.Request, owner
 		if active >= mcpPersistentActiveCap || total >= mcpPersistentTotalCap {
 			return mcpPersistentFail(http.StatusTooManyRequests, "too many credentials")
 		}
-		if _, err := tx.Exec(`INSERT INTO mcp_credentials(id,owner_id,service_account_id,name,secret_hash,scope,created_at,expires_at) VALUES(?,?,?,?,?,?::jsonb,?,?)`,
-			cred.ID, owner, cred.ServiceAccountID, cred.Name, mcpPersistentHash(token), string(scopeJSON), cred.CreatedAt, cred.ExpiresAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO mcp_credentials(id,owner_id,service_account_id,name,secret_hash,agent_project_ids,read_only,created_at,expires_at) VALUES(?,?,?,?,?,?::jsonb,?,?,?)`,
+			cred.ID, owner, cred.ServiceAccountID, cred.Name, mcpPersistentHash(token), string(projectsJSON), in.ReadOnly, cred.CreatedAt, cred.ExpiresAt); err != nil {
 			return err
 		}
 		return corporateAudit(tx, owner, "mcp_credential.create", "mcp_credential", cred.ID, map[string]any{
-			"name": cred.Name, "scope": in.Scope,
+			"name": cred.Name, "projects": in.Projects, "read_only": in.ReadOnly,
 			"service_account_id": cred.ServiceAccountID, "expires_at": cred.ExpiresAt.Format(time.RFC3339Nano),
 		})
 	})
@@ -448,71 +443,37 @@ func (s *Server) mcpCredentialMint(w http.ResponseWriter, r *http.Request, owner
 		mcpPersistentWriteErr(w, err)
 		return
 	}
-	cred.Scope = mcpScopeViews(s.DB, in.Scope)
+	cred.Projects = mcpProjectViews(s.DB, in.Projects)
+	cred.ReadOnly = in.ReadOnly
 	writeJSON(w, http.StatusCreated, mcpCredentialIssued{mcpCredential: cred, Token: token})
 }
 
-// mcpPersistentCheckScope requires every element to be live and the owner to hold
-// at least Reader (read) or Editor (write) on it right now: for a space element the
-// role on the space root, for a project element the role on that project. A read
-// element for the general space needs no check (everyone reads it).
-func mcpPersistentCheckScope(tx *transaction, owner string, scope []mcpScopeElement) error {
-	denied := mcpPersistentFail(http.StatusBadRequest, "scope access denied")
-	var general string
-	if err := tx.QueryRow(`SELECT corporate_general_space()`).Scan(&general); err != nil {
+// mcpPersistentCheckProjects requires every project to be visible to the owner right now (own or
+// public; row-level security answers for the owner's session). Nothing else is checked: a project
+// grants no rights, the owner's own roles are applied at request time.
+func mcpPersistentCheckProjects(tx *transaction, ids []string) error {
+	var visible int
+	if err := tx.QueryRow(`SELECT count(*) FROM agent_projects WHERE id=ANY(?::text[])`, ids).Scan(&visible); err != nil {
 		return err
 	}
-	for _, e := range scope {
-		need := mcpPersistentReadRank
-		if e.Mode == "write" {
-			need = mcpPersistentWriteRank
-		}
-		if e.Type == "space" && e.Mode == "read" && e.ID == general {
-			continue
-		}
-		var space, project string
-		if e.Type == "space" {
-			var live bool
-			err := tx.QueryRow(`SELECT coalesce((SELECT NOT archived FROM corporate_space_state WHERE space_id=?),false)`, e.ID).Scan(&live)
-			if err != nil {
-				return err
-			}
-			if !live {
-				return denied
-			}
-			space = e.ID
-		} else {
-			var live bool
-			err := tx.QueryRow(`SELECT space_id,corporate_container_writable(space_id,id) FROM projects WHERE id=?`, e.ID).Scan(&space, &live)
-			if errors.Is(err, sql.ErrNoRows) || err == nil && !live {
-				return denied
-			}
-			if err != nil {
-				return err
-			}
-			project = e.ID
-		}
-		var rank int
-		if err := tx.QueryRow(`SELECT coalesce(corporate_role_rank(corporate_effective_role(?,?,?)),0)`, owner, space, project).Scan(&rank); err != nil {
-			return err
-		}
-		if rank < need {
-			return denied
-		}
+	if visible != len(ids) {
+		return mcpPersistentFail(http.StatusBadRequest, "project is not available")
 	}
 	return nil
 }
 
 type mcpCredentialUpdate struct {
-	Scope      []mcpScopeElement `json:"scope"`
-	ProjectIDs []string          `json:"project_ids"` // legacy
-	Mode       string            `json:"mode"`        // legacy
+	Projects *[]string `json:"projects"`
+	ReadOnly *bool     `json:"read_only"`
+	// Removed per-row fields: any use is answered with "use projects".
+	Scope      json.RawMessage `json:"scope"`
+	ProjectIDs json.RawMessage `json:"project_ids"`
+	Mode       json.RawMessage `json:"mode"`
 }
 
-// mcpCredentialUpdate handles PATCH /api/mcp/credentials/{id}: the owner may
-// change the projects and mode of a live credential. Everything else (owner,
-// secret, service account, expiry) stays immutable. The new scope is checked
-// against the owner's current rights exactly as at issuance.
+// mcpCredentialUpdate handles PATCH /api/mcp/credentials/{id}: the owner may change the projects and
+// the read-only switch of a live credential. Everything else (owner, secret, service account,
+// expiry) stays immutable. New projects must be visible to the owner right now.
 func (s *Server) mcpCredentialUpdate(w http.ResponseWriter, r *http.Request) {
 	owner, ok := s.mcpPersistentOwner(w, r)
 	if !ok {
@@ -532,44 +493,72 @@ func (s *Server) mcpCredentialUpdate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if raw.Scope == nil && (raw.ProjectIDs == nil || raw.Mode == "") { // legacy edits must state the mode
-		apiErr(w, http.StatusBadRequest, "invalid scope")
+	if raw.Scope != nil || raw.ProjectIDs != nil || raw.Mode != nil {
+		apiErr(w, http.StatusBadRequest, "use projects")
 		return
 	}
-	scope, msg := mcpScopeFromRequest(raw.Scope, raw.ProjectIDs, raw.Mode)
-	if msg != "" {
-		apiErr(w, http.StatusBadRequest, msg)
+	if raw.Projects == nil && raw.ReadOnly == nil {
+		apiErr(w, http.StatusBadRequest, "invalid request")
 		return
+	}
+	var newProjects []string
+	if raw.Projects != nil {
+		var ok bool
+		if newProjects, ok = mcpProjectIDs(*raw.Projects); !ok {
+			apiErr(w, http.StatusBadRequest, "invalid projects")
+			return
+		}
 	}
 	if err := s.mcpPersistentAdmit(); err != nil {
 		mcpPersistentWriteErr(w, err)
 		return
 	}
-	scopeJSON, err := json.Marshal(scope)
-	if err != nil {
-		mcpPersistentWriteErr(w, err)
-		return
-	}
 	now := s.persistentNow()
 	var out mcpCredential
-	err = s.mcpPersistentTx(func(tx *transaction) error {
+	err := s.mcpPersistentTx(func(tx *transaction) error {
 		if err := s.mcpPersistentLockOwner(tx, owner, true); err != nil {
 			return err
 		}
-		var one int
-		err := tx.QueryRow(`SELECT 1 FROM mcp_credentials WHERE id=? AND owner_id=? AND revoked_at IS NULL AND expires_at>? FOR UPDATE`, id, owner, now).Scan(&one)
+		var current []byte
+		var currentRO bool
+		err := tx.QueryRow(`SELECT agent_project_ids,read_only FROM mcp_credentials WHERE id=? AND owner_id=? AND revoked_at IS NULL AND expires_at>? FOR UPDATE`, id, owner, now).Scan(&current, &currentRO)
 		if errors.Is(err, sql.ErrNoRows) {
 			return mcpPersistentFail(http.StatusNotFound, "not found")
 		}
 		if err != nil {
 			return err
 		}
-		// Friendly 403 first; the database function re-checks everything and
-		// is the only path allowed to change the scope.
-		if err := mcpPersistentCheckScope(tx, owner, scope); err != nil {
+		if newProjects == nil {
+			var ok bool
+			if newProjects, ok = mcpPersistentProjects(current); !ok {
+				return mcpPersistentFail(http.StatusConflict, "key projects are invalid; set projects")
+			}
+		}
+		readOnly := currentRO
+		if raw.ReadOnly != nil {
+			readOnly = *raw.ReadOnly
+		}
+		// Friendly 400 first for projects that are new to the key; the database function re-checks.
+		var old []string
+		if prev, ok := mcpPersistentProjects(current); ok {
+			old = prev
+		}
+		var fresh []string
+		for _, p := range newProjects {
+			if !slices.Contains(old, p) {
+				fresh = append(fresh, p)
+			}
+		}
+		if len(fresh) > 0 {
+			if err := mcpPersistentCheckProjects(tx, fresh); err != nil {
+				return err
+			}
+		}
+		projectsJSON, err := json.Marshal(newProjects)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`SELECT corporate_mcp_credential_set_scope(?,?::jsonb)`, id, string(scopeJSON)); err != nil {
+		if _, err := tx.Exec(`SELECT corporate_mcp_credential_set_projects(?,?::jsonb,?)`, id, string(projectsJSON), readOnly); err != nil {
 			return err
 		}
 		var created, expires time.Time
@@ -577,7 +566,7 @@ func (s *Server) mcpCredentialUpdate(w http.ResponseWriter, r *http.Request) {
 		if err := tx.QueryRow(`SELECT name,service_account_id,created_at,expires_at FROM mcp_credentials WHERE id=? AND owner_id=?`, id, owner).Scan(&name, &service, &created, &expires); err != nil {
 			return err
 		}
-		out = mcpCredential{ID: id, Name: name, ServiceAccountID: service, Scope: mcpScopeViews(tx, scope), CreatedAt: created.UTC(), ExpiresAt: expires.UTC()}
+		out = mcpCredential{ID: id, Name: name, ServiceAccountID: service, Projects: mcpProjectViews(tx, newProjects), ReadOnly: readOnly, CreatedAt: created.UTC(), ExpiresAt: expires.UTC()}
 		return nil
 	})
 	if err != nil {
@@ -617,7 +606,7 @@ func (s *Server) mcpCredential(w http.ResponseWriter, r *http.Request) {
 	err := s.mcpPersistentTx(func(tx *transaction) error {
 		var name, service string
 		var scope []byte
-		err := tx.QueryRow(`UPDATE mcp_credentials SET revoked_at=? WHERE id=? AND owner_id=? AND revoked_at IS NULL RETURNING name,service_account_id,scope`, now, id, owner).Scan(&name, &service, &scope)
+		err := tx.QueryRow(`UPDATE mcp_credentials SET revoked_at=? WHERE id=? AND owner_id=? AND revoked_at IS NULL RETURNING name,service_account_id,coalesce(agent_project_ids,'[]'::jsonb)`, now, id, owner).Scan(&name, &service, &scope)
 		if errors.Is(err, sql.ErrNoRows) {
 			// Revoking again is a no-op that keeps the original revoked_at.
 			var one int
@@ -631,7 +620,7 @@ func (s *Server) mcpCredential(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return corporateAudit(tx, owner, "mcp_credential.revoke", "mcp_credential", id, map[string]any{
-			"name": name, "scope": json.RawMessage(scope), "service_account_id": service,
+			"name": name, "projects": json.RawMessage(scope), "service_account_id": service,
 		})
 	})
 	if err != nil {
@@ -834,7 +823,7 @@ func (s *Server) mcpServiceAccount(w http.ResponseWriter, r *http.Request) {
 		if _, err = tx.Exec(`UPDATE mcp_service_accounts SET disabled=1 WHERE id=? AND owner_id=?`, id, owner); err != nil {
 			return err
 		}
-		rows, err := tx.Query(`UPDATE mcp_credentials SET revoked_at=? WHERE service_account_id=? AND owner_id=? AND revoked_at IS NULL RETURNING id,name,scope`, now, id, owner)
+		rows, err := tx.Query(`UPDATE mcp_credentials SET revoked_at=? WHERE service_account_id=? AND owner_id=? AND revoked_at IS NULL RETURNING id,name,coalesce(agent_project_ids,'[]'::jsonb)`, now, id, owner)
 		if err != nil {
 			return err
 		}
@@ -865,7 +854,7 @@ func (s *Server) mcpServiceAccount(w http.ResponseWriter, r *http.Request) {
 		for _, c := range done {
 			ids = append(ids, c.id)
 			if err = corporateAudit(tx, owner, "mcp_credential.revoke", "mcp_credential", c.id, map[string]any{
-				"name": c.name, "scope": json.RawMessage(c.scope), "service_account_id": id, "reason": "service_account_disabled",
+				"name": c.name, "projects": json.RawMessage(c.scope), "service_account_id": id, "reason": "service_account_disabled",
 			}); err != nil {
 				return err
 			}
@@ -885,7 +874,8 @@ func (s *Server) mcpServiceAccount(w http.ResponseWriter, r *http.Request) {
 
 type mcpPersistentRecord struct {
 	id, owner, service    string
-	scope                 []byte
+	projects              []byte
+	readOnly              bool
 	expires               time.Time
 	revoked               sql.NullTime
 	issuer, subject, name string
@@ -898,11 +888,11 @@ type mcpPersistentRecord struct {
 func (p *mcpPersistentAccess) lookup(ctx context.Context, hash string) (*mcpPersistentRecord, error) {
 	var rec mcpPersistentRecord
 	var disabled int
-	err := p.db.QueryRowContext(ctx, `SELECT c.id,c.owner_id,c.service_account_id,c.scope,c.expires_at,c.revoked_at,
+	err := p.db.QueryRowContext(ctx, `SELECT c.id,c.owner_id,c.service_account_id,c.agent_project_ids,c.read_only,c.expires_at,c.revoked_at,
 u.issuer,u.subject,u.name,u.disabled,u.last_login_at,s.id,s.owner_id,s.disabled
 FROM mcp_credentials c JOIN users u ON u.id=c.owner_id
 LEFT JOIN mcp_service_accounts s ON s.id=c.service_account_id
-WHERE c.secret_hash=?`, hash).Scan(&rec.id, &rec.owner, &rec.service, &rec.scope, &rec.expires, &rec.revoked,
+WHERE c.secret_hash=?`, hash).Scan(&rec.id, &rec.owner, &rec.service, &rec.projects, &rec.readOnly, &rec.expires, &rec.revoked,
 		&rec.issuer, &rec.subject, &rec.name, &disabled, &rec.lastLogin, &rec.svcID, &rec.svcOwner, &rec.svcDisabled)
 	if err != nil {
 		return nil, err
@@ -921,9 +911,9 @@ func (a *AuthService) persistentVerify(rec *mcpPersistentRecord, now time.Time) 
 	if rec.revoked.Valid || !now.Before(rec.expires) {
 		return Principal{}, http.StatusUnauthorized
 	}
-	scope, ok := mcpPersistentScope(rec.scope)
+	projects, ok := mcpPersistentProjects(rec.projects)
 	if !ok {
-		log.Printf("mcp persistent: credential %s has invalid stored scope", rec.id)
+		log.Printf("mcp persistent: credential %s has invalid stored projects", rec.id)
 		return Principal{}, http.StatusUnauthorized
 	}
 	if authUserID(rec.issuer, rec.subject) != rec.owner || rec.issuer != a.cfg.IssuerURL || rec.ownerDisabled {
@@ -946,7 +936,8 @@ func (a *AuthService) persistentVerify(rec *mcpPersistentRecord, now time.Time) 
 		Subject:         rec.subject,
 		Name:            rec.name,
 		Admin:           false,
-		MCPScope:        scope,
+		MCPKeyProjects:  projects,
+		MCPReadOnly:     rec.readOnly,
 		MCPDelegationID: rec.id,
 		MCPExpiresAt:    rec.expires,
 		MCPActorID:      actor,

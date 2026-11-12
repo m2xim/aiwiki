@@ -188,7 +188,7 @@ func TestPostgresRevisionColumnsAuditMatchesOldQuery(t *testing.T) {
 	for _, q := range []string{
 		`ALTER TABLE revisions NO FORCE ROW LEVEL SECURITY`,
 		`ALTER TABLE revisions ALTER COLUMN space_id DROP NOT NULL`,
-		`UPDATE revisions SET space_id=NULL, project_id='x'`,
+		`UPDATE revisions SET space_id=NULL`,
 		`ALTER TABLE revisions FORCE ROW LEVEL SECURITY`,
 		`DELETE FROM schema_migrations WHERE component='revision_columns'`,
 	} {

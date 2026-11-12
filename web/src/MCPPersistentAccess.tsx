@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Pencil, RefreshCw, Trash2 } from 'lucide-react';
-import { client, MCPCredential, MCPScopeInput, MCPServiceAccount } from './api';
+import { AgentProject, client, MCPCredential, MCPServiceAccount } from './api';
 import './MCPPersistentAccess.css';
 
 const scopeErrors: Record<string, string> = {
-  'invalid scope': 'Некорректный список доступа ключа. Проверьте строки: тип, объект и режим.',
-  'scope access denied': 'Нет доступа к одному из выбранных объектов или нет прав редактора для режима «Запись».',
-  'too many scope elements': 'Слишком много строк доступа: не больше 20.',
+  'use projects': 'Построчный доступ ключа убран: выберите проекты (Настройки - Проекты).',
+  'space not visible': 'Одно из пространств проекта вам не видно.',
+  'too many spaces': 'Слишком много строк в проекте: не больше 20.',
+  'project is not available for this key': 'Проект недоступен для этого ключа: его нет в списке проектов ключа, он удалён или вам не виден.',
+  'invalid project': 'Некорректный проект.',
 };
 
 const explainError = (error: unknown) => {
@@ -17,39 +19,20 @@ const explainError = (error: unknown) => {
     : message;
 };
 
-const MAX_SCOPE = 20;
-type Target = { key: string; type: 'space' | 'project'; id: string; label: string; group: string; writable: boolean };
-const targetKey = (type: string, id: string) => `${type}:${id}`;
-const editorRole = (role?: string) => ['editor', 'manager', 'owner'].includes(role || '');
+const MAX_PROJECTS = 20;
+const VISIBILITY: Record<string, string> = { private: 'личный', public: 'публичный' };
 
-function ScopeEditor({ value, onChange, targets, disabled }: { value: MCPScopeInput[]; onChange: (next: MCPScopeInput[]) => void; targets: Target[]; disabled: boolean }) {
-  const used = new Set(value.map(item => targetKey(item.type, item.id)));
-  const free = targets.filter(target => !used.has(target.key));
-  const groups = [...new Set(targets.map(target => target.group))];
-  const update = (index: number, patch: Partial<MCPScopeInput>) => onChange(value.map((item, i) => i === index ? { ...item, ...patch } : item));
+function ProjectPicker({ value, onChange, projects, disabled }: { value: string[]; onChange: (next: string[]) => void; projects: AgentProject[]; disabled: boolean }) {
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter(item => item !== id) : [...value, id]);
+  const known = new Set(projects.map(project => project.id));
   return <fieldset className="mcp-persistent-scope">
-    <legend>Доступ ключа <span>Строк: {value.length} из {MAX_SCOPE}</span></legend>
-    {value.map((item, index) => {
-      const key = targetKey(item.type, item.id);
-      const known = targets.some(target => target.key === key);
-      const writable = targets.find(target => target.key === key)?.writable ?? true;
-      return <div className="mcp-persistent-scope-row" key={key}>
-        <select aria-label="Пространство или проект" value={key} disabled={disabled} onChange={event => { const target = targets.find(t => t.key === event.target.value); if (target) update(index, { type: target.type, id: target.id, ...(target.writable ? {} : { mode: 'read' as const }) }); }}>
-          {!known && <option value={key}>{item.id}</option>}
-          {groups.map(group => <optgroup key={group} label={group}>
-            {targets.filter(target => target.group === group && (target.key === key || !used.has(target.key))).map(target => <option key={target.key} value={target.key}>{target.label}</option>)}
-          </optgroup>)}
-        </select>
-        <select aria-label="Режим" value={item.mode} disabled={disabled} onChange={event => update(index, { mode: event.target.value as 'read' | 'write' })}>
-          <option value="read">Чтение</option>
-          <option value="write" disabled={!writable} title={writable ? undefined : 'Нужны права редактора'}>Запись</option>
-        </select>
-        <button type="button" className="mcp-persistent-secondary" aria-label="Убрать строку" disabled={disabled} onClick={() => onChange(value.filter((_, i) => i !== index))}><Trash2 size={15}/></button>
-      </div>;
-    })}
-    {!value.length && <p className="mcp-persistent-empty">Добавьте хотя бы одну строку.</p>}
-    <div className="mcp-persistent-actions"><button type="button" className="mcp-persistent-secondary" disabled={disabled || value.length >= MAX_SCOPE || !free.length} onClick={() => onChange([...value, { type: free[0].type, id: free[0].id, mode: 'read' }])}>Добавить</button></div>
-    <p className="mcp-persistent-hint">Общее пространство доступно ключу на чтение всегда. Чтобы ключ мог писать в него, добавьте его строкой с режимом «Запись». Проект включает все свои подпроекты. Режим «Запись» доступен только там, где у вас самих есть права редактора.</p>
+    <legend>Проекты ключа <span>Выбрано: {value.length} из {MAX_PROJECTS}</span></legend>
+    {projects.length ? <div className="mcp-persistent-projects">{projects.map(project => <label className="mcp-persistent-project" key={project.id}>
+      <input type="checkbox" checked={value.includes(project.id)} disabled={disabled || (!value.includes(project.id) && value.length >= MAX_PROJECTS)} onChange={() => toggle(project.id)}/>
+      <span>{project.name} <span className="mcp-persistent-chip">{VISIBILITY[project.visibility]}</span></span>
+    </label>)}</div> : <p className="mcp-persistent-empty">Проектов пока нет. Создайте проект на вкладке «Проекты».</p>}
+    {value.filter(id => !known.has(id)).map(id => <p className="mcp-persistent-hint" key={id}>Проект {id} вам больше не доступен; снимите выбор или он будет убран при сохранении.</p>)}
+    <p className="mcp-persistent-hint">Агент с этим ключом работает в одном проекте, который указан в адресе подключения. Права агента в пространствах проекта не больше ваших. Общее пространство агент читает всегда.</p>
   </fieldset>;
 }
 
@@ -59,13 +42,15 @@ const dateTime = (value: string) => {
 };
 
 export default function MCPPersistentAccess() {
-  const [targets, setTargets] = useState<Target[]>([]);
+  const [agentProjects, setAgentProjects] = useState<AgentProject[]>([]);
   const [credentials, setCredentials] = useState<MCPCredential[]>([]);
   const [serviceAccounts, setServiceAccounts] = useState<MCPServiceAccount[]>([]);
   const [credentialsEnabled, setCredentialsEnabled] = useState<boolean | null>(null);
   const [serviceAccountsEnabled, setServiceAccountsEnabled] = useState<boolean | null>(null);
   const [name, setName] = useState('');
-  const [scope, setScope] = useState<MCPScopeInput[]>([]);
+  const [projectIds, setProjectIds] = useState<string[]>([]);
+  const [readOnly, setReadOnly] = useState(false);
+  const [connectHint, setConnectHint] = useState<string[]>([]);
   const [ttlDays, setTtlDays] = useState(30);
   const [serviceAccountId, setServiceAccountId] = useState('');
   const [serviceAccountName, setServiceAccountName] = useState('');
@@ -84,32 +69,17 @@ export default function MCPPersistentAccess() {
     setNotice('');
     setBusy(true);
     try {
-      const [credentialResult, accountResult, catalogSpaces] = await Promise.all([
+      const [credentialResult, accountResult, projectList] = await Promise.all([
         client.mcpCredentials(),
         client.mcpServiceAccounts(),
-        client.catalog(),
+        client.agentProjects(),
       ]);
       if (!mounted.current) return;
-      const list: Target[] = [];
-      for (const space of catalogSpaces) {
-        if (space.archived_at) continue;
-        list.push({ key: targetKey('space', space.id), type: 'space', id: space.id, label: `${space.name} (всё пространство)`, group: space.name, writable: !space.effective_role || editorRole(space.effective_role) });
-        const active = (space.projects || []).filter(project => !project.archived_at);
-        const byParent = new Map<string, typeof active>();
-        for (const project of active) byParent.set(project.parent_id || '', [...(byParent.get(project.parent_id || '') || []), project]);
-        const ids = new Set(active.map(project => project.id));
-        const add = (project: (typeof active)[number], depth: number) => list.push({ key: targetKey('project', project.id), type: 'project', id: project.id, label: `${'— '.repeat(depth)}${project.name}`, group: space.name, writable: editorRole(project.effective_role) });
-        const walk = (parent: string, depth: number) => {
-          for (const project of byParent.get(parent) || []) { add(project, depth); walk(project.id, depth + 1); }
-        };
-        walk('', 0);
-        for (const project of active) if (project.parent_id && !ids.has(project.parent_id)) { add(project, 0); walk(project.id, 1); }
-      }
       setCredentials(credentialResult.credentials || []);
       setCredentialsEnabled(credentialResult.enabled);
       setServiceAccounts((accountResult.service_accounts || []).filter(account => !account.disabled));
       setServiceAccountsEnabled(accountResult.enabled);
-      setTargets(list);
+      setAgentProjects(projectList);
     } catch (reason) {
       if (mounted.current) setError(explainError(reason));
     } finally {
@@ -126,7 +96,7 @@ export default function MCPPersistentAccess() {
   const createCredential = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedName = name.trim();
-    if (!trimmedName || trimmedName.length > 80 || !scope.length || scope.length > MAX_SCOPE || credentialsEnabled !== true) return;
+    if (!trimmedName || trimmedName.length > 80 || !projectIds.length || projectIds.length > MAX_PROJECTS || credentialsEnabled !== true) return;
     setSecret('');
     setError('');
     setNotice('');
@@ -134,7 +104,8 @@ export default function MCPPersistentAccess() {
     try {
       const result = await client.createMCPCredential({
         name: trimmedName,
-        scope,
+        projects: projectIds,
+        read_only: readOnly,
         ttl_seconds: ttlDays * 24 * 60 * 60,
         ...(serviceAccountId ? { service_account_id: serviceAccountId } : {}),
       });
@@ -142,6 +113,7 @@ export default function MCPPersistentAccess() {
       const { token, ...credential } = result;
       setCredentials(current => [credential, ...current.filter(item => item.id !== credential.id)]);
       setSecret(token);
+      setConnectHint(projectIds);
       setName('');
       setNotice('Ключ создан. Сохраните секрет сейчас: повторно он не показывается.');
     } catch (reason) {
@@ -151,22 +123,22 @@ export default function MCPPersistentAccess() {
     }
   };
 
-  const [editing, setEditing] = useState<{ id: string; scope: MCPScopeInput[] } | null>(null);
+  const [editing, setEditing] = useState<{ id: string; projects: string[]; readOnly: boolean } | null>(null);
 
   const startEdit = (credential: MCPCredential) => {
     setError('');
     setNotice('');
-    setEditing({ id: credential.id, scope: credential.scope.map(({ type, id, mode }) => ({ type, id, mode })) });
+    setEditing({ id: credential.id, projects: (credential.projects || []).filter(project => project.available).map(project => project.id), readOnly: credential.read_only });
   };
 
   const saveEdit = async () => {
-    if (!editing || !editing.scope.length || editing.scope.length > MAX_SCOPE) return;
+    if (!editing || !editing.projects.length || editing.projects.length > MAX_PROJECTS) return;
     setSecret('');
     setError('');
     setNotice('');
     setBusy(true);
     try {
-      const updated = await client.updateMCPCredential(editing.id, { scope: editing.scope });
+      const updated = await client.updateMCPCredential(editing.id, { projects: editing.projects, read_only: editing.readOnly });
       if (!mounted.current) return;
       setCredentials(current => current.map(item => item.id === updated.id ? { ...item, ...updated } : item));
       setEditing(null);
@@ -272,12 +244,12 @@ export default function MCPPersistentAccess() {
 
   return <section className="mcp-persistent" aria-labelledby="mcp-persistent-title" aria-busy={busy}>
     <div className="mcp-persistent-heading">
-      <div><h2 id="mcp-persistent-title">Постоянный MCP-доступ</h2><p>Создавайте собственные ключи с ограниченным сроком и точным списком пространств и проектов.</p></div>
+      <div><h2 id="mcp-persistent-title">Постоянный MCP-доступ</h2><p>Создавайте собственные ключи с ограниченным сроком и списком проектов, в которых может работать агент.</p></div>
       <button type="button" className="mcp-persistent-secondary" onClick={() => void load()} disabled={busy} aria-label="Обновить постоянные ключи"><RefreshCw size={15}/>Обновить</button>
     </div>
 
     <aside className="mcp-persistent-warning">
-      Каждый запрос проверяется по текущим правам владельца: ключ не даёт больше, чем есть у вас сейчас. Ключ действует только для выбранных пространств и проектов (проект включает свои подпроекты), плюс чтение общего пространства. Выход из системы не отзывает ключ. Ключ перестаёт работать после истечения срока, отзыва, отключения владельца администратором или если владелец не входил в вики больше 14 дней (снова заработает после входа). Максимальный срок — 180 дней.
+      Каждый запрос проверяется по текущим правам владельца: ключ не даёт больше, чем есть у вас сейчас. Агент с ключом работает в одном проекте из списка ключа; итоговое право в пространстве — меньшее из режима в проекте и ваших прав. Общее пространство ключ читает всегда. Выход из системы не отзывает ключ. Ключ перестаёт работать после истечения срока, отзыва, отключения владельца администратором или если владелец не входил в вики больше 14 дней (снова заработает после входа). Максимальный срок — 180 дней.
     </aside>
 
     {credentialsEnabled === false && <div className="mcp-persistent-unavailable" role="status">Постоянный MCP-доступ недоступен в этом режиме работы вики.</div>}
@@ -288,10 +260,11 @@ export default function MCPPersistentAccess() {
     {secret && <section className="mcp-persistent-secret" aria-labelledby="mcp-persistent-secret-title">
       <h3 id="mcp-persistent-secret-title">Секрет показан только сейчас</h3>
       <p>Скопируйте и сохраните его в настройках клиента MCP. Очистка секрета не отзывает созданный ключ.</p>
+      {connectHint.length > 0 && <p>Подключение: <code>{window.location.origin}/mcp?project={connectHint[0]}</code> — агент сам предложит выбрать проект при первом подключении.</p>}
       <textarea aria-label="Секрет постоянного MCP-ключа" readOnly value={secret} rows={3} spellCheck={false} />
       <div className="mcp-persistent-actions">
         <button type="button" className="mcp-persistent-secondary" onClick={() => void copySecret()}><Copy size={15}/>Скопировать</button>
-        <button type="button" className="mcp-persistent-secondary" onClick={() => { setSecret(''); setNotice('Секрет очищен.'); }}>Очистить секрет</button>
+        <button type="button" className="mcp-persistent-secondary" onClick={() => { setSecret(''); setConnectHint([]); setNotice('Секрет очищен.'); }}>Очистить секрет</button>
       </div>
     </section>}
 
@@ -302,7 +275,8 @@ export default function MCPPersistentAccess() {
       </label>
       <small id="mcp-persistent-name-limit">До 80 символов</small>
 
-      <ScopeEditor value={scope} onChange={setScope} targets={targets} disabled={busy}/>
+      <ProjectPicker value={projectIds} onChange={setProjectIds} projects={agentProjects} disabled={busy}/>
+      <label className="mcp-persistent-choice"><input type="checkbox" checked={readOnly} onChange={event => setReadOnly(event.target.checked)} disabled={busy}/>Только чтение</label>
 
       <label className="mcp-persistent-label">Срок действия
         <select value={ttlDays} onChange={event => setTtlDays(Number(event.target.value))} disabled={busy}>
@@ -315,7 +289,7 @@ export default function MCPPersistentAccess() {
           {serviceAccounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
         </select>
       </label>
-      <button className="mcp-persistent-primary" type="submit" disabled={busy || credentialsEnabled !== true || !name.trim() || name.trim().length > 80 || scope.length < 1 || scope.length > MAX_SCOPE}>
+      <button className="mcp-persistent-primary" type="submit" disabled={busy || credentialsEnabled !== true || !name.trim() || name.trim().length > 80 || projectIds.length < 1 || projectIds.length > MAX_PROJECTS}>
         Создать ключ
       </button>
     </form>}
@@ -357,14 +331,15 @@ export default function MCPPersistentAccess() {
             <h4>{credential.name}</h4>
             <p><strong>Статус:</strong> {revoked ? 'Отозван' : expired ? 'Истёк' : 'Активен'}</p>
             <p><strong>От имени:</strong> {credential.service_account_id ? serviceAccounts.find(account => account.id === credential.service_account_id)?.name || credential.service_account_id : 'Моя учётная запись'}</p>
-            <div className="mcp-persistent-chips"><strong>Доступ:</strong>{(credential.scope || []).map(item => <span className="mcp-persistent-chip" key={`${item.type}:${item.id}`}>{item.name || item.id}{item.type === 'space' ? ' (пространство)' : ''} · {item.mode === 'write' ? 'запись' : 'чтение'}</span>)}</div>
+            <div className="mcp-persistent-chips"><strong>Проекты:</strong>{(credential.projects || []).map(project => <span className={`mcp-persistent-chip${project.available ? '' : ' is-unavailable'}`} key={project.id} title={project.available ? undefined : 'Проект удалён или недоступен'}>{project.name || project.id} · {VISIBILITY[project.visibility] || project.visibility}{project.available ? '' : ' · недоступен'}</span>)}{credential.read_only && <span className="mcp-persistent-chip">только чтение</span>}</div>
             <p><strong>Создан:</strong> <time dateTime={credential.created_at}>{dateTime(credential.created_at)}</time></p>
             <p><strong>Истекает:</strong> <time dateTime={credential.expires_at}>{dateTime(credential.expires_at)}</time></p>
           </div>
           {editing?.id === credential.id && <div className="mcp-persistent-form mcp-persistent-edit">
-            <ScopeEditor value={editing.scope} onChange={next => setEditing({ ...editing, scope: next })} targets={targets} disabled={busy}/>
+            <ProjectPicker value={editing.projects} onChange={next => setEditing({ ...editing, projects: next })} projects={agentProjects} disabled={busy}/>
+            <label className="mcp-persistent-choice"><input type="checkbox" checked={editing.readOnly} onChange={event => setEditing({ ...editing, readOnly: event.target.checked })} disabled={busy}/>Только чтение</label>
             <div className="mcp-persistent-actions">
-              <button type="button" className="mcp-persistent-primary" onClick={() => void saveEdit()} disabled={busy || editing.scope.length < 1 || editing.scope.length > MAX_SCOPE}>Сохранить</button>
+              <button type="button" className="mcp-persistent-primary" onClick={() => void saveEdit()} disabled={busy || editing.projects.length < 1 || editing.projects.length > MAX_PROJECTS}>Сохранить</button>
               <button type="button" className="mcp-persistent-secondary" onClick={() => setEditing(null)} disabled={busy}>Отмена</button>
             </div>
           </div>}

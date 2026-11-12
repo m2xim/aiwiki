@@ -15,8 +15,8 @@ import (
 type artEnv struct {
 	*movesEnv
 	space string
-	proj  string
-	other string
+	proj  string // the space an MCP key is scoped to (same as space)
+	other string // a second space of alice, outside that scope
 }
 
 func newArtEnv(t *testing.T) *artEnv {
@@ -29,8 +29,8 @@ func newArtEnv(t *testing.T) *artEnv {
 	m.grant("space", e.space, "user", "editor", "editor")
 	m.grant("space", e.space, "user", "reader", "reader")
 	m.grant("space", e.space, "user", "commenter", "commenter")
-	e.proj = m.project(e.space, "", "P1", true)
-	e.other = m.project(e.space, "", "P2", true)
+	e.proj = e.space
+	e.other = m.space("alice")
 	return e
 }
 
@@ -361,13 +361,6 @@ func TestArtifactsPostgresRowLevelSecurity(t *testing.T) {
 	e := newArtEnv(t)
 	pub := e.create("alice", map[string]any{"title": "Общий"})
 	priv := e.create("editor", map[string]any{"title": "Личный редактора", "visibility": "private"})
-	// a project closed to everybody but editor
-	closed := e.project(e.space, "", "Closed", false)
-	e.grant("project", closed, "user", "editor", "owner")
-	hidden := e.create("editor", map[string]any{"project_id": closed, "title": "В закрытом проекте"})
-	if e.status("alice", "GET", "/api/artifacts/"+hidden.ID, nil) != 404 {
-		t.Error("space owner reads a closed project's artifact")
-	}
 	// direct SELECTs under the runtime role honour the policies
 	visible := func(user string) map[string]bool {
 		rows, err := e.as(user).DB.Query(`SELECT id FROM artifacts`)
@@ -387,7 +380,7 @@ func TestArtifactsPostgresRowLevelSecurity(t *testing.T) {
 		"alice":  {pub.ID},
 		"bob":    {pub.ID},
 		"reader": {pub.ID},
-		"editor": {pub.ID, priv.ID, hidden.ID},
+		"editor": {pub.ID, priv.ID},
 		"admin":  {},
 		"u1":     {},
 	} {
@@ -528,14 +521,14 @@ func TestArtifactsPostgresSchemaGuard(t *testing.T) {
 // mcpAs builds a request server for a persistent-key style scope.
 func (e *artEnv) mcpAs(user, mode string, projects ...string) *Server {
 	e.t.Helper()
-	db, cleanup, err := e.root.DB.scopedMCP(context.Background(), user, projScope(mode, projects...))
+	db, cleanup, err := e.root.DB.scopedMCP(context.Background(), user, spaceScope(mode, projects...))
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	e.t.Cleanup(cleanup)
 	cp := *e.root
 	cp.DB = db
-	cp.principal = &Principal{ID: user, Name: user, MCPScope: projScope(mode, projects...), MCPDelegationID: "pat_test"}
+	cp.principal = &Principal{ID: user, Name: user, MCPScope: spaceScope(mode, projects...), MCPDelegationID: "pat_test"}
 	return &cp
 }
 
@@ -549,9 +542,9 @@ func mcpCall(s *Server, tool string, args map[string]any) (bool, string) {
 
 func TestArtifactsPostgresMCPCeilings(t *testing.T) {
 	e := newArtEnv(t)
-	a1 := e.create("alice", map[string]any{"project_id": e.proj, "title": "В проекте один"})
-	a2 := e.create("alice", map[string]any{"project_id": e.other, "title": "В проекте два"})
-	a0 := e.create("alice", map[string]any{"title": "На уровне пространства"})
+	a1 := e.create("alice", map[string]any{"title": "В пространстве ключа"})
+	a2 := e.create("alice", map[string]any{"space_id": e.other, "title": "В другом пространстве"})
+	a0 := e.create("alice", map[string]any{"space_id": e.other, "title": "Ещё в другом"})
 	ro := func() *Server { return e.mcpAs("alice", "read", e.proj) }
 	rw := func() *Server { return e.mcpAs("alice", "write", e.proj) }
 
@@ -595,13 +588,13 @@ func TestArtifactsPostgresMCPCeilings(t *testing.T) {
 			t.Errorf("write key changed %s outside its scope", id)
 		}
 	}
-	if isErr, _ = mcpCall(rw(), "wiki_artifact_write", map[string]any{"space_id": e.space, "title": "в пространстве", "files": []map[string]any{{"path": "index.html", "content": "x"}}}); !isErr {
-		t.Error("write key created at space level")
+	if isErr, _ = mcpCall(rw(), "wiki_artifact_write", map[string]any{"space_id": e.other, "title": "чужое пространство", "files": []map[string]any{{"path": "index.html", "content": "x"}}}); !isErr {
+		t.Error("write key created in another space")
 	}
-	if isErr, _ = mcpCall(rw(), "wiki_artifact_write", map[string]any{"space_id": e.space, "project_id": e.other, "title": "чужой проект", "files": []map[string]any{{"path": "index.html", "content": "x"}}}); !isErr {
-		t.Error("write key created in another project")
+	if isErr, _ = mcpCall(rw(), "wiki_artifact_write", map[string]any{"space_id": e.space, "project_id": "p", "title": "папка", "files": []map[string]any{{"path": "index.html", "content": "x"}}}); !isErr {
+		t.Error("the removed project_id was accepted")
 	}
-	isErr, text = mcpCall(rw(), "wiki_artifact_write", map[string]any{"space_id": e.space, "project_id": e.proj, "title": "Новый из MCP", "files": []map[string]any{{"path": "index.html", "content": "<p>из mcp</p>"}}})
+	isErr, text = mcpCall(rw(), "wiki_artifact_write", map[string]any{"space_id": e.space, "title": "Новый из MCP", "files": []map[string]any{{"path": "index.html", "content": "<p>из mcp</p>"}}})
 	if isErr {
 		t.Fatalf("create in scope: %s", text)
 	}
@@ -619,7 +612,7 @@ func TestArtifactsPostgresMCPCeilings(t *testing.T) {
 		}
 	}
 	// the other persistent mode for a private artifact of the sponsor behaves as the sponsor
-	priv := e.create("alice", map[string]any{"project_id": e.proj, "title": "Приватный в проекте", "visibility": "private"})
+	priv := e.create("alice", map[string]any{"title": "Приватный в проекте", "visibility": "private"})
 	if isErr, text = mcpCall(ro(), "wiki_artifact_list", map[string]any{}); !strings.Contains(text, priv.ID) {
 		t.Errorf("sponsor's private artifact hidden from the sponsor's own key: %s", text)
 	}

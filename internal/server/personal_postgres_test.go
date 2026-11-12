@@ -278,7 +278,7 @@ func TestPersonalServesOwnerEverywhere(t *testing.T) {
 		t.Fatalf("create article %d %s", art.Code, art.Body.String())
 	}
 	// The admin surface works for the owner.
-	for _, path := range []string{"/api/admin/users", "/api/catalog", "/api/projects", "/api/teams"} {
+	for _, path := range []string{"/api/admin/users", "/api/catalog", "/api/agent-projects", "/api/teams"} {
 		if rr := personalDo(h, "GET", path, ""); rr.Code != 200 {
 			t.Errorf("%s: %d %s", path, rr.Code, rr.Body.String())
 		}

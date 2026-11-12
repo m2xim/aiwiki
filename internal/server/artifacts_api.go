@@ -103,7 +103,7 @@ func artifactDecode(w http.ResponseWriter, r *http.Request, dst any) bool {
 type artifactMeta struct {
 	ID          string `json:"id"`
 	SpaceID     string `json:"space_id"`
-	ProjectID   string `json:"project_id"`
+	ProjectID   string `json:"project_id,omitempty"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Visibility  string `json:"visibility"`
@@ -342,7 +342,7 @@ func likeTerm(term string) string {
 type artifactListItem struct {
 	ID          string `json:"id"`
 	SpaceID     string `json:"space_id"`
-	ProjectID   string `json:"project_id"`
+	ProjectID   string `json:"project_id,omitempty"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Visibility  string `json:"visibility"`
@@ -353,16 +353,12 @@ type artifactListItem struct {
 	FileCount   int    `json:"file_count"`
 }
 
-func (s *Server) listArtifacts(space, project, query string, limit, offset int) ([]artifactListItem, error) {
+func (s *Server) listArtifacts(space, query string, limit, offset int) ([]artifactListItem, error) {
 	where := []string{"a.deleted_at IS NULL"}
 	args := []any{}
 	if space != "" {
 		where = append(where, "a.space_id=?")
 		args = append(args, space)
-	}
-	if project != "" {
-		where = append(where, "a.project_id=?")
-		args = append(args, project)
 	}
 	for _, term := range searchTerms(query) {
 
@@ -403,7 +399,7 @@ func (s *Server) artifactList(w http.ResponseWriter, r *http.Request) {
 	if limit == 0 {
 		limit = 100
 	}
-	items, err := s.listArtifacts(q.Get("space_id"), q.Get("project_id"), q.Get("q"), limit, intParam(r, "offset", 0, 0))
+	items, err := s.listArtifacts(q.Get("space_id"), q.Get("q"), limit, intParam(r, "offset", 0, 0))
 	if err != nil {
 		writeArtifactError(w, err)
 		return
@@ -415,7 +411,7 @@ func (s *Server) artifactList(w http.ResponseWriter, r *http.Request) {
 
 type artifactCreateIn struct {
 	SpaceID     string           `json:"space_id"`
-	ProjectID   string           `json:"project_id"`
+	ProjectID   string           `json:"project_id,omitempty"`
 	Title       string           `json:"title"`
 	Description string           `json:"description"`
 	Visibility  string           `json:"visibility"`
@@ -433,7 +429,7 @@ func (s *Server) artifactCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var head struct {
 		SpaceID   string `json:"space_id"`
-		ProjectID string `json:"project_id"`
+		ProjectID string `json:"project_id,omitempty"`
 	}
 	if json.Unmarshal(raw, &head) != nil {
 		apiErr(w, http.StatusBadRequest, "invalid input")
@@ -459,7 +455,10 @@ func (s *Server) artifactCreate(w http.ResponseWriter, r *http.Request) {
 // artifactCreateCheck is the cheap container check done before any file is
 // parsed or stored: the space or project must accept the caller's new artifact.
 func (s *Server) artifactCreateCheck(space, project string) error {
-	if !validPathID(space) || project != "" && !validPathID(project) {
+	if project != "" {
+		return artErr(400, projectsRemovedText)
+	}
+	if !validPathID(space) {
 		return artErr(400, "space_id is required")
 	}
 	if s.principal == nil {
@@ -516,17 +515,6 @@ func (s *Server) createArtifact(ctx context.Context, in artifactCreateIn) (artif
 		return artifactDetail{}, err
 	}
 	defer tx.Rollback()
-	if rs.DB.pg && in.ProjectID != "" {
-		// Serializes with a project move, like article creation.
-		lock := " FOR SHARE"
-		if rs.principal != nil && rs.principal.MCPScope != nil {
-			lock = ""
-		}
-		var one int
-		if tx.QueryRow(`SELECT 1 FROM projects WHERE id=? AND space_id=?`+lock, in.ProjectID, in.SpaceID).Scan(&one) != nil {
-			return artifactDetail{}, artErr(400, "project not found in this space")
-		}
-	}
 	owner := ""
 	if rs.principal != nil {
 		owner = rs.principal.ID
@@ -1262,7 +1250,7 @@ func (s *Server) adminSettingsPut(w http.ResponseWriter, r *http.Request) {
 		var exists bool
 		check := `SELECT EXISTS(SELECT 1 FROM spaces WHERE id=? AND archived_at IS NULL)`
 		if s.DB.pg {
-			check = `SELECT public.corporate_space_assignable(?)`
+			check = `SELECT public.corporate_space_assignable_v2(?)`
 		}
 		if err := tx.QueryRow(check, *in.GeneralSpaceID).Scan(&exists); err != nil {
 			writeArtifactError(w, err)

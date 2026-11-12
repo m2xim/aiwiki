@@ -90,7 +90,34 @@ func (s *Server) corporateHandler() http.Handler {
 		if !ok {
 			return
 		}
-		scoped, cleanup, err := s.DB.scopedMCP(r.Context(), p.ID, p.MCPScope, p.MCPActorID)
+		var scoped *database
+		var cleanup func()
+		var err error
+		project, projectOK := mcpRequestedProject(r)
+		agentMode := authIsMCPPath(r.URL.Path) && (p.MCPKeyProjects != nil || p.MCPBearer && project != "")
+		switch {
+		case !projectOK && authIsMCPPath(r.URL.Path):
+			mcpProjectUnavailable(w, http.StatusBadRequest)
+			return
+		case agentMode:
+			var scope []mcpScopeElement
+			// The scope is computed in SQL for this request: project edits apply to the next request and a
+			// project that is not in the key's list, was deleted or is no longer visible is refused (403).
+			scoped, cleanup, scope, err = s.DB.scopedAgent(r.Context(), p.ID, p.MCPActorID, p.MCPDelegationID, project)
+			if errors.Is(err, errAgentProjectUnavailable) {
+				mcpProjectUnavailable(w, http.StatusForbidden)
+				return
+			}
+			if err == nil {
+				p.MCPScope, p.MCPProjectID, p.MCPIntrospect = scope, project, project == "" && p.MCPKeyProjects != nil
+			}
+		case p.MCPKeyProjects != nil:
+			// A persistent key never works outside /mcp.
+			apiErr(w, http.StatusForbidden, "access denied")
+			return
+		default:
+			scoped, cleanup, err = s.DB.scopedMCP(r.Context(), p.ID, p.MCPScope, p.MCPActorID)
+		}
 		if err != nil {
 			apiErr(w, 503, "database unavailable")
 			return
@@ -103,6 +130,26 @@ func (s *Server) corporateHandler() http.Handler {
 		requestServer.routes().ServeHTTP(w, r)
 	}))
 	return trackMux(public)
+}
+
+// mcpRequestedProject reads ?project=: absent or empty means none; repeated or malformed values are refused.
+func mcpRequestedProject(r *http.Request) (string, bool) {
+	values := r.URL.Query()["project"]
+	switch len(values) {
+	case 0:
+		return "", true
+	case 1:
+		if values[0] == "" {
+			return "", true
+		}
+		return values[0], validPathID(values[0])
+	}
+	return "", false
+}
+
+// mcpProjectUnavailable answers a project the key may not use. The text never says why.
+func mcpProjectUnavailable(w http.ResponseWriter, status int) {
+	writeJSON(w, status, map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": -32001, "message": "project is not available for this key"}})
 }
 
 func (s *Server) changeAuthor(proposed string) string {
