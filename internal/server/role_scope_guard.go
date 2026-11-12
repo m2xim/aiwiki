@@ -2,6 +2,8 @@ package server
 
 import (
 	"errors"
+	"fmt"
+	"log"
 	"sort"
 	"strings"
 )
@@ -53,10 +55,29 @@ func (d *database) validateRoleScope() error {
 	if err := d.QueryRow(`SELECT coalesce((SELECT p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public, pg_temp'] AND NOT pg_has_role(current_user,p.proowner,'MEMBER') AND has_function_privilege(current_user,p.oid,'EXECUTE') AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0) FROM pg_proc p WHERE p.oid=to_regprocedure('public.corporate_role_scope()')),false), coalesce((SELECT md5(replace(prosrc,E'\r','')) FROM pg_proc WHERE oid=to_regprocedure('public.corporate_role_scope()')),'')`).Scan(&ok, &bodyMD5); err != nil || !ok || bodyMD5 != roleScopeBodyMD5 {
 		return errRoleScope
 	}
-	// Every function that pins a search_path must list pg_temp last (role_scope v3): otherwise a temporary
-	// object of the runtime role (for example a pg_temp.text domain) would run inside owner code.
-	if err := d.QueryRow(`SELECT NOT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) c WHERE n.nspname='public' AND c LIKE 'search_path=%' AND c !~ '(=|,\s*)pg_temp\s*$')`).Scan(&ok); err != nil || !ok {
+	// Every function of the application owner (the owner of the tables) that pins a search_path must list pg_temp last (role_scope v3):
+	// otherwise a temporary object of the runtime role (for example a pg_temp.text domain) would run
+	// inside owner code. Functions of other roles (extensions, manual DBA objects) are not changed by the
+	// migration; they are reported, not fatal.
+	const unsafePath = `FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) c WHERE n.nspname='public' AND c LIKE 'search_path=%' AND c !~ '(=|,\s*)pg_temp\s*$'`
+	var unsafe string
+	if err := d.QueryRow(`SELECT coalesce(string_agg(p.oid::regprocedure::text||' = '||c, ', ' ORDER BY 1),'') ` + unsafePath + ` AND p.proowner=(SELECT t.relowner FROM pg_class t WHERE t.oid='public.mcp_credentials'::regclass)`).Scan(&unsafe); err != nil {
 		return errUnsafeSearchPath
+	} else if unsafe != "" {
+		return fmt.Errorf("%w: %s", errUnsafeSearchPath, unsafe)
+	}
+	if rows, err := d.Query(`SELECT p.oid::regprocedure::text||' (owner '||pg_get_userbyid(p.proowner)||')' ` + unsafePath + ` AND p.proowner<>(SELECT c.relowner FROM pg_class c WHERE c.oid='public.mcp_credentials'::regclass) ORDER BY 1`); err == nil {
+		var names []string
+		for rows.Next() {
+			var name string
+			if rows.Scan(&name) == nil {
+				names = append(names, name)
+			}
+		}
+		rows.Close()
+		if len(names) > 0 {
+			log.Printf("warning: functions pin a search_path without pg_temp last; set it as their owner: %s", strings.Join(names, ", "))
+		}
 	}
 	rows, err := d.Query(`SELECT c.relname||'/'||p.polname, p.polpermissive, p.polcmd::text, regexp_replace(coalesce(pg_get_expr(p.polqual,p.polrelid),''),'\s+',' ','g') FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('articles','revisions','article_fts','attachments','comments','favorites','projects','spaces') AND p.polcmd IN ('r','*') AND p.polpermissive`)
 	if err != nil {
