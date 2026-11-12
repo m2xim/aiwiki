@@ -1,11 +1,12 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Archive, Box, ArrowDownToLine, ArrowLeft, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleHelp, Clock3, Code2, FileImage, FolderInput, FolderPlus, FolderTree, History, ImagePlus, LayoutGrid, Link2, List, ListFilter, LogOut, MessageCircle, Moon, Pencil, Pin, Plus, Search, Settings2, ShieldCheck, Sparkles, Star, Sun, Tag, Trash2, Upload, UserRound, X, ChevronsLeft, ChevronsRight, PanelLeftClose } from 'lucide-react';
+import { Activity, Archive, Box, ArrowDownToLine, ArrowLeft, BookOpen, Bot, Check, ChevronRight, CircleHelp, Clock3, Code2, FileImage, FolderInput, FolderPlus, FolderTree, History, ImagePlus, LayoutGrid, Link2, List, ListFilter, LogOut, MessageCircle, Moon, Pencil, Pin, Plus, Search, Settings2, ShieldCheck, Sparkles, Star, Sun, Tag, Trash2, Upload, UserRound, X, ChevronsLeft, ChevronsRight, PanelLeftClose } from 'lucide-react';
 import { Article, Attachment, AuthSession, Bootstrap, Favorite, Revision, SearchHit, SearchResponse, Space, client, setAuthExpiredHandler, setCorporateSession, setCsrfToken, setLoginAvailable } from './api';
 import { AuthorName } from './AuthorName';
 import { headings, Markdown, scrollToFirstHighlight, smoothBehavior } from './markdown';
 import { Toc } from './Toc';
 import { SpacesManager } from './SpacesManager';
+import { CreateSpaceDialog } from './CreateSpaceDialog';
 import { HistoryPage } from './HistoryPage';
 import { SpacesDirectory } from './SpacesDirectory';
 import { AuditPage } from './AuditPage';
@@ -17,6 +18,8 @@ import { SearchResultsList } from './SearchResults';
 import { lastUrlRef, useLayoutPrefs, SIDEBAR_MAX, SIDEBAR_MIN, UNSAVED_MESSAGE, articleUrl, currentUrl, isTypingTarget, readRoute, spaceUrl, useSidebarWidth } from './nav';
 import type { MarkdownEditorHandle } from './MarkdownEditor';
 import { ParentPicker } from './ParentPicker';
+import { TagInput } from './TagInput';
+import { PropertiesInput } from './PropertiesInput';
 import { EditorConflict } from './EditorConflict';
 import { clearCorporateDrafts, DraftFields, setDraftIdentity, StoredDraft, draftKey, formatDraftTime, loadDraft, loadParkedList, popParked, pushParked, removeDraft, sameFields, saveDraft } from './draftStore';
 import { AdminPanel, adminUrl, readAdminTab } from './AdminPanel';
@@ -74,6 +77,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null); const [searchItems, setSearchItems] = useState<SearchHit[]>([]); const [searchLoading, setSearchLoading] = useState(false); const [searchMoreBusy, setSearchMoreBusy] = useState(false); const [searchNonce, setSearchNonce] = useState(0);
   const [favorites, setFavorites] = useState<Favorite[]>([]); const [favPending, setFavPending] = useState<string[]>([]);
   const [editor, setEditor] = useState(false); const [preview, setPreview] = useState(false); const [draft, setDraft] = useState<Article | null>(null); const [saving, setSaving] = useState(false); const [tagsText, setTagsText] = useState(''); const [propertiesText, setPropertiesText] = useState('');
+  const [otherSpaceTags, setOtherSpaceTags] = useState<{ spaceId: string; tags: string[] } | null>(null);
   const [draftBase, setDraftBase] = useState(0); const [conflict, setConflict] = useState<Article | null>(null); const [offer, setOffer] = useState<StoredDraft | null>(null); const [parkedList, setParkedList] = useState<StoredDraft[]>([]); const parked = parkedList[0] ?? null; const offerRef = useRef<StoredDraft | null>(null); const lastSkipRef = useRef(false); const pendingScrollRef = useRef('');
   offerRef.current = offer;
   const [propsAttempt, setPropsAttempt] = useState(false);
@@ -89,7 +93,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   const [spacesView, setSpacesView] = useState(initialRoute.view === 'spaces' && !initialRoute.article);
   const [favView, setFavView] = useState(initialRoute.view === 'favorites' && !initialRoute.article);
   const layout = useLayoutPrefs(); const layoutRef = useRef(layout); layoutRef.current = layout;
-  const [spaceForm, setSpaceForm] = useState(false); const [spaceName, setSpaceName] = useState(''); const [spaceDescription, setSpaceDescription] = useState(''); const [notice, setNotice] = useState(''); const [pendingAnchor, setPendingAnchor] = useState('');
+  const [createSpaceOpen, setCreateSpaceOpen] = useState(false); const [notice, setNotice] = useState<{ text: string } | null>(null); const [pendingAnchor, setPendingAnchor] = useState('');
   const [moveOpen, setMoveOpen] = useState(false); const [canMove, setCanMove] = useState(false);
   const [adminOpen, setAdminOpen] = useState(session.mode !== 'trusted' && initialRoute.view === 'admin');
   const [adminTab, setAdminTab] = useState(readAdminTab);
@@ -100,8 +104,14 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   const articleRequest = useRef(0); const indexRequest = useRef(0); const searchRequest = useRef(0); const parentRequest = useRef(0); const tagRequest = useRef(0); const attachmentDeleteRequest = useRef(0);
   const selectedRef = useRef<Article | null>(null); const selectedIdRef = useRef(''); const spaceIdRef = useRef(spaceId); const editorOpenRef = useRef(false); const searchAllRef = useRef(searchAll); const baselineRef = useRef<DraftSnapshot | null>(null); const dirtyRef = useRef(false); const modalOpenRef = useRef(false); const overlayRef = useRef({ nav: false, panel: false });
   selectedRef.current = selected; selectedIdRef.current = selected?.id || ''; spaceIdRef.current = spaceId; editorOpenRef.current = editor; searchAllRef.current = searchAll;
-  modalOpenRef.current = Boolean(pendingDelete || pendingDeleteArticle || spaceManager || adminOpen || moveOpen); overlayRef.current = { nav: mobileNav, panel: panel !== null };
+  modalOpenRef.current = Boolean(pendingDelete || pendingDeleteArticle || spaceManager || createSpaceOpen || adminOpen || moveOpen); overlayRef.current = { nav: mobileNav, panel: panel !== null };
   const sidebar = useSidebarWidth(!adminOpen);
+  const showNotice = (text: string) => setNotice({ text });
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   useEffect(() => { if (session.mode !== 'trusted') { setAuthor(session.user.name); } }, [session]);
 
   // ---- URL helpers: every URL write goes through here so the last known URL can be restored when a Back step is refused.
@@ -178,6 +188,17 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
     try { const result = await client.tags(currentSpace); if (request === tagRequest.current && currentSpace === spaceIdRef.current) setTagOptions(result); }
     catch (e) { if (request === tagRequest.current && currentSpace === spaceIdRef.current) setError((e as Error).message); }
   }, [spaceId]);
+  const draftSpaceId = draft?.space_id;
+  useEffect(() => {
+    if (!draftSpaceId || draftSpaceId === spaceId) return;
+    let active = true;
+    client.tags(draftSpaceId).then(tags => {
+      if (active) setOtherSpaceTags({ spaceId: draftSpaceId, tags });
+    }).catch(() => {
+      if (active) setOtherSpaceTags(null);
+    });
+    return () => { active = false; };
+  }, [draftSpaceId, spaceId]);
   const loadFavorites = useCallback(async () => {
     try { setFavorites(await client.favorites()); } catch { /* favourites are optional: the sidebar block simply stays hidden */ }
   }, []);
@@ -191,7 +212,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
     try {
       const article = await client.article(id);
       if (request !== articleRequest.current) return;
-      setSelected(article); setSpacesView(false); setFavView(false);
+      setArtRoute(null); setSelected(article); setSpacesView(false); setFavView(false);
       if (article.space_id !== spaceIdRef.current) { if (!searchAllRef.current) resetFilters(); setSpaceId(article.space_id); }
       setPendingAnchor(anchor); setBooting(false); setArticleLoading(false);
       if (view === 'history') { setAuditView(false); setHistoryView(true); if (opts.entry) historyEntry.current = true; }
@@ -359,8 +380,8 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   // document.title
   useEffect(() => {
     const spaceTitle = spaces.find(s => s.id === spaceId)?.name;
-    if (artRoute) return;
-    document.title = adminOpen ? 'Команды и доступ — AI Wiki' : spacesView ? 'Все пространства — AI Wiki' : favView ? 'Избранное — AI Wiki' : selected && !editor && !auditView ? `${selected.title || "Без названия"} — AI Wiki` : spaceTitle ? `${spaceTitle} — AI Wiki` : "AI Wiki";
+    if (adminOpen || artRoute) return;
+    document.title = spacesView ? 'Все пространства — AI Wiki' : favView ? 'Избранное — AI Wiki' : selected && !editor && !auditView ? `${selected.title || "Без названия"} — AI Wiki` : spaceTitle ? `${spaceTitle} — AI Wiki` : "AI Wiki";
   }, [selected?.id, selected?.title, editor, auditView, spacesView, favView, spaces, spaceId, adminOpen, artRoute]);
 
   // Hotkeys: «/» and Ctrl/Cmd+K focus the search; Escape closes the slide-out panels.
@@ -458,11 +479,11 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
     if (draft.id && base) {
       const now = snapshotOf(draft, tagsText, propertiesText); fields = {};
       fieldKeys.forEach(key => { const value = key === 'title' ? draft.title.trim() : now[key]; if (value !== base[key]) fields[key] = key === 'tags' ? tags : key === 'properties' ? properties : value; });
-      if (!Object.keys(fields).length) { discardDraft(); leaveEditing(); setNotice('Изменений нет'); return; }
+      if (!Object.keys(fields).length) { discardDraft(); leaveEditing(); showNotice('Изменений нет'); return; }
     }
     setSaving(true); setError('');
     try { if (session.mode === 'trusted') storeAuthor(author); const data = { ...fields, author: session.mode !== 'trusted' ? session.user.name : author.trim() || 'human', ...(draft.id ? { base_revision: opts.base ?? draftBase, message: 'Изменения из редактора' } : {}) };
-      const saved = draft.id ? await client.updateArticle(draft.id, data) : await client.createArticle(data); latestDraftRef.current = null; removeDraft(draftKeyRef.current); articleRequest.current++; setHistoryView(false); historyEntry.current = false; baselineRef.current = null; setSpaceId(saved.space_id); setSelected(saved); setDraft(null); setEditor(false); setConflict(null); setOffer(null); setParkedList([]); setPropsAttempt(false); setNotice(opts.notice || 'Изменения сохранены'); urlReplace(articleUrl(saved.id)); await loadIndex(saved.space_id); await loadTags(saved.space_id); setSelected(saved); void loadFavorites();
+      const saved = draft.id ? await client.updateArticle(draft.id, data) : await client.createArticle(data); latestDraftRef.current = null; removeDraft(draftKeyRef.current); articleRequest.current++; setHistoryView(false); historyEntry.current = false; baselineRef.current = null; setSpaceId(saved.space_id); setSelected(saved); setDraft(null); setEditor(false); setConflict(null); setOffer(null); setParkedList([]); setPropsAttempt(false); showNotice(opts.notice || 'Изменения сохранены'); urlReplace(articleUrl(saved.id)); await loadIndex(saved.space_id); await loadTags(saved.space_id); setSelected(saved); void loadFavorites();
     } catch (e) {
       const message = (e as Error).message;
       if (draft.id && /revision conflict/i.test(message)) {
@@ -486,7 +507,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   const takeTheirs = () => {
     if (!conflict || !draft) return; const key = draftKeyRef.current; const fields = currentFields();
     const stored: StoredDraft = { fields, base_revision: draftBase, savedAt: Date.now() };
-    if (!pushParked(key, stored)) setNotice('Браузер не дал сохранить отложенный черновик: он доступен только пока открыта эта страница');
+    if (!pushParked(key, stored)) showNotice('Браузер не дал сохранить отложенный черновик: он доступен только пока открыта эта страница');
     setParkedList(list => list.length && sameFields(list[0].fields, fields) ? list : [stored, ...list].slice(0, 5));
     const tags = conflict.tags.join(', '); const props = Object.entries(conflict.properties || {}).map(([k, v]) => `${k}=${v}`).join('\n');
     const value = { ...conflict, tags: [...conflict.tags], properties: { ...conflict.properties } };
@@ -515,18 +536,23 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || modalOpenRef.current || savingRef.current || overlayRef.current.nav || overlayRef.current.panel) return;
       const target = event.target;
-      if (!(target instanceof Element) || !target.closest('.editor-page') || target.matches('input[list]')) return;
+      if (!(target instanceof Element) || !target.closest('.editor-page') || target.matches('input[list], [role="combobox"][aria-expanded="true"]')) return;
       if (document.querySelector('[role="dialog"], .cm-tooltip-autocomplete, .parent-picker-list')) return;
       closeRef.current();
     };
     document.addEventListener('keydown', onSave, true); document.addEventListener('keydown', onEscape);
     return () => { document.removeEventListener('keydown', onSave, true); document.removeEventListener('keydown', onEscape); };
   }, [editor]);
-  const addSpace = async (e: React.FormEvent) => { e.preventDefault(); if (!spaceName.trim()) return; if (!confirmLeave()) return; try { const s = await client.createSpace(spaceName.trim(), spaceDescription.trim()); setSpaces(v => [...v, s]); clearSelection(false); resetFilters(); setSpaceId(s.id); urlPush(spaceUrl(s.id)); setSpaceForm(false); setSpaceName(''); setSpaceDescription(''); } catch (e) { setError((e as Error).message); } };
-  const uploadFile = async (files: FileList | null) => { if (!files?.length || !selected || selected.deleted_at) return; try { const added = await client.upload(selected.id, files[0]); setAttachments(v => [added, ...v]); if (draft) { if (added.mime.startsWith('image/')) insertText(`![${added.name}](${added.url})`); else insertText(`[${added.name}](${added.url})`); setNotice('Файл загружен и ссылка вставлена в текст'); } else setNotice('Файл добавлен к статье'); } catch (e) { setError((e as Error).message); } };
+  const addSpace = async ({ name, description }: { name: string; description: string }) => {
+    const space = await client.createSpace(name, description);
+    setSpaces(items => [...items, space]);
+    clearSelection(false); resetFilters(); setSpaceId(space.id); setMobileNav(false);
+    urlPush(spaceUrl(space.id));
+  };
+  const uploadFile = async (files: FileList | null) => { if (!files?.length || !selected || selected.deleted_at) return; try { const added = await client.upload(selected.id, files[0]); setAttachments(v => [added, ...v]); if (draft) { if (added.mime.startsWith('image/')) insertText(`![${added.name}](${added.url})`); else insertText(`[${added.name}](${added.url})`); showNotice('Файл загружен и ссылка вставлена в текст'); } else showNotice('Файл добавлен к статье'); } catch (e) { setError((e as Error).message); } };
   const insertText = (value: string) => { if (!draft) return; if (bodyRef.current) bodyRef.current.insertText(value); else setField('body', draft.body + value); };
   const deleteAttachment = async () => { if (!selected || selected.deleted_at || !pendingDelete || deletingAttachmentId) return; const articleId = selected.id; const attachment = pendingDelete; const request = ++attachmentDeleteRequest.current; setDeletingAttachmentId(attachment.id); setError('');
-    try { await client.deleteAttachment(articleId, attachment.id); if (request !== attachmentDeleteRequest.current || selectedIdRef.current !== articleId) return; setAttachments(items => items.filter(item => item.id !== attachment.id)); setPendingDelete(null); setNotice(`Файл «${attachment.name}» удалён из статьи`); }
+    try { await client.deleteAttachment(articleId, attachment.id); if (request !== attachmentDeleteRequest.current || selectedIdRef.current !== articleId) return; setAttachments(items => items.filter(item => item.id !== attachment.id)); setPendingDelete(null); showNotice(`Файл «${attachment.name}» удалён из статьи`); }
     catch (e) { if (request === attachmentDeleteRequest.current && selectedIdRef.current === articleId) setError((e as Error).message); }
     finally { if (request === attachmentDeleteRequest.current) setDeletingAttachmentId(''); }
   };
@@ -564,10 +590,10 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   }, []);
   const openFavorites = () => { if (favView) { setMobileNav(false); return; } if (!confirmLeave()) return; clearSelection(false); setFavView(true); setMobileNav(false); urlPush('/?view=favorites'); };
   const openSpaces = () => { if (spacesView) { setMobileNav(false); return; } if (!confirmLeave()) return; clearSelection(false); setSpacesView(true); setMobileNav(false); urlPush('/?view=spaces'); };
-  const startCreateSpace = () => { setSpaceForm(true); setMobileNav(true); };
+  const startCreateSpace = () => { if (confirmLeave()) setCreateSpaceOpen(true); };
   const openAuditHistory = (id: string) => { if (!confirmLeave()) return; setPanel(null); void openArticle(id, { mode: 'push', view: 'history', entry: true }); };
   const closeHistory = () => { if (historyEntry.current) { history.back(); return; } if (!selected) return; urlReplace(articleUrl(selected.id)); setHistoryView(false); };
-  const restore = async (revision: Revision) => { if (!selected || selected.deleted_at || restoring) return; setRestoring(true); setError(''); try { const a = await client.restore(selected.id, { revision: revision.revision, base_revision: selected.revision, author: author.trim() || 'human', message: `Восстановление версии ${revision.revision}` }); setSpaceId(a.space_id); setSelected(a); await loadIndex(a.space_id); setSelected(a); void loadFavorites(); setNotice(`Создана новая версия из ревизии ${revision.revision}`); } catch (e) { setError((e as Error).message); } finally { setRestoring(false); } };
+  const restore = async (revision: Revision) => { if (!selected || selected.deleted_at || restoring) return; setRestoring(true); setError(''); try { const a = await client.restore(selected.id, { revision: revision.revision, base_revision: selected.revision, author: author.trim() || 'human', message: `Восстановление версии ${revision.revision}` }); setSpaceId(a.space_id); setSelected(a); await loadIndex(a.space_id); setSelected(a); void loadFavorites(); showNotice(`Создана новая версия из ревизии ${revision.revision}`); } catch (e) { setError((e as Error).message); } finally { setRestoring(false); } };
   const exportWiki = () => { window.location.href = '/api/export'; };
   useEffect(() => { document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; }, [theme]);
   const toggleTheme = () => {
@@ -626,8 +652,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   };
   const activeSpace = spaces.find(s => s.id === spaceId);
   const propsInvalid = editor ? parseProperties(propertiesText).invalid : [];
-  const editorTagComma = tagsText.lastIndexOf(','); const editorTagPrefix = editorTagComma < 0 ? '' : tagsText.slice(0, editorTagComma + 1) + ' '; const editorTagToken = (editorTagComma < 0 ? tagsText : tagsText.slice(editorTagComma + 1)).trim().toLocaleLowerCase('ru');
-  const editorTagSuggestions = tagOptions.filter(tag => tag.toLocaleLowerCase('ru').startsWith(editorTagToken)).map(tag => `${editorTagPrefix}${tag}`);
+  const editorTags = draftSpaceId === spaceId ? tagOptions : otherSpaceTags?.spaceId === draftSpaceId ? otherSpaceTags?.tags ?? [] : [];
   const onToggleNode = useCallback((id: string, expanded: boolean) => setOpenNodes(v => ({ ...v, [id]: !expanded })), []);
   const onTreeSelect = useCallback((id: string) => selectArticle(id), [selectArticle]);
   const bodyForRead = selected?.body || '';
@@ -674,7 +699,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
     try {
       const saved = await client.article(done.id);
       articleRequest.current++; setSpaceId(saved.space_id); setSelected(saved); urlReplace(articleUrl(saved.id));
-      setNotice(done.moved ? 'Статья перемещена' : 'Родитель статьи изменён');
+      showNotice(done.moved ? 'Статья перемещена' : 'Родитель статьи изменён');
       await loadIndex(saved.space_id); await loadTags(saved.space_id); setSelected(saved); void loadFavorites();
     } catch (e) { setError((e as Error).message); }
   };
@@ -711,14 +736,13 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
           <button className="rail-btn" onClick={() => layout.setNav('hidden')} title="Скрыть панель" aria-label="Скрыть панель"><PanelLeftClose size={17}/></button>
         </div>
         <div className="side-full">
-        <div className="side-heading"><span>ПРОСТРАНСТВО</span><span className="side-heading-actions"><button className="icon-button tiny" onClick={() => layout.setNav('rail')} title="Свернуть панель ([)" aria-label="Свернуть панель"><ChevronsLeft size={16}/></button><button className={`icon-button tiny ${spacesView ? 'active' : ''}`} onClick={openSpaces} title="Все пространства" aria-label="Все пространства"><LayoutGrid size={16}/></button><button className="icon-button tiny" onClick={() => setSpaceForm(!spaceForm)} title="Создать пространство"><FolderPlus size={16}/></button></span></div>
-        <div className="space-picker"><select value={spaceId} onChange={e => changeSpace(e.target.value)} aria-label="Пространство">{!spaceId && <option value="">Нет активных пространств</option>}{activeSpace?.archived_at && <option value={activeSpace.id}>{activeSpace.name} · В архиве</option>}{activeSpaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15}/></div>
+        <div className="side-heading"><span>ПРОСТРАНСТВО</span><span className="side-heading-actions"><button className="icon-button tiny" onClick={() => layout.setNav('rail')} title="Свернуть панель ([)" aria-label="Свернуть панель"><ChevronsLeft size={16}/></button><button className={`icon-button tiny ${spacesView ? 'active' : ''}`} onClick={openSpaces} title="Все пространства" aria-label="Все пространства"><LayoutGrid size={16}/></button><button className="icon-button tiny" onClick={startCreateSpace} title="Создать пространство" aria-label="Создать пространство"><FolderPlus size={16}/></button></span></div>
+        <div className="space-picker"><select value={spaceId} onChange={e => changeSpace(e.target.value)} aria-label="Пространство">{!spaceId && <option value="">Нет активных пространств</option>}{activeSpace?.archived_at && <option value={activeSpace.id}>{activeSpace.name} · В архиве</option>}{activeSpaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
         <button className={`spaces-manage-button audit-nav-button ${spacesView ? 'active' : ''}`} onClick={openSpaces}><LayoutGrid size={15}/>Все пространства</button>
         <button className={`spaces-manage-button audit-nav-button ${favView ? 'active' : ''}`} onClick={openFavorites}><Star size={15}/>Избранное{favorites.length > 0 && <span className="art-count" aria-label={`Избранных: ${favorites.length}`}>{favorites.length}</span>}</button>
         {spaceId && <button className={`spaces-manage-button audit-nav-button ${auditView ? 'active' : ''}`} onClick={openAudit}><History size={15}/>Журнал изменений</button>}
         {spaceId && <button className={`spaces-manage-button audit-nav-button ${artRoute ? 'active' : ''}`} onClick={openArtifacts}><Box size={15}/>Артефакты{artifactCount !== null && <span className="art-count" aria-label={`Артефактов: ${artifactCount}`}>{artifactCount}</span>}</button>}
         {spaceId && <button className="spaces-manage-button" onClick={() => { setImportOpen(true); setMobileNav(false); }}><Upload size={15}/>Импорт Markdown</button>}
-        {spaceForm && <form className="space-form" onSubmit={e => void addSpace(e)}><input autoFocus value={spaceName} onChange={e => setSpaceName(e.target.value)} placeholder="Название"/><input value={spaceDescription} onChange={e => setSpaceDescription(e.target.value)} placeholder="Описание (необязательно)"/><div><button className="button primary small">Создать</button><button type="button" className="button ghost small" onClick={() => setSpaceForm(false)}>Отмена</button></div></form>}
         <button className="create-button" onClick={() => beginCreate()}><Plus size={16}/>Новая статья</button>
         <div className="search-box"><Search size={16}/><input ref={searchInputRef} value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && runSearch()} placeholder="Поиск (нажмите /)" aria-label="Поиск"/><kbd>↵</kbd></div>
         <label className="search-scope"><input type="checkbox" checked={searchAll} onChange={e => setSearchAll(e.target.checked)}/>Во всех пространствах</label>
@@ -731,7 +755,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
       </aside>
       {layout.nav === 'hidden' && <button className="nav-handle" onClick={() => layout.setNav('open')} title="Показать панель ([)" aria-label="Показать панель"><ChevronsRight size={16}/></button>}
       <main className="reading-area">
-        {error && <div className="alert error-alert"><CircleHelp size={17}/><span>{error}</span><button onClick={() => setError('')} aria-label="Закрыть"><X size={16}/></button></div>}{notice && <div className="alert success-alert"><Check size={16}/>{notice}<button onClick={() => setNotice('')} aria-label="Закрыть"><X size={15}/></button></div>}
+        {error && <div className="alert error-alert"><CircleHelp size={17}/><span>{error}</span><button onClick={() => setError('')} aria-label="Закрыть"><X size={16}/></button></div>}{notice && <div className="alert success-alert"><Check size={16}/>{notice.text}<button onClick={() => setNotice(null)} aria-label="Закрыть"><X size={15}/></button></div>}
         {artRoute ? <ArtifactsRoot route={artRoute} spaceId={spaceId} spaces={spaces} theme={theme} go={goArt} onDirty={dirty => { artDirtyRef.current = dirty; }} onChanged={() => setArtReload(value => value + 1)} onSpace={id => { if (id !== spaceIdRef.current) { resetFilters(); setSpaceId(id); } }}/> : favView ? <FavoritesPage favorites={favorites} spaces={spaces} kindNames={kindNames} pending={favPending} onOpen={id => selectArticle(id)} onRemove={id => void removeFavoriteById(id)} onReload={() => void loadFavorites()}/> : spacesView ? <SpacesDirectory trusted={session.mode === 'trusted'} admin={session.mode !== 'trusted' && session.user.admin} currentSpaceId={spaceId} reloadKey={catalogRev} archivedCount={spaces.filter(s => s.archived_at && !s.limited).length} onOpenSpace={changeSpace} onEdit={id => { setManagerEditId(id); setSpaceManager(true); }} onOpenArchive={() => { setManagerTab('archive'); setSpaceManager(true); }} onCreate={startCreateSpace}/> : auditView && spaceId ? <AuditPage key={spaceId} spaceId={spaceId} spaceName={activeSpace?.name || spaceId} onOpenArticle={id => selectArticle(id)} onOpenHistory={id => openAuditHistory(id)}/> : historyView && selected ? <HistoryPage article={selected} revisions={historyArticleId === selected.id ? revisions : []} loading={historyArticleId !== selected.id || historyLoading} error={historyArticleId === selected.id ? historyError : ''} restoring={restoring} deleted={Boolean(selected.deleted_at)} onRetry={() => setHistoryReload(value => value + 1)} onBack={closeHistory} onRestore={revision => void restore(revision)}/> : editor && draft ? <section className="editor-page"><div className="editor-top"><div><div className="eyebrow">{draft.id ? 'РЕДАКТИРОВАНИЕ' : 'НОВЫЙ МАТЕРИАЛ'}{isDirty && <span className="dirty-mark"> · есть несохранённые изменения</span>}</div><h1>{draft.id ? 'Изменить статью' : 'Создать статью'}</h1></div><button className="icon-button" onClick={closeEditor} title="Закрыть (Esc)"><X size={19}/></button></div>
           <div ref={conflictRef}>{conflict && mineFields && <EditorConflict current={conflict} mine={mineFields} busy={saving} onTakeTheirs={takeTheirs} onOverwrite={overwriteConflict} onDismiss={() => setConflict(null)}/>}</div>
           {offer && <div className="draft-banner info" role="status"><div>Найден несохранённый черновик от {formatDraftTime(offer.savedAt)}.{draft.id && offer.base_revision < draft.revision && <> Статья с тех пор менялась (черновик начат с версии {offer.base_revision}, сейчас {draft.revision}): при сохранении появится окно сравнения.</>}</div><div className="draft-banner-actions"><button type="button" className="button primary small" onClick={restoreOffer}>Восстановить</button><button type="button" className="button ghost small" onClick={deleteOffer}>Удалить</button></div></div>}
@@ -739,11 +763,19 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
           <div className="form-grid"><label className="field wide"><span>Заголовок <b>*</b></span><input maxLength={300} autoFocus value={draft.title} onChange={e => setField('title', e.target.value)} placeholder="Например, как устроен проект"/></label><label className="field wide"><span>Краткое описание</span><input value={draft.summary} onChange={e => setField('summary', e.target.value)} placeholder="Одно предложение для поиска и навигации"/></label>
             <label className="field"><span>Пространство</span><select disabled={lockContainer} title={lockContainer ? moveHint : undefined} value={draft.space_id} onChange={e => { setField('space_id', e.target.value); setField('parent_id', ''); void loadParentOptions(e.target.value); }}>{!activeSpaces.some(s => s.id === draft.space_id) && <option value={draft.space_id} disabled>{spaces.find(s => s.id === draft.space_id)?.name || 'Пространство'} · В архиве</option>}{activeSpaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>{lockContainer ? <small className="move-field-disabled-hint">{moveHint}</small> : draft.id && draft.space_id !== selected?.space_id && <small className="move-space-hint">Вместе со статьёй перенесутся все дочерние материалы.</small>}</label><div className="field"><span>Родительская статья</span><ParentPicker options={parentOptions.filter(a => a.space_id === draft.space_id)} value={draft.parent_id} excludeId={draft.id} onChange={id => setField('parent_id', id)}/></div>
             <label className="field"><span>Тип</span><select value={draft.kind} onChange={e => setField('kind', e.target.value)}>{kinds.map(k => <option key={k} value={k}>{kindNames[k]}</option>)}</select></label><label className="field"><span>Статус</span><select value={draft.status} onChange={e => setField('status', e.target.value)}>{statuses.map(s => <option key={s} value={s}>{statusNames[s]}</option>)}</select></label>
-            <label className="field wide"><span>Теги <small>через запятую</small></span><input list="editor-tag-options" value={tagsText} onChange={e => setTagsText(e.target.value)} placeholder="исследование, архитектура"/><datalist id="editor-tag-options">{editorTagSuggestions.map(tag => <option key={tag} value={tag}/>)}</datalist></label><label className="field wide"><span>Свойства <small>ключ=значение, по одному на строку</small></span><textarea id="editor-properties" className={`properties-area${propsAttempt && propsInvalid.length ? ' invalid' : ''}`} value={propertiesText} onChange={e => setPropertiesText(e.target.value)} placeholder="owner=команда\nsource=https://example.org" rows={2}/>{propsInvalid.length > 0 && <div className="props-warning" role="alert"><b>Эти строки не будут сохранены: в них нет «ключ=значение».</b><ul>{propsInvalid.map((line, i) => <li key={i}>{line}</li>)}</ul><div className="props-warning-actions"><button type="button" className="button small" onClick={() => document.getElementById('editor-properties')?.focus()}>Исправить</button><button type="button" className="button ghost small" disabled={saving || !draft.title.trim()} onClick={() => void saveArticle({ skipInvalid: true })}>Сохранить без них</button></div></div>}</label>
+            <div className="field wide">
+              <span><label htmlFor="editor-tags">Теги</label><small>Enter или запятая</small></span>
+              <TagInput key={draftKeyRef.current} id="editor-tags" value={tagsText} options={editorTags} onChange={setTagsText}/>
+            </div>
+            <div className="field wide">
+              <span><label htmlFor="editor-properties">Свойства</label><small id="editor-properties-hint">ключ=значение, по одному на строку</small></span>
+              <PropertiesInput id="editor-properties" value={propertiesText} onChange={setPropertiesText} invalid={propsAttempt && propsInvalid.length > 0} describedBy={propsInvalid.length ? "editor-properties-hint editor-properties-warning" : "editor-properties-hint"}/>
+              {propsInvalid.length > 0 && <div className="props-warning" id="editor-properties-warning" role="alert"><b>Эти строки не будут сохранены: в них нет «ключ=значение».</b><ul>{propsInvalid.map((line, i) => <li key={i}>{line}</li>)}</ul><div className="props-warning-actions"><button type="button" className="button small" onClick={() => document.getElementById("editor-properties")?.focus()}>Исправить</button><button type="button" className="button ghost small" disabled={saving || !draft.title.trim()} onClick={() => void saveArticle({ skipInvalid: true })}>Сохранить без них</button></div></div>}
+            </div>
             <label className="pin-check"><input type="checkbox" checked={draft.pinned} onChange={e => setField('pinned', e.target.checked)}/><Pin size={15}/>Закрепить материал в инструкциях для ИИ</label>
           </div>
           <div className="editor-body-head"><div><strong>Содержимое</strong><small>Markdown · поддерживаются таблицы, задачи и ссылки</small></div><div className="editor-controls"><button className={`button ${!preview ? 'selected-tab' : ''}`} onClick={() => { setPreview(false); }}><Pencil size={14}/>Редактор</button><button className={`button ${preview ? 'selected-tab' : ''}`} onClick={() => { setPreview(true); }}><BookOpen size={14}/>Просмотр</button><button className="button ghost" onClick={() => uploadRef.current?.click()} disabled={!draft.id} title={draft.id ? 'Загрузить файл' : 'Сначала сохраните статью'}><ImagePlus size={15}/>Файл</button><input ref={uploadRef} type="file" hidden onChange={e => void uploadFile(e.target.files)}/></div></div>
-          <div className="editor-split"><div className="editor-split-pane" hidden={preview}><Suspense fallback={<div className="body-editor" aria-busy="true"/>}><MarkdownEditor key={draft.id || 'new'} ref={bodyRef} value={draft.body} onChange={value => setField('body', value)} theme={theme} /></Suspense></div></div>
+          <div className="editor-split"><div className="editor-split-pane" hidden={preview}><Suspense fallback={<div className="body-editor" aria-busy="true"/>}><MarkdownEditor key={draft.id || 'new'} ref={bodyRef} value={draft.body} onChange={value => setField('body', value)} theme={theme} resizable/></Suspense></div></div>
           {preview && <div className="preview-box"><Markdown body={draft.body} onNavigate={openInternal}/>{!draft.body && <span className="muted">Предпросмотр появится здесь.</span>}</div>}
           <div className="editor-footer"><span>{draft.body.length.toLocaleString('ru-RU')} символов{draft.id ? ` · версия ${draft.revision}` : ''}</span><div><button className="button ghost" onClick={closeEditor}>Отмена</button><button className="button primary" onClick={() => void saveArticle()} disabled={saving || !draft.title.trim()} title="Ctrl+S">{saving ? 'Сохраняем…' : <><Check size={16}/>Сохранить</>}</button></div></div>
         </section> : showArticleLoading ? <section className="article-loading" role="status" aria-live="polite"><div className="loading-bar"/><p>Загружаем статью…</p></section> : selected ? <article className="article-page"><div className="article-actions"><Breadcrumbs spaceName={activeSpace?.name || 'Пространство'} ancestors={ancestors} current={selected.title} onSpace={() => goSpaceHome(selected.space_id)} onOpen={id => selectArticle(id)}/><div className="action-buttons"><button type="button" className={`icon-button favorite-button ${isFavorite ? 'active' : ''}`} aria-pressed={isFavorite} aria-label={isFavorite ? 'Убрать из избранного' : 'В избранное'} title={isFavorite ? 'Убрать из избранного' : 'В избранное'} disabled={favPending.includes(selected.id)} onClick={() => void toggleFavorite()}><Star size={17} fill={isFavorite ? 'currentColor' : 'none'}/></button><button type="button" className="button ghost mobile-toc-button" onClick={() => setPanel(tocPanelOpen ? null : 'toc')} aria-expanded={tocPanelOpen}><List size={15}/>Оглавление</button><button className="button ghost" onClick={openHistory}><History size={15}/>История</button><ArticleExportMenu article={selected} spaceName={activeSpace?.name}/>{session.mode !== 'trusted' && canMove && !selected.deleted_at && <button type="button" className="button ghost" onClick={() => setMoveOpen(true)} title="Переместить в другое пространство, проект или под другую статью"><FolderInput size={15}/>Переместить</button>}<button className="button ghost comments-button" onClick={() => document.getElementById('article-comments')?.scrollIntoView({ behavior: smoothBehavior(), block: 'start' })} title={commentsText}><MessageCircle size={15}/>Комментарии <span className="count">{commentsText}</span></button>{!selected.deleted_at && <><button className="button primary edit-button" onClick={beginEdit}><Pencil size={15}/>Редактировать</button><button type="button" className="icon-button article-delete-button" aria-label="Удалить статью" title="Удалить статью" onClick={() => setPendingDeleteArticle(selected)}><Trash2 size={17}/></button></>}</div></div>
@@ -764,7 +796,8 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
         {panel === 'ai' ? <div className="right-panel"><div className="panel-head"><div><span className="eyebrow">ИНТЕГРАЦИЯ</span><h3>Подключить ИИ</h3></div><button className="icon-button" onClick={() => setPanel(null)} aria-label="Закрыть"><X size={17}/></button></div><div className="ai-intro"><span className="ai-graphic"><Bot size={22}/></span><p>Дайте ИИ-агенту доступ к базе знаний через MCP или обычный HTTP API.</p></div><div className="connection-status"><span className="connection-dot"/><div><strong>Сервер подключён</strong><small>База знаний доступна по текущему адресу</small></div></div><div className="code-card"><div><span>MCP endpoint</span><Code2 size={14}/></div><code>{location.origin}/mcp</code><p>Streamable HTTP · JSON-RPC</p></div><div className="code-card"><div><span>Bootstrap</span><Code2 size={14}/></div><code>GET /api/bootstrap?space_id={spaceId}</code><p>Инструкции, активное пространство и недавние материалы</p></div><div className="tool-list"><span className="eyebrow">ДОСТУПНЫЕ ИНСТРУМЕНТЫ</span>{['wiki_bootstrap', 'wiki_search', 'wiki_read', 'wiki_write', 'wiki_history', 'wiki_restore', 'wiki_comment'].map(t => <div key={t}><Code2 size={13}/><code>{t}</code><Check size={13}/></div>)}</div><div className="ai-footnote"><ShieldCheck size={15}/><span>База не отправляет данные во внешние сервисы. ИИ подключается по вашему выбору.</span></div></div>
           : <div className="toc-panel"><div className="toc-header"><span className="eyebrow">НА ЭТОЙ СТРАНИЦЕ</span><span className="toc-header-actions"><button className="icon-button tiny" onClick={() => { setPanel(null); document.querySelector('.attachments-section')?.scrollIntoView({ behavior: smoothBehavior() }); }} title="Файлы статьи"><FileImage size={15}/></button><button className="icon-button tiny panel-close" onClick={() => setPanel(null)} aria-label="Закрыть"><X size={15}/></button></span></div>{selected ? <>{!editor && !historyView && <Toc headings={toc} commentCounts={anchorCounts} onNavigate={id => { urlReplace(articleUrl(selected.id, { anchor: id })); if (panel === 'toc') setPanel(null); }}/>}{!selected.deleted_at && !editor && <button className="toc-comment" onClick={() => openComment('')}><MessageCircle size={14}/>Новый комментарий</button>}<div className="toc-separator"/><div className="article-info"><span className="eyebrow">СВЕДЕНИЯ</span><div><Clock3 size={14}/>Создано {prettyDate(selected.created_at)}</div><div><Activity size={14}/>Обновлено {prettyDate(selected.updated_at)}</div><div><History size={14}/>Ревизия {selected.revision}</div>{!editor && <button onClick={openHistory}>Открыть историю <ChevronRight size={13}/></button>}</div><div className="toc-separator"/><button className="markdown-download" onClick={() => { window.open(`/api/articles/${encodeURIComponent(selected.id)}/markdown`, '_blank'); }}><ArrowDownToLine size={15}/>Скачать Markdown</button></> : <div className="toc-empty"><span className="empty-art"><BookOpen size={21}/></span><strong>Всё начинается<br/>с одной заметки</strong><p>Структурируйте идеи, сохраняйте решения и делитесь контекстом с ИИ.</p><button className="button ghost small" onClick={() => beginCreate()}><Plus size={14}/>Новая статья</button></div>}<div className="right-bottom"><span>AI Wiki</span><span>Всё в голове не удержишь</span></div></div>}
       </aside>
-      {moveOpen && selected && session.mode !== 'trusted' && !selected.deleted_at && <MoveDialog subject={{ kind: 'article', article: selected }} author={session.user.name} onClose={() => setMoveOpen(false)} onDone={done => void afterMove(done)}/>}{importOpen && <Suspense fallback={null}><ImportMarkdownDialog spaces={activeSpaces} defaultSpaceId={spaceId} author={session.mode !== 'trusted' ? session.user.name : author.trim() || 'human'} onClose={() => setImportOpen(false)} onImported={a => { setImportOpen(false); setSpaceId(a.space_id); void loadIndex(a.space_id).then(() => loadTags(a.space_id)); selectArticle(a.id); setNotice('Статья импортирована из Markdown'); }}/></Suspense>}{spaceManager && <SpacesManager spaces={spaces.filter(s=>!s.limited)} draftSpaceIds={editor && draft ? [draft.space_id, selected?.space_id || ''] : []} corporate={session.mode !== 'trusted'} admin={session.mode !== 'trusted' && session.user.admin} initialEditId={managerEditId || undefined} initialTab={managerTab} onChange={updateSpace} onClose={() => { setSpaceManager(false); setManagerEditId(''); setManagerTab('active'); setCatalogRev(v => v + 1); }}/>}
+      {moveOpen && selected && session.mode !== 'trusted' && !selected.deleted_at && <MoveDialog subject={{ kind: 'article', article: selected }} author={session.user.name} onClose={() => setMoveOpen(false)} onDone={done => void afterMove(done)}/>}{importOpen && <Suspense fallback={null}><ImportMarkdownDialog spaces={activeSpaces} defaultSpaceId={spaceId} author={session.mode !== 'trusted' ? session.user.name : author.trim() || 'human'} onClose={() => setImportOpen(false)} onImported={a => { setImportOpen(false); setSpaceId(a.space_id); void loadIndex(a.space_id).then(() => loadTags(a.space_id)); selectArticle(a.id); showNotice('Статья импортирована из Markdown'); }}/></Suspense>}{spaceManager && <SpacesManager spaces={spaces.filter(s=>!s.limited)} draftSpaceIds={editor && draft ? [draft.space_id, selected?.space_id || ''] : []} corporate={session.mode !== 'trusted'} admin={session.mode !== 'trusted' && session.user.admin} initialEditId={managerEditId || undefined} initialTab={managerTab} onChange={updateSpace} onClose={() => { setSpaceManager(false); setManagerEditId(''); setManagerTab('active'); setCatalogRev(v => v + 1); }}/>}
+      {createSpaceOpen && <CreateSpaceDialog onCreate={addSpace} onClose={() => setCreateSpaceOpen(false)}/>}
       {pendingDelete && pendingDelete.article_id === selected?.id && <div className="delete-dialog-backdrop"><div ref={deleteDialogRef} className="delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-attachment-title" aria-describedby="delete-attachment-description" tabIndex={-1}><h2 id="delete-attachment-title">Удалить вложение?</h2><p className="delete-dialog-filename">{pendingDelete.name}</p><p id="delete-attachment-description">Файл будет удалён из статьи, и ссылки на него перестанут работать. Оригинал останется на сервере.</p><div><button ref={deleteCancelRef} className="button ghost" onClick={() => setPendingDelete(null)} disabled={Boolean(deletingAttachmentId)}>Отмена</button><button className="button danger" onClick={() => void deleteAttachment()} disabled={Boolean(deletingAttachmentId)}>{deletingAttachmentId ? 'Удаляем…' : 'Удалить'}</button></div></div></div>}
       {pendingDeleteArticle && pendingDeleteArticle.id === selected?.id && <div className="delete-dialog-backdrop"><div ref={deleteDialogRef} className="delete-dialog article-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-article-title" aria-describedby="delete-article-description" tabIndex={-1}><h2 id="delete-article-title">Удалить статью «{pendingDeleteArticle.title}»?</h2><p id="delete-article-description">Статья будет скрыта из дерева и поиска. История, файлы и комментарии останутся сохранены. Перед удалением переместите дочерние статьи в другое место.</p><div><button ref={deleteCancelRef} className="button ghost" onClick={() => setPendingDeleteArticle(null)} disabled={deletingArticle}>Отмена</button><button className="button danger" onClick={() => void deleteArticle()} disabled={deletingArticle}>{deletingArticle ? 'Удаляем…' : 'Удалить статью'}</button></div></div></div>}
     </div>

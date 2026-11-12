@@ -1,0 +1,37 @@
+.agent-project-panel { width: 100%; min-width: 0; }
+.corp-admin .agent-project-toolbar > select { max-width: 190px; }
+.agent-project-table { table-layout: fixed; min-width: 740px; }
+.agent-project-visibility-col { width: 130px; }
+.agent-project-owner-col { width: 180px; }
+.agent-project-count-col { width: 125px; }
+.agent-project-actions-col { width: 110px; }
+.agent-project-table :is(th,td), .agent-project-spaces-table :is(th,td) { padding: 16px; vertical-align: middle; }
+.agent-project-description { display: block; margin-top: 6px; font-weight: 400; }
+.agent-project-owner { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spaces-dialog.agent-project-dialog--small { width: min(640px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
+.agent-project-dialog--small .spaces-head { margin-bottom: 24px; }
+.agent-project-editor, .agent-project-general:not([hidden]), .agent-project-spaces:not([hidden]) { display: grid; gap: 18px; min-width: 0; }
+.agent-project-dialog .field { margin: 0; min-width: 0; }
+.agent-project-dialog .field > :is(input,textarea,select) { width: 100%; min-width: 0; }
+.agent-project-dialog :is(p,h3) { margin: 0; }
+.agent-project-space-filters { display: grid; grid-template-columns: minmax(0,1fr) 190px 42px; align-items: end; gap: 16px; }
+.agent-project-space-filters :is(input,select) { min-height: 42px; }
+.agent-project-spaces .admin-work-table-wrap { border: 1px solid var(--line); border-radius: 8px; }
+.agent-project-spaces-table { table-layout: fixed; min-width: 700px; }
+.agent-project-mode-col { width: 145px; }
+.agent-project-effective-col { width: 220px; }
+.agent-project-row-action-col { width: 100px; }
+.agent-project-spaces-table td { overflow-wrap: normal; }
+.agent-project-spaces-table select { width: 100%; }
+.agent-project-spaces-table th > strong { display: block; overflow-wrap: anywhere; }
+.agent-project-spaces-table th > small { display: block; font-weight: 400; margin-top: 5px; }
+.agent-project-footer { border-top: 1px solid var(--line); padding-top: 18px; }
+.agent-project-save-state { margin-right: auto; color: var(--muted); font-size: 13px; }
+.agent-project-dialog .spaces-error { overflow-wrap: anywhere; }
+.agent-project-picker .corp-admin-empty { padding: 16px; }
+@media (max-width:650px) {
+  .agent-project-space-filters { grid-template-columns: minmax(0,1fr) 42px; gap: 12px; }
+  .agent-project-space-filters .field:first-child { grid-column: 1 / -1; }
+  .agent-project-footer { gap: 12px; }
+  .agent-project-save-state { flex-basis: 100%; }
+}

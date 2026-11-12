@@ -1,0 +1,17 @@
+.create-space-dialog {
+  width: min(460px, calc(100vw - 32px));
+  box-sizing: border-box;
+}
+
+.create-space-dialog .spaces-head {
+  margin-bottom: 20px;
+}
+
+.create-space-dialog .spaces-head h1,
+.create-space-dialog .spaces-error {
+  margin: 0;
+}
+
+.create-space-dialog .field textarea {
+  resize: vertical;
+}

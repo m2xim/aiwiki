@@ -1,0 +1,72 @@
+.field .properties-input {
+  position: relative;
+  display: block;
+  min-width: 0;
+  border-radius: 6px;
+  background: var(--panel);
+  --properties-key: #6242a0;
+  --properties-value: #0d6958;
+}
+
+html[data-theme="dark"] .properties-input {
+  --properties-key: #c9b6ff;
+  --properties-value: #8cd9c4;
+}
+
+.field .properties-input textarea.properties-area,
+.field .properties-input .properties-input-mirror {
+  display: block;
+  padding: 8px;
+  font: 400 12px / 1.5 Consolas, 'Liberation Mono', monospace;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+}
+
+.field .properties-input textarea.properties-area {
+  position: relative;
+  min-width: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--ink);
+}
+
+.field .properties-input .properties-input-mirror {
+  position: absolute;
+  inset: 1px;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--ink);
+}
+
+.field .properties-input-mirror span {
+  display: inline;
+}
+
+.properties-input-key {
+  color: var(--properties-key);
+}
+
+.properties-input-value {
+  color: var(--properties-value);
+}
+
+.field .properties-input[data-composing] .properties-input-mirror {
+  visibility: hidden;
+}
+
+.field .properties-input[data-composing] textarea.properties-area {
+  color: var(--ink);
+}
+
+@media (forced-colors: active) {
+  .field .properties-input .properties-input-mirror {
+    visibility: hidden;
+  }
+
+  .field .properties-input textarea.properties-area {
+    background: Canvas;
+    color: CanvasText;
+    caret-color: CanvasText;
+  }
+}
