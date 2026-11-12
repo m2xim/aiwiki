@@ -40,14 +40,14 @@ CREATE INDEX agent_project_spaces_space_idx ON agent_project_spaces(space_id);
 -- pinned; never executable by PUBLIC.
 -- ---------------------------------------------------------------------------------------------
 CREATE FUNCTION corporate_ap_live_user() RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
     SELECT EXISTS (SELECT 1 FROM public.users u WHERE u.id=nullif(current_setting('app.user_id',true),'') AND u.disabled=0)
 $fn$;
 
 -- Reading: the owner sees every own project, everybody else sees public ones. A scoped MCP session
 -- sees only the project it is connected to.
 CREATE FUNCTION corporate_ap_can_read(project_key text, owner_key text, vis text) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
     SELECT public.corporate_ap_live_user()
        AND (owner_key=current_setting('app.user_id',true) OR vis='public')
        AND (NOT public.corporate_mcp_scope_active()
@@ -56,7 +56,7 @@ $fn$;
 
 -- Writing: the owner; the administrator only for public projects. Never from an MCP session.
 CREATE FUNCTION corporate_ap_can_write(owner_key text, vis text) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
     SELECT NOT public.corporate_mcp_scope_active() AND public.corporate_ap_live_user()
        AND (owner_key=current_setting('app.user_id',true)
             OR (vis='public' AND public.artifact_is_admin(current_setting('app.user_id',true))))
@@ -64,14 +64,14 @@ $fn$;
 
 -- A space may be added to a project by someone who sees it (any role; the general space counts).
 CREATE FUNCTION corporate_ap_space_addable(space_key text) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
     SELECT public.corporate_ap_live_user()
        AND public.corporate_role_rank(public.corporate_owner_effective_role(current_setting('app.user_id',true),space_key,''))>=1
        AND coalesce((SELECT NOT st.archived FROM public.corporate_space_state st WHERE st.space_id=space_key),false)
 $fn$;
 
 CREATE FUNCTION corporate_ap_guard() RETURNS trigger
-LANGUAGE plpgsql SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $fn$
 BEGIN
     IF NEW.id IS DISTINCT FROM OLD.id OR NEW.owner_id IS DISTINCT FROM OLD.owner_id
        OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
@@ -90,7 +90,7 @@ CREATE TRIGGER agent_projects_guard BEFORE UPDATE ON agent_projects
 FOR EACH ROW EXECUTE FUNCTION corporate_ap_guard();
 
 CREATE FUNCTION corporate_aps_guard() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE n integer;
 BEGIN
     IF TG_OP='UPDATE' THEN
@@ -153,7 +153,7 @@ USING (EXISTS (SELECT 1 FROM public.agent_projects p WHERE p.id=agent_project_sp
 
 -- The administrator may manage roles of any space, whether or not they have a role in it.
 CREATE FUNCTION corporate_admin_space_exists(space_key text) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
     SELECT public.artifact_is_admin(nullif(current_setting('app.user_id',true),''))
        AND NOT public.corporate_mcp_scope_active()
        AND EXISTS (SELECT 1 FROM public.corporate_space_state st WHERE st.space_id=space_key)
@@ -162,7 +162,7 @@ $fn$;
 -- Limited directory for the administrator: spaces without a role of theirs, name and owner only.
 CREATE FUNCTION corporate_admin_space_directory()
 RETURNS TABLE(id text, name text, owner_name text, personal boolean)
-LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE who text := nullif(current_setting('app.user_id',true),'');
 BEGIN
     IF who IS NULL OR NOT public.artifact_is_admin(who) OR public.corporate_mcp_scope_active() THEN RETURN; END IF;
@@ -193,7 +193,7 @@ $fn$;
 CREATE FUNCTION corporate_agent_projects_visible(ids text[])
 RETURNS TABLE(id text, name text, description text, owner_id text, owner_name text, visibility text,
               can_edit boolean, created_at timestamptz, updated_at timestamptz)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE who text := nullif(current_setting('app.user_id',true),'');
         scoped boolean := public.corporate_mcp_scope_active();
         cred text := nullif(current_setting('app.mcp_credential',true),'');
@@ -224,7 +224,7 @@ $fn$;
 
 CREATE FUNCTION corporate_agent_project_rows(ids text[])
 RETURNS TABLE(project_id text, row_id text, mode text, accessible boolean, space_id text, name text, my_role text)
-LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE who text := nullif(current_setting('app.user_id',true),'');
         allowed text[];
 BEGIN
@@ -252,7 +252,7 @@ $fn$;
 -- guarded by current_user<>session_user).
 -- ---------------------------------------------------------------------------------------------
 CREATE FUNCTION corporate_agent_scope_rows(owner_key text, project_key text, force_read boolean)
-RETURNS jsonb LANGUAGE plpgsql STABLE SET search_path=pg_catalog,public AS $fn$
+RETURNS jsonb LANGUAGE plpgsql STABLE SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE scope jsonb; general text;
 BEGIN
     IF current_user=session_user THEN
@@ -279,7 +279,7 @@ $fn$;
 -- The scope of a persistent key for one request: NULL when the key, its owner or the project are
 -- not usable. Without a project: introspection (read of the general space only).
 CREATE FUNCTION corporate_mcp_project_scope(cred text, project_key text) RETURNS jsonb
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE c public.mcp_credentials%ROWTYPE; who text := nullif(current_setting('app.user_id',true),'');
 BEGIN
     SELECT * INTO c FROM public.mcp_credentials k
@@ -300,7 +300,7 @@ $fn$;
 
 -- Same for a browser-less OAuth session that names a project.
 CREATE FUNCTION corporate_user_project_scope(owner_key text, project_key text) RETURNS jsonb
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE who text := nullif(current_setting('app.user_id',true),'');
 BEGIN
     IF who IS NULL OR who<>owner_key OR project_key IS NULL OR project_key='' OR NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id=owner_key AND u.disabled=0) THEN
@@ -385,7 +385,7 @@ ALTER TABLE artifacts ADD CONSTRAINT artifacts_no_project CHECK (project_id = ''
 ALTER TABLE memberships ADD CONSTRAINT memberships_space_only CHECK (resource_type = 'space');
 
 CREATE FUNCTION corporate_reject_project_insert() RETURNS trigger
-LANGUAGE plpgsql SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $fn$
 BEGIN
     RAISE EXCEPTION 'projects inside spaces were removed' USING ERRCODE='42501';
 END
@@ -415,7 +415,7 @@ REVOKE ALL ON FUNCTION corporate_reject_project_insert() FROM PUBLIC;
 -- Assignable as the general space: any live space except a personal one (a single membership: its owner).
 -- plpgsql: corporate_space_assignable is defined by the role_scope component, which runs after this one.
 CREATE FUNCTION corporate_space_assignable_v2(space_key text) RETURNS boolean
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $fn$
 BEGIN
     IF NOT public.corporate_space_assignable(space_key) THEN RETURN false; END IF;
     IF space_key=public.corporate_general_space() THEN RETURN true; END IF;

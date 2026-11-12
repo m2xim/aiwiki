@@ -14,7 +14,7 @@ ALTER TABLE mcp_credentials DROP CONSTRAINT mcp_credentials_scope_valid;
 ALTER TABLE mcp_credentials ADD CONSTRAINT mcp_credentials_scope_valid CHECK (scope IS NULL OR corporate_mcp_scope_valid(scope));
 
 CREATE OR REPLACE FUNCTION corporate_mcp_credential_immutable() RETURNS trigger
-LANGUAGE plpgsql SET search_path=pg_catalog,public AS $fn$
+LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $fn$
 BEGIN
  IF ROW(NEW.id,NEW.owner_id,NEW.service_account_id,NEW.name,NEW.secret_hash,NEW.created_at,NEW.expires_at)
   IS DISTINCT FROM ROW(OLD.id,OLD.owner_id,OLD.service_account_id,OLD.name,OLD.secret_hash,OLD.created_at,OLD.expires_at)
@@ -37,7 +37,7 @@ DROP FUNCTION corporate_mcp_credential_set_scope(text,jsonb);
 -- project that is new to the key (own or public); projects the key already lists may stay.
 CREATE FUNCTION corporate_mcp_credential_set_projects(token_key text, new_projects jsonb, new_read_only boolean)
 RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER
-SET search_path=pg_catalog,public AS $fn$
+SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE owner_key text; grant_row public.mcp_credentials%ROWTYPE; pid text; n integer;
 BEGIN
  owner_key:=nullif(current_setting('app.user_id',true),'');
@@ -82,7 +82,7 @@ REVOKE ALL ON FUNCTION corporate_mcp_credential_set_projects(text,jsonb,boolean)
 -- unless the session carries exactly that scope: the project must be in the key's list, live and visible.
 CREATE OR REPLACE FUNCTION corporate_mcp_credential_audit(token_key text, method_name text, tool_name text)
 RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER
-SET search_path=pg_catalog,public AS $fn$
+SET search_path=pg_catalog,public,pg_temp AS $fn$
 DECLARE owner_key text; actor_key text; grant_row public.mcp_credentials%ROWTYPE; project_key text; expected jsonb;
 BEGIN
  owner_key:=current_setting('app.user_id',true);

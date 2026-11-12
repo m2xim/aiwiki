@@ -16,8 +16,8 @@ func TestAgentProjectsUpgradeFromV7Postgres(t *testing.T) {
 	if ownerURL == "" || appURL == "" {
 		t.Skip("set AIWIKI_TEST_POSTGRES_OWNER and AIWIKI_TEST_POSTGRES to a disposable database")
 	}
-	mcpScopeVersionCap, agentProjectsVersionCap = 7, -1
-	defer func() { mcpScopeVersionCap, agentProjectsVersionCap = 0, 0 }()
+	mcpScopeVersionCap, agentProjectsVersionCap, roleScopeVersionCap = 7, -1, 2
+	defer func() { mcpScopeVersionCap, agentProjectsVersionCap, roleScopeVersionCap = 0, 0, 0 }()
 	ctx := context.Background()
 	owner, err := openPostgres(ctx, ownerURL)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestAgentProjectsUpgradeFromV7Postgres(t *testing.T) {
 	}
 
 	// Upgrade.
-	mcpScopeVersionCap, agentProjectsVersionCap = 0, 0
+	mcpScopeVersionCap, agentProjectsVersionCap, roleScopeVersionCap = 0, 0, 0
 	if err = s.migrateCorporate(); err != nil {
 		t.Fatalf("upgrade: %v", err)
 	}

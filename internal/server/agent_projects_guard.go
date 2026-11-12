@@ -46,7 +46,7 @@ func (d *database) validateAgentProjectsSchema() error {
 		return errAgentProjects
 	}
 	list := agentProjectOIDs()
-	if err := d.QueryRow(`SELECT (SELECT count(*) FROM pg_proc p WHERE p.oid=ANY(ARRAY[` + list + `]) AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public'])=` + strconv.Itoa(len(agentProjectFunctions)) + `
+	if err := d.QueryRow(`SELECT (SELECT count(*) FROM pg_proc p WHERE p.oid=ANY(ARRAY[` + list + `]) AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public, pg_temp'])=` + strconv.Itoa(len(agentProjectFunctions)) + `
  AND NOT EXISTS(SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid=ANY(ARRAY[` + list + `,to_regprocedure('public.corporate_agent_scope_rows(text,text,boolean)'),to_regprocedure('public.corporate_ap_guard()'),to_regprocedure('public.corporate_aps_guard()')]) AND a.grantee=0)
  AND NOT EXISTS(SELECT 1 FROM unnest(ARRAY[` + list + `]) AS f(oid) WHERE f.oid IS NULL OR NOT has_function_privilege(current_user,f.oid,'EXECUTE'))`).Scan(&ok); err != nil || !ok {
 		return errAgentProjects
