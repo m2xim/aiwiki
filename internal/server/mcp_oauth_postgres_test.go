@@ -88,6 +88,26 @@ func TestMCPOAuthPostgresResourceBoundary(t *testing.T) {
 	if p.Code != 201 || json.Unmarshal(p.Body.Bytes(), &project) != nil {
 		t.Fatal("seed project failed")
 	}
+	// OAuth sessions may name a project they can see; its scope then limits them, and a project of
+	// someone else that is private is refused like an unknown one. Without a project nothing changes.
+	bobToken := x.iss.bearer(oauthResourceGrant("oauth-bob"))
+	oauthAt := func(path, tok string) (int, string) {
+		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "wiki_search", "arguments": map[string]any{"limit": 100}}})
+		w := call("POST", "/mcp"+path, string(b), tok, "", nil)
+		return w.Code, w.Body.String()
+	}
+	if code, body := oauthAt("?project="+project.ID, bobToken); code != 403 || strings.Contains(body, "AliceOAuthVisible") || !strings.Contains(body, "project is not available for this key") {
+		t.Fatalf("OAuth bearer named another user's private project: %d %s", code, body)
+	}
+	if code, body := oauthAt("?project="+project.ID, token); code != 200 || !strings.Contains(body, "AliceOAuthVisible") {
+		t.Fatalf("OAuth bearer in its own project: %d %s", code, body)
+	}
+	if code, body := oauthAt("?project=nonexistent", token); code != 403 || strings.Contains(body, "AliceOAuthVisible") {
+		t.Fatalf("OAuth bearer, unknown project: %d %s", code, body)
+	}
+	if code, body := oauthAt("", token); code != 200 || !strings.Contains(body, "AliceOAuthVisible") {
+		t.Fatalf("OAuth bearer without a project must keep working: %d %s", code, body)
+	}
 	x.a.persistent = &mcpPersistentAccess{db: root.DB, now: time.Now}
 	for _, endpoint := range []string{"credentials"} {
 		w = call("POST", "/api/mcp/"+endpoint, `{"name":"Native read","projects":["`+project.ID+`"],"read_only":true}`, "", me.CSRF, cookie)

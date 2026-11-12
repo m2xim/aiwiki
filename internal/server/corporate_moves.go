@@ -254,12 +254,6 @@ func (s *Server) movePlan(tx *transaction, actor string, req moveRequest, lock b
 		if moveRank(tx, actor, t.SpaceID, t.ProjectID) < 4 {
 			return nil, moveFail(403, "moving an article requires the manager role on the target container")
 		}
-		if t.ProjectID != "" {
-			var one int
-			if tx.QueryRow(`SELECT 1 FROM projects WHERE id=? AND space_id=?`, t.ProjectID, t.SpaceID).Scan(&one) != nil {
-				return nil, moveFail(404, "target not found")
-			}
-		}
 		if !moveWritable(tx, root.SpaceID, root.ProjectID) || !moveWritable(tx, t.SpaceID, t.ProjectID) {
 			return nil, moveFail(409, "source or target container is archived")
 		}
