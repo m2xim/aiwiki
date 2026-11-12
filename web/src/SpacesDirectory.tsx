@@ -66,7 +66,7 @@ export function SpacesDirectory({ trusted, admin = false, currentSpaceId, reload
       : total === 0 ? <div className="spaces-dir-state"><LayoutGrid size={26}/><strong>Нет доступных пространств</strong><button className="button primary" onClick={onCreate}><FolderPlus size={16}/>Создать личное пространство</button></div>
       : <>
         <div className="spaces-dir-filters">
-          <label className="spaces-dir-search"><Search size={15}/><input type="search" value={state.q} onChange={e => update({ q: e.target.value })} placeholder="Название, описание, теги, проекты" aria-label="Поиск по пространствам"/></label>
+          <label className="spaces-dir-search"><Search size={15}/><input type="search" value={state.q} onChange={e => update({ q: e.target.value })} placeholder="Название, описание, теги" aria-label="Поиск по пространствам"/></label>
           <label><span>Тип</span><select value={state.kind} onChange={e => update({ kind: e.target.value as SpacesQuery['kind'] })}><option value="all">Все</option><option value="personal">Личные</option><option value="team">Командные</option></select></label>
           <label><span>Доступ</span><select value={state.access} onChange={e => update({ access: e.target.value as SpacesAccess })}><option value="any">Любой</option><option value="write">Могу редактировать</option><option value="read">Только чтение</option></select></label>
           <label><span>Сортировка</span><select value={state.sort} onChange={e => update({ sort: e.target.value as CatalogSort })}><option value="recent">Недавно изменённые</option><option value="name">По названию</option><option value="count">По числу документов</option></select></label>
@@ -79,9 +79,18 @@ export function SpacesDirectory({ trusted, admin = false, currentSpaceId, reload
 }
 
 function SpaceCard({ space, trusted, canManage, current, onOpen, onEdit }: { space: CatalogSpace; trusted: boolean; canManage: boolean; current: boolean; onOpen: (id: string) => void; onEdit: (id: string) => void }) {
+  if (space.limited) return <li className="spaces-dir-card is-limited">
+    <div className="spaces-dir-open">
+      <span className="spaces-dir-head">
+        <strong className="spaces-dir-name">{space.name}</strong>
+        {space.personal && <span className="spaces-dir-badge"><User size={12}/>личное</span>}
+      </span>
+      {space.owner_name && <span className="spaces-dir-desc">Владелец: {space.owner_name}</span>}
+      <span className="spaces-dir-desc is-empty">нет доступа к содержимому</span>
+    </div>
+  </li>;
   const description = (space.description || '').trim();
   const count = space.article_count || 0;
-  const projects = space.projects?.length || 0;
   const tags = space.tags || [];
   const updated = space.last_updated || '';
   const relative = relativeDayRu(updated);
@@ -95,10 +104,8 @@ function SpaceCard({ space, trusted, canManage, current, onOpen, onEdit }: { spa
         {role && <span className="spaces-dir-badge is-role" title="Ваш доступ">{role}</span>}
       </span>
       {description ? <span className="spaces-dir-desc" title={description}>{description}</span> : <span className="spaces-dir-desc is-empty">Без описания</span>}
-      {space.limited && <span className="spaces-dir-limited">Доступ только к части проектов</span>}
       <span className="spaces-dir-meta">
         <span>{count} {pluralRu(count, 'документ', 'документа', 'документов')}</span>
-        {projects > 0 && <span>{projects} {pluralRu(projects, 'проект', 'проекта', 'проектов')}</span>}
         {updated && fullDate(updated) ? <span title={fullDate(updated)}>Изменено {relative || shortDate(updated)}</span> : <span>Нет изменений</span>}
       </span>
       {tags.length > 0 && <span className="spaces-dir-tags">{tags.slice(0, MAX_TAGS).map(tag => <span key={tag} className="spaces-dir-tag">{tag}</span>)}{tags.length > MAX_TAGS && <span className="spaces-dir-tag is-more" title={tags.slice(MAX_TAGS).join(', ')}>+{tags.length - MAX_TAGS}</span>}</span>}

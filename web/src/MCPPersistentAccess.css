@@ -54,3 +54,6 @@ html[data-theme=dark] .mcp-persistent-secret{background:#23382a;border-color:#42
 .mcp-persistent-chip{padding:2px 8px;border-radius:10px;background:var(--lavender,#f5f3fc);font-size:12px}
 html[data-theme="dark"] .mcp-persistent-chip{background:var(--lavender,#282535)}
 @media(max-width:600px){.mcp-persistent-scope-row{grid-template-columns:minmax(0,1fr) auto}.mcp-persistent-scope-row>select:first-child{grid-column:1/-1}}
+
+.mcp-persistent-chip.is-unavailable{opacity:.6;text-decoration:line-through}
+.mcp-persistent code{overflow-wrap:anywhere}

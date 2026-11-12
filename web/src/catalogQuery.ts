@@ -67,7 +67,7 @@ export function spacesQueryString(state: SpacesQuery, base: URLSearchParams): st
 
 export type DirectorySpace = {
   id: string; name: string; description?: string; personal?: boolean; article_count?: number; last_updated?: string; tags?: string[];
-  effective_role?: string; projects?: { name: string }[];
+  effective_role?: string; limited?: boolean; owner_name?: string;
 };
 
 const WRITE_ROLES = ['owner', 'manager', 'editor'];
@@ -82,7 +82,7 @@ export function filterSpaces<T extends DirectorySpace>(spaces: T[], state: Space
     if (state.access === 'write' && !WRITE_ROLES.includes(space.effective_role || '')) return false;
     if (state.access === 'read' && !READ_ROLES.includes(space.effective_role || '')) return false;
     if (!needle) return true;
-    const haystack = [space.name, space.description || '', ...(space.tags || []), ...(space.projects || []).map(p => p.name)].join('\n').toLocaleLowerCase('ru');
+    const haystack = [space.name, space.description || '', ...(space.tags || [])].join('\n').toLocaleLowerCase('ru');
     return haystack.includes(needle);
   });
   const byName = (a: T, b: T) => a.name.localeCompare(b.name, 'ru');

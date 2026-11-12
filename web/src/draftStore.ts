@@ -1,5 +1,5 @@
 /** Local drafts of the article editor. Every access is guarded: storage may be blocked or full. */
-export type DraftFields = { title: string; summary: string; body: string; kind: string; status: string; pinned: boolean; space_id: string; project_id: string; parent_id: string; tags: string; properties: string };
+export type DraftFields = { title: string; summary: string; body: string; kind: string; status: string; pinned: boolean; space_id: string; parent_id: string; tags: string; properties: string };
 export type StoredDraft = { fields: DraftFields; base_revision: number; savedAt: number };
 
 const LEGACY_PREFIX = 'aiwiki.draft.';
@@ -24,12 +24,12 @@ const PARKED_LIMIT = 5;
 /** `articleId` for an existing article, `new:<spaceId>` for a new one. */
 export const draftKey = (articleId: string, spaceId: string) => articleId || `new:${spaceId}`;
 
-const FIELD_KEYS: (keyof DraftFields)[] = ['title', 'summary', 'body', 'kind', 'status', 'pinned', 'space_id', 'project_id', 'parent_id', 'tags', 'properties'];
+const FIELD_KEYS: (keyof DraftFields)[] = ['title', 'summary', 'body', 'kind', 'status', 'pinned', 'space_id', 'parent_id', 'tags', 'properties'];
 
 const validate = (value: unknown): StoredDraft | null => {
   const v = value as Partial<StoredDraft> | null;
   if (!v || typeof v !== 'object' || !v.fields || typeof v.fields !== 'object') return null;
-  const fields: Record<string, unknown> = { ...(v.fields as unknown as Record<string, unknown>), project_id: (v.fields as Partial<DraftFields>).project_id || '' };
+  const fields: Record<string, unknown> = { ...(v.fields as unknown as Record<string, unknown>) };
   for (const key of FIELD_KEYS) if (key === 'pinned' ? typeof fields[key] !== 'boolean' : typeof fields[key] !== 'string') return null;
   return { fields: fields as unknown as DraftFields, base_revision: Number(v.base_revision) || 0, savedAt: Number(v.savedAt) || 0 };
 };

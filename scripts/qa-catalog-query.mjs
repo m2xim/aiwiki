@@ -64,8 +64,8 @@ for (const q of ['Привет мир', 'тест&x=1', 'а=б?в']) {
 assert.equal(spacesQueryString({ ...DEFAULT_SPACES_QUERY, access: 'read' }, new URLSearchParams('view=spaces&q=old&sort=name&foo=1')), 'view=spaces&foo=1&access=read');
 
 const dir = [
-  { id: 'a', name: 'Бета', description: 'Документы отдела', personal: false, article_count: 5, last_updated: '2026-03-01T00:00:00Z', tags: ['hr'], effective_role: 'editor', projects: [{ name: 'Онбординг' }] },
-  { id: 'b', name: 'Альфа', description: '', personal: true, article_count: 9, last_updated: '2026-05-01T00:00:00Z', tags: [], effective_role: 'owner', projects: [] },
+  { id: 'a', name: 'Бета', description: 'Документы отдела', personal: false, article_count: 5, last_updated: '2026-03-01T00:00:00Z', tags: ['hr'], effective_role: 'editor' },
+  { id: 'b', name: 'Альфа', description: '', personal: true, article_count: 9, last_updated: '2026-05-01T00:00:00Z', tags: [], effective_role: 'owner' },
   { id: 'c', name: 'Гамма', personal: false, article_count: 0, tags: [], effective_role: 'reader' },
   { id: 'd', name: 'Дельта', personal: false, article_count: 5, last_updated: '2026-04-01T00:00:00Z', tags: ['Финансы'], effective_role: 'commenter' },
 ];
@@ -77,7 +77,6 @@ assert.equal(ids({ kind: 'personal' }), 'b');
 assert.equal(ids({ kind: 'team' }), 'dac');
 assert.equal(ids({ access: 'write' }), 'ba');
 assert.equal(ids({ access: 'read' }), 'dc');
-assert.equal(ids({ q: 'онбординг' }), 'a');
 assert.equal(ids({ q: 'ФИНАНСЫ' }), 'd');
 assert.equal(ids({ q: 'отдела' }), 'a');
 assert.equal(ids({ q: 'альфа', kind: 'team' }), '');

@@ -86,7 +86,7 @@ export function ArtifactPage({ id, mode, revision, spaces, theme, go, backToList
     setArtifact(saved); onChanged();
   };
 
-  if (mode === 'edit' && artifact.can_edit && !deleted) return <ArtifactEditor key={`${artifact.id}:${artifact.revision}`} artifact={artifact} spaces={spaces} initialSpace={artifact.space_id} initialProject={artifact.project_id || ''} theme={theme}
+  if (mode === 'edit' && artifact.can_edit && !deleted) return <ArtifactEditor key={`${artifact.id}:${artifact.revision}`} artifact={artifact} spaces={spaces} initialSpace={artifact.space_id} theme={theme}
     onDirty={onDirty} onCancel={() => page('view')} onReload={() => { void load(); }}
     onSaved={saved => { setArtifact(saved); onChanged(); page('view', null, true); }}/>;
 

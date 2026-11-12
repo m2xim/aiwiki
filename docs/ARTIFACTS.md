@@ -1,5 +1,10 @@
 # Interactive artifacts
 
+> **Update (agent projects).** Projects inside spaces were removed: an artifact
+> belongs to one space only, `project_id` is rejected (400 `projects inside spaces
+> were removed`) and the list has no project filter. Sections below that mention
+> projects, project moves and `artifact_follow_project_move` are historical.
+
 Status: implemented on the server (2026-10-22); the application interface and the
 block kit are built separately. Owner decisions: artifacts are arbitrary HTML/JS run
 in a sandbox plus a built-in kit of ready blocks; a public link opens without sign-in

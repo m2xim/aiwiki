@@ -1,20 +1,25 @@
-export type Space = { limited?: boolean; id: string; name: string; description: string; archived_at?: string; personal?: boolean; article_count?: number; project_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
-export type Project = { id: string; name: string; description: string; space_id: string; parent_id: string; archived_at?: string; inherit_acl: boolean; article_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
-export type MCPScopeMode = 'read' | 'write';
-export type MCPScopeInput = { type: 'space' | 'project'; id: string; mode: MCPScopeMode };
-export type MCPScopeElement = MCPScopeInput & { name?: string; space_id?: string };
-export type MCPCredential = { id: string; name: string; service_account_id?: string; scope: MCPScopeElement[]; created_at: string; expires_at: string; revoked_at?: string };
+export type Space = { limited?: boolean; owner_name?: string; id: string; name: string; description: string; archived_at?: string; personal?: boolean; article_count?: number; last_updated?: string; tags?: string[]; effective_role?: AccessGrant['role'] };
+export type AgentProjectVisibility = 'private' | 'public';
+export type AgentProjectMode = 'read' | 'write';
+export type AgentProjectEffective = 'write' | 'comment' | 'read' | '';
+export type AgentProjectRow = { row_id: string; mode: AgentProjectMode; accessible: boolean; space_id?: string; name?: string; my_role?: AccessGrant['role']; effective?: AgentProjectEffective };
+export type AgentProject = { id: string; name: string; description: string; owner_id: string; owner_name?: string; visibility: AgentProjectVisibility; can_edit: boolean; created_at: string; updated_at: string; spaces: AgentProjectRow[] };
+/** New row: space_id; existing row kept (also an inaccessible one): row_id. */
+export type AgentProjectRowInput = { space_id: string; mode: AgentProjectMode } | { row_id: string; mode: AgentProjectMode };
+export type AgentProjectInput = { name: string; description?: string; visibility: AgentProjectVisibility; spaces: AgentProjectRowInput[] };
+export type MCPCredentialProject = { id: string; name: string; visibility: AgentProjectVisibility; available: boolean };
+export type MCPCredential = { id: string; name: string; service_account_id?: string; projects: MCPCredentialProject[]; read_only: boolean; created_at: string; expires_at: string; revoked_at?: string };
 export type MCPServiceAccount = { id: string; name: string; sponsor_id: string; disabled: boolean; created_at: string };
 export type Team = { id: string; name: string; description: string; archived_at?: string };
 export type TeamMember = { id: string; name: string };
-export type UserAccessResource = { resource_type: 'space' | 'project'; resource_id: string; name: string; role: AccessGrant['role']; archived: boolean; personal: boolean };
+export type UserAccessResource = { resource_type: 'space'; resource_id: string; name: string; role: AccessGrant['role']; archived: boolean; personal: boolean };
 export type UserAccessSnapshot = { user_id: string; resources: UserAccessResource[] };
 export type AccessGrant = { subject_type: 'user' | 'team'; subject_id: string; role: 'owner' | 'manager' | 'editor' | 'commenter' | 'reader' };
-export type CatalogSpace = Space & { projects: Project[]; article_count: number };
+export type CatalogSpace = Space & { article_count: number };
 export type AuthUser = { id: string; name: string; admin: boolean };
 export type AuthSession = { mode: 'trusted' } | { mode: 'corporate'; user: AuthUser; csrf_token: string } | { mode: 'personal'; user: AuthUser };
 export type Article = {
-  id: string; space_id: string; project_id?: string; parent_id: string; title: string; summary: string; body: string;
+  id: string; space_id: string; parent_id: string; title: string; summary: string; body: string;
   kind: string; status: string; pinned: boolean; tags: string[]; properties: Record<string, string>;
   revision: number; created_at: string; updated_at: string; author: string; author_name?: string; author_kind?: AuthorKind;
   deleted_at?: string;
@@ -28,14 +33,14 @@ export type Favorite = { id: string; title: string; space_id: string; parent_id:
 export type SearchMatch = 'title' | 'tags' | 'summary' | 'properties' | 'body';
 export type SearchHit = { id: string; title: string; space_id: string; parent_id: string; kind: string; status: string; summary: string; tags: string[]; updated_at: string; pinned?: boolean; score?: number; snippet?: string; matched_in?: string[] };
 export type SearchResponse = { total: number; offset: number; mode?: 'all' | 'any'; next_offset?: number; results: SearchHit[] };
-export type MoveTarget = { space_id: string; project_id?: string; parent_id?: string };
-export type MoveRequest = { kind: 'article' | 'project'; id: string; base_revision?: number; target: MoveTarget; fingerprint?: string };
-export type MovePlace = { space_id: string; space_name: string; project_id: string; project_name: string };
+export type MoveTarget = { space_id: string; parent_id?: string };
+export type MoveRequest = { kind: 'article'; id: string; base_revision?: number; target: MoveTarget; fingerprint?: string };
+export type MovePlace = { space_id: string; space_name: string };
 export type MoveAccessChange = { subject_type: 'user' | 'team' | 'other'; subject_id: string; name: string; before: AccessGrant['role'] | null; after: AccessGrant['role'] | null; users?: number };
-export type MovePreview = { fingerprint: string; articles: number; projects: number; artifacts?: number; source: MovePlace; target: MovePlace; access: MoveAccessChange[]; users_gaining: number; users_losing: number; warnings: string[] };
-export type MoveApplyResult = { conflict: false; articles: number; projects: number; artifacts?: number; root: Article | Project } | { conflict: true; preview: MovePreview };
+export type MovePreview = { fingerprint: string; articles: number; artifacts?: number; source: MovePlace; target: MovePlace; access: MoveAccessChange[]; users_gaining: number; users_losing: number; warnings: string[] };
+export type MoveApplyResult = { conflict: false; articles: number; artifacts?: number; root: Article } | { conflict: true; preview: MovePreview };
 export type ArtifactSummary = {
-  id: string; space_id: string; project_id?: string; title: string; description: string; visibility: Visibility;
+  id: string; space_id: string; title: string; description: string; visibility: Visibility;
   owner_id?: string; owner_name?: string; author?: string; revision: number; created_at?: string; updated_at: string; file_count: number; deleted_at?: string | null;
 };
 export type ArtifactDetail = ArtifactSummary & { manifest: ManifestFile[]; can_edit: boolean; can_share: boolean; can_manage: boolean };
@@ -93,7 +98,7 @@ const moveApply = async (request: MoveRequest): Promise<MoveApplyResult> => {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   if (csrfToken) headers.set('X-CSRF-Token', csrfToken);
   const response = await fetch('/api/moves/apply', { method: 'POST', headers, body: JSON.stringify(request) });
-  let body: { error?: string; preview?: MovePreview; articles?: number; projects?: number; artifacts?: number; root?: Article | Project } = {};
+  let body: { error?: string; preview?: MovePreview; articles?: number; artifacts?: number; root?: Article } = {};
   try { body = await response.json(); } catch { /* response is not JSON */ }
   if (response.status === 409 && body.preview) return { conflict: true, preview: body.preview };
   if (!response.ok) {
@@ -102,7 +107,7 @@ const moveApply = async (request: MoveRequest): Promise<MoveApplyResult> => {
     }
     throw new Error(response.status === 403 ? 'Недостаточно прав для этого действия.' : body.error && body.error !== 'forbidden' ? body.error : `${response.status} ${response.statusText}`);
   }
-  return { conflict: false, articles: body.articles ?? 0, projects: body.projects ?? 0, artifacts: body.artifacts ?? 0, root: body.root as Article | Project };
+  return { conflict: false, articles: body.articles ?? 0, artifacts: body.artifacts ?? 0, root: body.root as Article };
 };
 const json = (method: string, data: unknown): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 const listOf = <T,>(value: unknown, key: string): T[] => Array.isArray(value) ? value as T[] : Array.isArray((value as Record<string, unknown> | null)?.[key]) ? (value as Record<string, T[]>)[key] : [];
@@ -119,7 +124,7 @@ export const errorStatus = (error: unknown): number => Number((error as { status
 const artifactApi = {
   artifacts: async (params: Record<string, string>) => listOf<ArtifactSummary>(await api<unknown>(`/api/artifacts?${new URLSearchParams(Object.entries(params).filter(([, value]) => value))}`), 'artifacts'),
   artifact: async (id: string) => normalizeArtifact(await api<Record<string, unknown>>(`/api/artifacts/${enc(id)}`)),
-  createArtifact: async (data: { space_id: string; project_id?: string; title: string; description: string; visibility: Visibility; files: ArtifactFileInput[]; message?: string }) => normalizeArtifact(await api<Record<string, unknown>>('/api/artifacts', json('POST', data))),
+  createArtifact: async (data: { space_id: string; title: string; description: string; visibility: Visibility; files: ArtifactFileInput[]; message?: string }) => normalizeArtifact(await api<Record<string, unknown>>('/api/artifacts', json('POST', data))),
   updateArtifact: async (id: string, data: Record<string, unknown>) => normalizeArtifact(await api<Record<string, unknown>>(`/api/artifacts/${enc(id)}`, json('PUT', data))),
   deleteArtifact: (id: string, baseRevision: number) => api<unknown>(`/api/artifacts/${enc(id)}`, json('DELETE', { base_revision: baseRevision })),
   restoreArtifact: (id: string, baseRevision: number) => api<unknown>(`/api/artifacts/${enc(id)}/restore`, json('POST', { base_revision: baseRevision })),
@@ -187,23 +192,21 @@ export const client = {
   adminUserAccess: (userId: string) => api<UserAccessSnapshot>(`/api/admin/users/${encodeURIComponent(userId)}/access`),
   setUserDisabled: (userId: string, disabled: boolean) => api<void>(`/api/admin/users/${encodeURIComponent(userId)}`, json('PATCH', { disabled })),
   createSpaceFor: (data: { name: string; description: string; personal: boolean }) => api<Space>('/api/corporate/spaces', json('POST', data)),
-  projects: (spaceId = '') => api<Project[]>(`/api/projects${spaceId ? `?space_id=${encodeURIComponent(spaceId)}` : ''}`),
+  agentProjects: async () => listOf<AgentProject>(await api<unknown>('/api/agent-projects'), 'projects'),
+  createAgentProject: (data: AgentProjectInput) => api<AgentProject>('/api/agent-projects', json('POST', data)),
+  updateAgentProject: (id: string, data: Partial<AgentProjectInput>) => api<AgentProject>(`/api/agent-projects/${enc(id)}`, json('PATCH', data)),
+  deleteAgentProject: (id: string) => api<void>(`/api/agent-projects/${enc(id)}`, { method: 'DELETE' }),
   mcpCredentials: () => api<{ enabled: boolean; credentials: MCPCredential[] }>('/api/mcp/credentials'),
-  createMCPCredential: (data: { name: string; scope: MCPScopeInput[]; ttl_seconds: number; service_account_id?: string }) => api<MCPCredential & { token: string }>('/api/mcp/credentials', json('POST', data)),
+  createMCPCredential: (data: { name: string; projects: string[]; read_only: boolean; ttl_seconds: number; service_account_id?: string }) => api<MCPCredential & { token: string }>('/api/mcp/credentials', json('POST', data)),
   revokeMCPCredential: (id: string) => api<void>(`/api/mcp/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  updateMCPCredential: (id: string, data: { scope: MCPScopeInput[] }) => api<MCPCredential>(`/api/mcp/credentials/${encodeURIComponent(id)}`, json('PATCH', data)),
+  updateMCPCredential: (id: string, data: { projects?: string[]; read_only?: boolean }) => api<MCPCredential>(`/api/mcp/credentials/${encodeURIComponent(id)}`, json('PATCH', data)),
   mcpServiceAccounts: () => api<{ enabled: boolean; service_accounts: MCPServiceAccount[] }>('/api/mcp/service-accounts'),
   createMCPServiceAccount: (name: string) => api<MCPServiceAccount>('/api/mcp/service-accounts', json('POST', { name })),
   renameMCPServiceAccount: (id: string, name: string) => api<MCPServiceAccount>(`/api/mcp/service-accounts/${encodeURIComponent(id)}`, json('PATCH', { name })),
   disableMCPServiceAccount: (id: string) => api<void>(`/api/mcp/service-accounts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  createProject: (data: { name: string; description: string; space_id: string; parent_id?: string; inherit_acl?: boolean }) => api<Project>('/api/projects', json('POST', data)),
-  updateProject: (id: string, data: Partial<Pick<Project, 'name' | 'description' | 'archived_at' | 'inherit_acl'>> & { archived?: boolean }) => {
-    const { archived_at, ...fields } = data;
-    return api<Project>(`/api/projects/${encodeURIComponent(id)}`, json('PATCH', { ...fields, ...(archived_at !== undefined ? { archived: Boolean(archived_at) } : {}) }));
-  },
-  users: (resourceType: 'space' | 'project', resourceId: string) => api<TeamMember[]>(`/api/users?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId })}`),
-  access: async (resourceType: 'space' | 'project', resourceId: string) => (await api<{ grants: AccessGrant[] }>(`/api/access?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId })}`)).grants,
-  effectiveAccess: (resourceType: 'space' | 'project', resourceId: string, userId: string) => api<{ role: AccessGrant['role'] | null; sources: unknown[] }>(`/api/access/effective?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId, user_id: userId })}`),
-  setAccess: (resourceType: 'space' | 'project', resourceId: string, grant: AccessGrant) => api<AccessGrant>('/api/access?' + new URLSearchParams({ resource_type: resourceType, resource_id: resourceId }), json('PUT', { grant })),
-  removeAccess: (resourceType: 'space' | 'project', resourceId: string, grant: Pick<AccessGrant, 'subject_type' | 'subject_id'>) => api<void>('/api/access?' + new URLSearchParams({ resource_type: resourceType, resource_id: resourceId, ...grant }), { method: 'DELETE' }),
+  users: (resourceType: 'space', resourceId: string) => api<TeamMember[]>(`/api/users?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId })}`),
+  access: async (resourceType: 'space', resourceId: string) => (await api<{ grants: AccessGrant[] }>(`/api/access?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId })}`)).grants,
+  effectiveAccess: (resourceType: 'space', resourceId: string, userId: string) => api<{ role: AccessGrant['role'] | null; sources: unknown[] }>(`/api/access/effective?${new URLSearchParams({ resource_type: resourceType, resource_id: resourceId, user_id: userId })}`),
+  setAccess: (resourceType: 'space', resourceId: string, grant: AccessGrant) => api<AccessGrant>('/api/access?' + new URLSearchParams({ resource_type: resourceType, resource_id: resourceId }), json('PUT', { grant })),
+  removeAccess: (resourceType: 'space', resourceId: string, grant: Pick<AccessGrant, 'subject_type' | 'subject_id'>) => api<void>('/api/access?' + new URLSearchParams({ resource_type: resourceType, resource_id: resourceId, ...grant }), { method: 'DELETE' }),
 };
