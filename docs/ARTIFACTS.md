@@ -77,8 +77,8 @@ keys see only their projects). MCP never creates or revokes public links.
 - `GET /api/artifacts/{id}/shares`, `POST …/shares` `{revision: null|n}` →
   `{id, url, revision, created_at}` (the token appears only in this response),
   `DELETE …/shares/{share_id}`.
-- `GET /api/admin/settings`, `PUT /api/admin/settings` `{public_artifact_links:
-  bool}` — system administrators only (corporate); default `true`. When `false`,
+- `GET /api/admin/settings`, `PUT /api/admin/settings` `{public_artifact_links?:
+  bool, general_space_id?: string}` (partial; the response always carries both fields; `general_space_id` is the general space, default `general`, 400 `unknown space` if not an existing non-archived space) — system administrators only (corporate); default `true`. When `false`,
   every public link answers as disabled without being deleted. Trusted mode: links
   always allowed, no admin endpoint.
 

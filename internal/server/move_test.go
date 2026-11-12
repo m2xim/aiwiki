@@ -18,6 +18,9 @@ func createMoveArticle(t *testing.T, s *Server, space, parent, title string) Art
 	if err := json.Unmarshal(body, &a); err != nil {
 		t.Fatal(err)
 	}
+	// author_name/author_kind are display fields added to API responses; the
+	// tests compare against rows read straight from the database.
+	a.AuthorName, a.AuthorKind = "", ""
 	return a
 }
 

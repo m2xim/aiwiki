@@ -34,16 +34,25 @@ Responses and errors never expose the secret.
 ## Issuance and scope
 
 Open the administration page's MCP access tab. Any admitted user can manage their
-own credentials and service accounts. Credentials have a name, 1–20 exact projects,
-`read` or `write` mode, and an expiry (default 30 days, maximum 180 days).
-The owner can later change the projects and mode of a live credential
-(`PATCH /api/mcp/credentials/{id}` with `{project_ids, mode}`); the secret stays
+own credentials and service accounts. Credentials have a name, a scope of 1–20
+elements `{type: "space"|"project", id, mode: "read"|"write"}` and an expiry
+(default 30 days, maximum 180 days). A space element covers the whole space (root,
+projects, subprojects); a project element covers that project and its subprojects.
+`POST /api/mcp/credentials` takes `{name, scope, ttl_seconds, service_account_id?}`;
+responses carry `scope: [{type, id, mode, name, space_id}]` (no `project_ids`/`mode`).
+The owner can later change the scope of a live credential
+(`PATCH /api/mcp/credentials/{id}` with `{scope}`); the secret stays
 the same. The new scope is checked against the owner's current rights exactly as
 at issuance and audited as `mcp_credential.update` with the previous values.
 Name, owner, service account and expiry cannot be changed; revocation is final.
-At issuance, the user must currently hold Reader access to every selected project
-for read mode, or Editor access for write mode. Archived containers are excluded.
-No parent, sibling, descendant, or space-level access is implied by selection.
+At issuance, the user must currently hold Reader access to every selected element
+(400 `scope access denied` otherwise); a `write` element is accepted only where the
+user personally holds Editor or higher, otherwise the whole request is rejected with
+`scope access denied` (no silent downgrade to read): a key never exceeds its owner. Errors: 400 `invalid scope`, `scope access denied`, `too many scope elements`.
+Archived containers are excluded. No parent or sibling access is implied by selection.
+The general space (admin setting `general_space_id`) is always readable by every key
+and need not be listed; to write there, add it as a space element with mode `write`
+(effective only if the user is Editor+ in it).
 
 The server returns the random 256-bit secret once, prefixed with `aiwiki_pat_`.
 Copy it to the MCP client's secret configuration and clear the displayed value.
@@ -51,15 +60,15 @@ The UI keeps it only in component memory. PostgreSQL stores only the SHA-256 has
 list endpoints and audit events never contain the secret. Logging out or restarting
 aiwiki does not revoke these credentials. Expiry or explicit revocation does.
 
-Read mode exposes read tools only. Write mode additionally permits article creation,
-editing, revision restore and adding comments. Current owner permissions still
+Read elements expose read tools only. Write elements additionally permit article
+creation, editing, revision restore and adding comments within their coverage. Current owner permissions still
 apply, capped at Editor by RLS. ACLs, users, teams, ownership, space/project structure
 and credential management are unavailable through native MCP credentials. A key
 cannot mint another key. Partial reads and revision conflict checks remain available.
 
-Use the secret as `Authorization: Bearer <secret>` on `/mcp`. A project-scoped
-credential cannot list whole spaces, so `wiki_bootstrap` returns its live projects
-as `projects: [{id, name, space_id}]`; pass that `space_id` and `project_id` when
+Use the secret as `Authorization: Bearer <secret>` on `/mcp`. A scoped
+credential cannot list whole spaces, so `wiki_bootstrap` returns its scope as
+`scope: [{type, id, mode, name, space_id}]` (instead of `projects`); pass that `space_id` and `project_id` when
 creating articles. Native credentials do
 not authenticate browser REST endpoints, and browser cookies do not authenticate MCP.
 Native credentials are an explicit bearer option, not a claim of MCP OAuth discovery
@@ -67,9 +76,18 @@ or compatibility with every client. See [AI-CONNECTION.md](AI-CONNECTION.md).
 
 ## Service accounts and revocation
 
+The sponsor can rename an active service account:
+`PATCH /api/mcp/service-accounts/{id}` with `{name}` returns the updated account
+(same shape as in the list). Errors: 400 for an invalid name (same rules as create),
+404 if not found, and an error for a disabled account. Authors are stored as ids
+(`u_…` users, `svc_…` service accounts); article, revision, comment and artifact
+revision responses add `author_name` (current display name, may be empty) and
+`author_kind` (`user`, `service` or empty), so a rename shows immediately in old
+history too. The UI marks service authors with an «агент» badge.
+
 A service account has a stable actor ID and an immutable human sponsor. Only its
 sponsor manages it. It receives no administrator status or independent ACL grants:
-each request uses current sponsor ACLs intersected with credential projects/mode.
+each request uses current sponsor ACLs intersected with the credential scope (per-element mode).
 Article/comment authorship identifies the service account; request audit records
 include both actor and sponsor. A sponsor becoming locally disabled or exceeding
 the login window blocks all associated personal and service credentials.

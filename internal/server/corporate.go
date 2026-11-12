@@ -90,11 +90,7 @@ func (s *Server) corporateHandler() http.Handler {
 		if !ok {
 			return
 		}
-		mode := p.MCPMode
-		if p.MCPProjects != nil && mode == "" {
-			mode = "read"
-		}
-		scoped, cleanup, err := s.DB.scopedMCP(r.Context(), p.ID, p.MCPProjects, mode)
+		scoped, cleanup, err := s.DB.scopedMCP(r.Context(), p.ID, p.MCPScope, p.MCPActorID)
 		if err != nil {
 			apiErr(w, 503, "database unavailable")
 			return

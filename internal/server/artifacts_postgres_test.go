@@ -528,14 +528,14 @@ func TestArtifactsPostgresSchemaGuard(t *testing.T) {
 // mcpAs builds a request server for a persistent-key style scope.
 func (e *artEnv) mcpAs(user, mode string, projects ...string) *Server {
 	e.t.Helper()
-	db, cleanup, err := e.root.DB.scopedMCP(context.Background(), user, projects, mode)
+	db, cleanup, err := e.root.DB.scopedMCP(context.Background(), user, projScope(mode, projects...))
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	e.t.Cleanup(cleanup)
 	cp := *e.root
 	cp.DB = db
-	cp.principal = &Principal{ID: user, Name: user, MCPProjects: projects, MCPMode: mode, MCPDelegationID: "pat_test"}
+	cp.principal = &Principal{ID: user, Name: user, MCPScope: projScope(mode, projects...), MCPDelegationID: "pat_test"}
 	return &cp
 }
 

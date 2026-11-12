@@ -18,7 +18,7 @@ func (d *database) validateRuntimeSchema() error {
 	if err := d.QueryRow(`SELECT to_regprocedure('public.corporate_mcp_scope_active()') IS NOT NULL AND to_regprocedure('public.corporate_owner_effective_role(text,text,text)') IS NOT NULL`).Scan(&mcpReady); err != nil || !mcpReady {
 		return errors.New("MCP access schema migration is required")
 	}
-	if err := d.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=to_regprocedure('public.corporate_effective_role(text,text,text)') AND l.lanname='plpgsql' AND p.prosrc LIKE '%app.mcp_projects%') AND NOT has_function_privilege(current_user,'public.corporate_owner_effective_role(text,text,text)','EXECUTE')`).Scan(&mcpReady); err != nil || !mcpReady {
+	if err := d.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=to_regprocedure('public.corporate_effective_role(text,text,text)') AND l.lanname='plpgsql' AND p.prosrc LIKE '%corporate_mcp_scope_active%' AND p.prosrc LIKE '%corporate_mcp_row_mode%') AND NOT has_function_privilege(current_user,'public.corporate_owner_effective_role(text,text,text)','EXECUTE')`).Scan(&mcpReady); err != nil || !mcpReady {
 		return errors.New("MCP role restriction is missing or can be bypassed")
 	}
 	if err := d.QueryRow(`SELECT has_function_privilege(current_user,'public.corporate_effective_role(text,text,text)','EXECUTE') AND has_function_privilege(current_user,'public.corporate_mcp_request_audit(text,text,text)','EXECUTE')`).Scan(&mcpReady); err != nil || !mcpReady {
@@ -27,7 +27,7 @@ func (d *database) validateRuntimeSchema() error {
 	if err := d.QueryRow(`SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('users','teams','team_members','projects','memberships','security_audit','corporate_space_state') AND c.relrowsecurity AND NOT c.relforcerowsecurity`).Scan(&count); err != nil || count != 7 {
 		return errors.New("MCP metadata protection is not initialized")
 	}
-	if err := d.QueryRow(`SELECT to_regprocedure('public.corporate_mcp_content_write_allowed()') IS NOT NULL AND has_function_privilege(current_user,'public.corporate_mcp_credential_audit(text,text,text)','EXECUTE') AND EXISTS(SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.corporate_effective_role(text,text,text)') AND prosrc LIKE '%app.mcp_mode%')`).Scan(&mcpReady); err != nil || !mcpReady {
+	if err := d.QueryRow(`SELECT to_regprocedure('public.corporate_mcp_content_write_allowed()') IS NOT NULL AND has_function_privilege(current_user,'public.corporate_mcp_credential_audit(text,text,text)','EXECUTE') AND EXISTS(SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.corporate_effective_role(text,text,text)') AND prosrc LIKE '%corporate_mcp_scope_json%') AND EXISTS(SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.corporate_mcp_credential_set_scope(text,jsonb)')) AND EXISTS(SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.corporate_mcp_scope_active()') AND prosrc LIKE '%app.mcp_scope%')`).Scan(&mcpReady); err != nil || !mcpReady {
 		return errors.New("persistent MCP scope migration/grants are required")
 	}
 	if err := d.QueryRow(`SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('mcp_credentials','mcp_service_accounts') AND c.relrowsecurity AND NOT c.relforcerowsecurity AND NOT pg_has_role(current_user,c.relowner,'MEMBER')`).Scan(&count); err != nil || count != 2 {
@@ -56,7 +56,7 @@ func (d *database) validateRuntimeSchema() error {
 		return errors.New("MCP access write protection is not initialized")
 	}
 	if err := d.QueryRow(`WITH guards AS (
-	 SELECT p.*,c.relname, CASE WHEN (c.relname,p.polcmd) IN (('articles','a'),('articles','w'),('revisions','a'),('comments','a'),('article_fts','a'),('article_fts','d')) THEN 'corporate_mcp_content_write_allowed()' ELSE '(NOT corporate_mcp_scope_active())' END AS expected
+	 SELECT p.*,c.relname, CASE WHEN (c.relname,p.polcmd) IN (('articles','a'),('articles','w'),('revisions','a'),('comments','a'),('comments','w'),('article_fts','a'),('article_fts','d')) THEN 'corporate_mcp_content_write_allowed()' ELSE '(NOT corporate_mcp_scope_active())' END AS expected
 	 FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace
 	 WHERE n.nspname='public' AND c.relname IN ('spaces','articles','revisions','comments','attachments','favorites','article_fts') AND p.polname LIKE 'mcp_scope_%' AND NOT p.polpermissive AND p.polcmd IN ('a','w','d'))
 	 SELECT count(*) FROM guards WHERE pg_get_expr(polqual,polrelid) IS NOT DISTINCT FROM CASE WHEN polcmd='a' THEN NULL ELSE expected END AND pg_get_expr(polwithcheck,polrelid) IS NOT DISTINCT FROM CASE WHEN polcmd='d' THEN NULL ELSE expected END`).Scan(&count); err != nil || count != 21 {

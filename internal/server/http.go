@@ -81,6 +81,11 @@ func (s *Server) listArticles(w http.ResponseWriter, r *http.Request) {
 	for _, h := range res.Hits {
 		out = append(out, h.Article)
 	}
+	ptrs := make([]*Article, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	s.fillArticleAuthors(ptrs...)
 	writeJSON(w, 200, out)
 }
 
@@ -241,7 +246,7 @@ func (s *Server) createArticle(w http.ResponseWriter, r *http.Request) {
 		// Delegated MCP sessions cannot lock the row (no UPDATE policy on projects for
 		// them) and only check that it exists.
 		lockClause := " FOR SHARE"
-		if s.principal != nil && (s.principal.MCPMode != "" || s.principal.MCPProjects != nil) {
+		if s.principal != nil && s.principal.MCPScope != nil {
 			lockClause = ""
 		}
 		var one int
@@ -271,6 +276,7 @@ func (s *Server) createArticle(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "database error")
 		return
 	}
+	s.fillArticleAuthors(&a)
 	writeJSON(w, 201, a)
 }
 func (s *Server) articleRoute(w http.ResponseWriter, r *http.Request) {
@@ -299,6 +305,7 @@ func (s *Server) articleRoute(w http.ResponseWriter, r *http.Request) {
 		} else if e != nil {
 			apiErr(w, 500, "database error")
 		} else {
+			s.fillArticleAuthors(&a)
 			writeJSON(w, 200, a)
 		}
 		return
@@ -393,6 +400,7 @@ func (s *Server) updateArticle(w http.ResponseWriter, r *http.Request, aid strin
 		apiErr(w, code, e.Error())
 		return
 	}
+	s.fillArticleAuthors(&a)
 	writeJSON(w, 200, a)
 }
 
@@ -521,6 +529,7 @@ func (s *Server) deleteArticle(w http.ResponseWriter, r *http.Request, aid strin
 		apiErr(w, 500, "database error")
 		return
 	}
+	s.fillArticleAuthors(&a)
 	writeJSON(w, 200, a)
 }
 
@@ -583,6 +592,7 @@ func (s *Server) undeleteArticle(w http.ResponseWriter, r *http.Request, aid str
 		apiErr(w, 500, "database error")
 		return
 	}
+	s.fillArticleAuthors(&a)
 	writeJSON(w, 200, a)
 }
 
@@ -602,6 +612,7 @@ func (s *Server) history(w http.ResponseWriter, aid string) {
 			out = append(out, x)
 		}
 	}
+	s.fillRevisionAuthors(out)
 	writeJSON(w, 200, out)
 }
 

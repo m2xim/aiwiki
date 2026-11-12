@@ -358,8 +358,10 @@ func TestMCPPersistentTokenShapeAndHash(t *testing.T) {
 }
 
 func TestMCPPersistentStoredScopeParsing(t *testing.T) {
-	for _, raw := range []string{``, `null`, `[]`, `[1]`, `["a",1]`, `["../x"]`, `["a","a"]`, `{"a":1}`, `"a"`, `["a"`, `[""]`} {
-		if p, ok := mcpPersistentProjects([]byte(raw)); ok {
+	for _, raw := range []string{``, `null`, `[]`, `[1]`, `["a"]`, `{"a":1}`, `"a"`, `[{"type":"project","id":"a","mode":"read"}`,
+		`[{"type":"project","id":"../x","mode":"read"}]`, `[{"type":"project","id":"a","mode":"admin"}]`, `[{"type":"team","id":"a","mode":"read"}]`,
+		`[{"type":"project","id":"a","mode":"read"},{"type":"project","id":"a","mode":"write"}]`, `[{"type":"project","id":"","mode":"read"}]`} {
+		if p, ok := mcpPersistentScope([]byte(raw)); ok {
 			t.Fatalf("%q must fail closed, got %v", raw, p)
 		}
 	}
@@ -367,11 +369,11 @@ func TestMCPPersistentStoredScopeParsing(t *testing.T) {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("p%d", i)
 	}
-	raw, _ := json.Marshal(ids)
-	if _, ok := mcpPersistentProjects(raw); ok {
-		t.Fatal("too many projects must fail closed")
+	raw, _ := json.Marshal(projScope("read", ids...))
+	if _, ok := mcpPersistentScope(raw); ok {
+		t.Fatal("too many elements must fail closed")
 	}
-	if p, ok := mcpPersistentProjects([]byte(`["pa","pb"]`)); !ok || len(p) != 2 || p[0] != "pa" || p == nil {
+	if p, ok := mcpPersistentScope([]byte(`[{"type":"project","id":"pa","mode":"read"},{"type":"space","id":"pa","mode":"write"}]`)); !ok || len(p) != 2 {
 		t.Fatalf("valid scope rejected: %v %v", p, ok)
 	}
 }
@@ -396,11 +398,11 @@ func TestMCPPersistentMintListRevokeLifecycle(t *testing.T) {
 	if !strings.HasPrefix(token, mcpPersistentPrefix) || len(token) != len(mcpPersistentPrefix)+mcpPersistentSecretLen || !mcpPersistentWellFormed(token) {
 		t.Fatalf("bad token shape %q", token)
 	}
-	if !strings.HasPrefix(id, "pat_") || out["name"] != "agent" || out["mode"] != "write" || len(out) != 7 {
+	if !strings.HasPrefix(id, "pat_") || out["name"] != "agent" || out["mode"] != nil || out["project_ids"] != nil || len(out) != 6 {
 		t.Fatalf("bad mint response: %v", out)
 	}
-	if ids, _ := json.Marshal(out["project_ids"]); string(ids) != `["pa","pb"]` {
-		t.Fatalf("projects not sorted: %s", ids)
+	if sc, _ := json.Marshal(out["scope"]); !strings.Contains(string(sc), `"id":"pa","mode":"write"`) || strings.Index(string(sc), `"id":"pa"`) > strings.Index(string(sc), `"id":"pb"`) {
+		t.Fatalf("scope not sorted or wrong: %s", sc)
 	}
 	created, err1 := time.Parse(time.RFC3339Nano, out["created_at"].(string))
 	expires, err2 := time.Parse(time.RFC3339Nano, out["expires_at"].(string))
@@ -427,9 +429,9 @@ func TestMCPPersistentMintListRevokeLifecycle(t *testing.T) {
 	// The token authenticates as an exact-project, non-admin sponsor principal.
 	before := e.prov.count()
 	p := e.mustAuth(token)
-	if p.ID != aliceID || p.Issuer != e.iss || p.Subject != "alice" || p.Admin || p.MCPMode != "write" ||
+	if p.ID != aliceID || p.Issuer != e.iss || p.Subject != "alice" || p.Admin || !mcpScopeHasWrite(p.MCPScope) ||
 		p.MCPDelegationID != id || p.MCPActorID != aliceID || !p.MCPExpiresAt.Equal(expires) ||
-		len(p.MCPProjects) != 2 || p.MCPProjects[0] != "pa" || p.MCPProjects[1] != "pb" {
+		len(p.MCPScope) != 2 || p.MCPScope[0].ID != "pa" || p.MCPScope[1].ID != "pb" {
 		t.Fatalf("bad principal: %+v", p)
 	}
 	if e.prov.count() != before+1 {
@@ -540,7 +542,7 @@ func TestMCPPersistentMintValidation(t *testing.T) {
 		return x.Sub(c)
 	}
 	out := e.mint(alice, `{"name":"defaults","project_ids":["pa"]}`, http.StatusCreated)
-	if out["mode"] != "read" || span(out) != 30*24*time.Hour {
+	if sc, _ := json.Marshal(out["scope"]); !strings.Contains(string(sc), `"mode":"read"`) || span(out) != 30*24*time.Hour {
 		t.Fatalf("defaults: %v", out)
 	}
 	if out := e.mint(alice, `{"name":"min","project_ids":["pa"],"mode":"read","ttl_seconds":60}`, http.StatusCreated); span(out) != time.Minute {
@@ -552,7 +554,7 @@ func TestMCPPersistentMintValidation(t *testing.T) {
 
 	// MCP credentials can never manage credentials.
 	for name, pr := range map[string]*Principal{
-		"scoped":     {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPProjects: []string{"pa"}},
+		"scoped":     {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPScope: projScope("read", "pa")},
 		"credential": {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPDelegationID: "pat_x"},
 		"actor":      {ID: aliceID, Issuer: e.iss, Subject: "alice", MCPActorID: "svc_x"},
 	} {
@@ -594,18 +596,18 @@ func TestMCPPersistentMintProjectPermissions(t *testing.T) {
 		`{"name":"n","project_ids":["pbob"],"mode":"read"}`,       // someone else's project
 		`{"name":"n","project_ids":["pbob","pa"],"mode":"write"}`, // mixed ownership
 	} {
-		e.mint(alice, body, http.StatusForbidden)
+		e.mint(alice, body, http.StatusBadRequest)
 	}
-	e.mint(bob, `{"name":"n","project_ids":["pa"],"mode":"read"}`, http.StatusForbidden)
+	e.mint(bob, `{"name":"n","project_ids":["pa"],"mode":"read"}`, http.StatusBadRequest)
 	if e.count(`SELECT count(*) FROM mcp_credentials`) != allowed || e.count(`SELECT count(*) FROM security_audit`) != audited {
 		t.Fatal("forbidden mints must neither store nor audit anything")
 	}
 
 	// The check happens at mint time against the live ACL.
 	e.seedExec(`DELETE FROM memberships WHERE resource_id='pe' AND subject_id=?`, aliceID)
-	e.mint(alice, `{"name":"n","project_ids":["pe"],"mode":"read"}`, http.StatusForbidden)
+	e.mint(alice, `{"name":"n","project_ids":["pe"],"mode":"read"}`, http.StatusBadRequest)
 	e.seedExec(`UPDATE projects SET archived_at='2020-01-01T00:00:00Z' WHERE id='pa'`)
-	e.mint(alice, `{"name":"n","project_ids":["pa"],"mode":"read"}`, http.StatusForbidden)
+	e.mint(alice, `{"name":"n","project_ids":["pa"],"mode":"read"}`, http.StatusBadRequest)
 }
 
 func TestMCPPersistentMintCaps(t *testing.T) {
@@ -641,8 +643,8 @@ func TestMCPPersistentMintCaps(t *testing.T) {
 	// Total cap counts revoked and expired credentials too.
 	dave, daveID := e.user("dave")
 	e.member("pr", daveID, "reader")
-	e.exec(`INSERT INTO mcp_credentials(id,owner_id,name,secret_hash,project_ids,mode,created_at,expires_at,revoked_at)
-SELECT 'pat_bulk'||g::text,?::text,'old',md5(?::text||g::text)||md5(g::text||?::text),'["pr"]'::jsonb,'read',now(),now()+interval '1 day',now()
+	e.exec(`INSERT INTO mcp_credentials(id,owner_id,name,secret_hash,scope,created_at,expires_at,revoked_at)
+SELECT 'pat_bulk'||g::text,?::text,'old',md5(?::text||g::text)||md5(g::text||?::text),'[{"type":"project","id":"pr","mode":"read"}]'::jsonb,now(),now()+interval '1 day',now()
 FROM generate_series(1,?) g`, daveID, daveID, daveID, mcpPersistentTotalCap)
 	e.mint(dave, body, http.StatusTooManyRequests)
 	e.exec(`DELETE FROM mcp_credentials WHERE id='pat_bulk1'`)
@@ -755,7 +757,7 @@ func TestMCPPersistentServiceAccountLifecycle(t *testing.T) {
 	if n := e.count(`SELECT count(*) FROM security_audit WHERE action='mcp_service_account.disable'`); n != 1 {
 		t.Fatalf("repeat disable audits: %d", n)
 	}
-	for _, m := range []string{"PUT", "PATCH", "POST", "GET"} {
+	for _, m := range []string{"PUT", "POST", "GET"} { // PATCH renames
 		e.expect(e.call(alice, persistentAccountR, m, "", svc), 405)
 	}
 	for _, m := range []string{"PUT", "DELETE", "PATCH"} {
@@ -829,11 +831,11 @@ func TestMCPPersistentAuthenticateStates(t *testing.T) {
 	// Migration-owner corruption simulation; runtime cannot update authority.
 	e.exec(`ALTER TABLE mcp_credentials DISABLE TRIGGER mcp_credential_immutable`)
 	defer e.exec(`ALTER TABLE mcp_credentials ENABLE TRIGGER mcp_credential_immutable`)
-	for _, scope := range []string{`["../x"]`, `[1]`, `["pa","pa"]`, `[""]`} {
-		e.exec(`UPDATE mcp_credentials SET project_ids=? WHERE id=?`, scope, id)
+	for _, scope := range []string{`[{"type":"project","id":"../x","mode":"read"}]`, `[{"type":"project","id":"pa","mode":"read"},{"type":"project","id":"pa","mode":"write"}]`} {
+		e.exec(`UPDATE mcp_credentials SET scope=?::jsonb WHERE id=?`, scope, id)
 		e.mustFail(token, http.StatusUnauthorized)
 	}
-	e.exec(`UPDATE mcp_credentials SET project_ids='["pa"]' WHERE id=?`, id)
+	e.exec(`UPDATE mcp_credentials SET scope='[{"type":"project","id":"pa","mode":"read"}]' WHERE id=?`, id)
 	e.exec(`ALTER TABLE mcp_credentials ENABLE TRIGGER mcp_credential_immutable`)
 	e.mustAuth(token)
 
@@ -1174,7 +1176,7 @@ func TestMCPPersistentSurvivesRestartWithoutCache(t *testing.T) {
 	if !ok {
 		t.Fatalf("token must survive a restart: %d %s", rec.Code, rec.Body)
 	}
-	if p.ID != before.ID || p.MCPDelegationID != before.MCPDelegationID || p.MCPMode != "write" || len(p.MCPProjects) != 2 || !p.MCPExpiresAt.Equal(before.MCPExpiresAt) {
+	if p.ID != before.ID || p.MCPDelegationID != before.MCPDelegationID || !mcpScopeHasWrite(p.MCPScope) || len(p.MCPScope) != 2 || !p.MCPExpiresAt.Equal(before.MCPExpiresAt) {
 		t.Fatalf("restarted principal differs: %+v vs %+v", p, before)
 	}
 
@@ -1200,7 +1202,7 @@ func TestMCPPersistentModeMapsToToolScope(t *testing.T) {
 	_, writeToken := e.mintToken(alice, `{"name":"w","project_ids":["pe"],"mode":"write"}`)
 
 	r, w := e.mustAuth(readToken), e.mustAuth(writeToken)
-	if r.MCPMode != "read" || w.MCPMode != "write" || r.MCPProjects == nil || w.MCPProjects == nil {
+	if mcpScopeHasWrite(r.MCPScope) || !mcpScopeHasWrite(w.MCPScope) || r.MCPScope == nil || w.MCPScope == nil {
 		t.Fatalf("modes: %+v %+v", r, w)
 	}
 	for _, tool := range []string{"wiki_write", "wiki_edit", "wiki_comment", "wiki_restore"} {

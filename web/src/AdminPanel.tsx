@@ -5,6 +5,7 @@ import { MoveDialog } from './MoveDialog';
 import MCPPersistentAccess from './MCPPersistentAccess';
 import { CatalogKind, CatalogSort, DEFAULT_CATALOG_QUERY, catalogQueryString, parseCatalogQuery } from './catalogQuery';
 import { replaceUrl } from './nav';
+import { GeneralSpaceSettings } from './GeneralSpaceSettings';
 import { ArtifactSettings } from './artifacts/ArtifactSettings';
 import './AdminPanel.css';
 
@@ -371,7 +372,7 @@ export function AdminPanel({ onClose, userId, isAdmin, personalMode = false, act
       {moveProject && <MoveDialog subject={{ kind: 'project', project: moveProject }} author="" onClose={() => setMoveProject(null)} onDone={() => { const moved = moveProject; setMoveProject(null); setMoveNotice(`Проект «${moved.name}» перемещён`); void refresh(); }}/>}
       <main aria-busy={busy}>
         {tab === 'tokens' && <MCPPersistentAccess/>}
-        {tab === 'settings' && isAdmin && <ArtifactSettings/>}
+        {tab === 'settings' && isAdmin && <><GeneralSpaceSettings/><ArtifactSettings/></>}
         {tab === 'catalog' && <>
           <form className="corp-admin-create" onSubmit={submit(() => void create())}><input aria-label="Название пространства" value={name} onChange={e => setName(e.target.value)} placeholder="Название пространства"/><input aria-label="Описание пространства" value={description} onChange={e => setDescription(e.target.value)} placeholder="Описание (необязательно)"/>{!personalMode && <select aria-label="Тип пространства" value={personal ? 'personal' : 'team'} onChange={e => setPersonal(e.target.value === 'personal')}><option value="personal">Личное</option>{isAdmin && <option value="team">Командное</option>}</select>}<button type="submit" disabled={busy || !name.trim()}><Plus size={15}/>Создать</button></form>
           <div className="corp-admin-catalog-tools"><input value={catalogFilter} onChange={e => setCatalogFilter(e.target.value)} placeholder="Поиск по пространствам, проектам и тегам" aria-label="Фильтр каталога"/><select value={catalogSort} onChange={e => setCatalogSort(e.target.value as typeof catalogSort)} aria-label="Сортировка каталога"><option value="recent">Сначала недавно изменённые</option><option value="name">По названию</option><option value="count">По числу документов</option></select><select value={catalogKind} onChange={e => setCatalogKind(e.target.value as CatalogKind)} aria-label="Тип пространств"><option value="all">Все</option><option value="personal">Личные</option><option value="team">Командные</option></select></div>

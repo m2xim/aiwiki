@@ -7,8 +7,25 @@ import (
 	"time"
 )
 
-//go:embed mcp_scope.sql mcp_persistent.sql mcp_oauth_audit.sql mcp_login_window.sql mcp_credential_scope_edit.sql
+//go:embed mcp_scope.sql mcp_persistent.sql mcp_oauth_audit.sql mcp_login_window.sql mcp_credential_scope_edit.sql mcp_credential_scope_v6.sql mcp_actor_name.sql mcp_comment_resolve.sql
 var mcpScopeSchema embed.FS
+
+// migrationVersionCap limits applied versions (0 = no limit). Tests use it to build a
+// database as it was before a release and upgrade it afterwards.
+var mcpScopeVersionCap, roleScopeVersionCap int
+
+func capMigrations(list []pgMigration, limit int) []pgMigration {
+	if limit <= 0 {
+		return list
+	}
+	out := list[:0:0]
+	for _, m := range list {
+		if m.Version <= limit {
+			out = append(out, m)
+		}
+	}
+	return out
+}
 
 func (s *Server) migrateMCPScope(ctx context.Context) error {
 	if s == nil || s.DB == nil || !s.DB.pg {
@@ -34,9 +51,21 @@ func (s *Server) migrateMCPScope(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	scopeV6, err := mcpScopeSchema.ReadFile("mcp_credential_scope_v6.sql")
+	if err != nil {
+		return err
+	}
+	actorName, err := mcpScopeSchema.ReadFile("mcp_actor_name.sql")
+	if err != nil {
+		return err
+	}
+	commentResolve, err := mcpScopeSchema.ReadFile("mcp_comment_resolve.sql")
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	return s.DB.runMigrations(ctx, "mcp_access", []pgMigration{{
+	return s.DB.runMigrations(ctx, "mcp_access", capMigrations([]pgMigration{{
 		Version: 1, Name: "exact MCP project read scope", Statements: splitCorporateSQL(string(schema)),
-	}, {Version: 2, Name: "persistent MCP credentials and bounded content writes", Statements: splitCorporateSQL(string(persistent))}, {Version: 3, Name: "OAuth bearer request audit", Statements: splitCorporateSQL(string(oauthAudit))}, {Version: 4, Name: "last login time for local MCP credential admission", Statements: splitCorporateSQL(string(loginWindow))}, {Version: 5, Name: "checked owner edits of MCP credential projects and mode", Statements: splitCorporateSQL(string(scopeEdit))}})
+	}, {Version: 2, Name: "persistent MCP credentials and bounded content writes", Statements: splitCorporateSQL(string(persistent))}, {Version: 3, Name: "OAuth bearer request audit", Statements: splitCorporateSQL(string(oauthAudit))}, {Version: 4, Name: "last login time for local MCP credential admission", Statements: splitCorporateSQL(string(loginWindow))}, {Version: 5, Name: "checked owner edits of MCP credential projects and mode", Statements: splitCorporateSQL(string(scopeEdit))}, {Version: 6, Name: "per-element MCP key scope (spaces and projects with own modes)", Statements: splitCorporateSQL(string(scopeV6))}, {Version: 7, Name: "author display names and MCP comment resolving", Statements: splitCorporateSQL(string(actorName) + "\n" + string(commentResolve))}}, mcpScopeVersionCap))
 }

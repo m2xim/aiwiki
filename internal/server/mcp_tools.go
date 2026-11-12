@@ -80,7 +80,7 @@ func mcpToolList() []map[string]any {
 	})
 	article["description"] = "Editable article fields. Create: space_id and title required. Update (id given): include base_revision; fields not sent keep their current values."
 	tools := []map[string]any{
-		{"name": "wiki_bootstrap", "description": "Start of every session. Without space_id: returns full pinned instructions of the general space, compact other_pinned (pinned articles of other spaces without bodies), spaces and recent changes. Call it again with the space_id of your project to get that space's pinned rules in full.", "inputSchema": objectSchema(map[string]any{"space_id": prop("string", "Project space id; when given, pinned articles of general and this space are returned in full.")})},
+		{"name": "wiki_bootstrap", "description": "Start of every session. Without space_id: returns full pinned instructions of the general space configured by the administrator (its id is general_space_id; a scoped credential also gets the pinned rules of every space in its scope, general first), compact other_pinned (pinned articles of other spaces without bodies), spaces and recent changes. Call it again with the space_id of your project to get that space's pinned rules in full.", "inputSchema": objectSchema(map[string]any{"space_id": prop("string", "Project space id; when given, pinned articles of the general space (general_space_id) and this space are returned in full.")})},
 		{"name": "wiki_search", "description": "Ranked full-text search over title, summary, tags, properties and body with Russian and English morphology (word forms match). All words must match (AND); if no article matches all words, the best partial matches are returned and mode is \"any\". Results are compact (no body) with score, snippet and matched_in; most relevant first. Filters narrow the result. Paging: if next_offset is present, call again with offset=next_offset.", "inputSchema": objectSchema(map[string]any{
 			"q":          prop("string", "Search words, whitespace separated. Omit to list by recent update."),
 			"space_id":   prop("string", "Only articles of this space."),
@@ -125,8 +125,9 @@ func mcpToolList() []map[string]any {
 		{"name": "wiki_write", "description": "Create an article (no id) or update one (id + article.base_revision). Update is a merge: fields you do not send keep their current values, so you may send only what changes. For small body changes prefer wiki_edit. Link other articles as [text](/?article=ID). Returns {id,revision,updated_at,title,space_id} without the body.", "inputSchema": objectSchema(map[string]any{"id": prop("string", "Id of the article to update; omit to create."), "article": article}, "article")},
 		{"name": "wiki_links", "description": "Navigate relations of an article: parent, children (sorted by title), outgoing links (articles it links to, with anchor when the link has one) and incoming links (articles linking to it). All entries are compact; deleted articles are skipped. To link articles in Markdown write [text](/?article=ID#anchor).", "inputSchema": objectSchema(map[string]any{"id": prop("string", idDesc)}, "id")},
 		{"name": "wiki_history", "description": "List revisions of an article, newest first, as compact {revision,author,message,created_at} without content. With revision returns that single snapshot in full (wiki_read with revision returns the body in a lighter form).", "inputSchema": objectSchema(map[string]any{"id": prop("string", idDesc), "revision": map[string]any{"type": "integer", "minimum": 1, "description": "Return this revision's full snapshot."}}, "id")},
-		{"name": "wiki_comments", "description": "Read all comments on an article, including resolved comments, in chronological order", "inputSchema": objectSchema(map[string]any{"id": stringSchema()}, "id")},
+		{"name": "wiki_comments", "description": "Read all comments on an article, including resolved comments (field resolved), in chronological order. Mark a comment done with wiki_comment_resolve.", "inputSchema": objectSchema(map[string]any{"id": stringSchema()}, "id")},
 		{"name": "wiki_restore", "description": "Restore a prior revision as a new revision", "inputSchema": objectSchema(map[string]any{"id": stringSchema(), "revision": map[string]any{"type": "integer", "minimum": 1}, "base_revision": map[string]any{"type": "integer", "minimum": 1}, "author": stringSchema(), "message": stringSchema()}, "id", "revision", "base_revision")},
+		{"name": "wiki_comment_resolve", "description": "Mark a comment resolved (or reopen it with resolved=false). Needs a write key; you may resolve your own comments with commenter access and anyone's with editor access to the article's project. Returns the comment.", "inputSchema": objectSchema(map[string]any{"id": prop("string", "Comment id (from wiki_comments)."), "resolved": prop("boolean", "true (default) to resolve, false to reopen.")}, "id")},
 		{"name": "wiki_comment", "description": "Add a comment to an article heading", "inputSchema": objectSchema(map[string]any{"id": stringSchema(), "anchor": stringSchema(), "body": stringSchema(), "author": stringSchema()}, "id", "body")},
 	}
 	return append(tools, artifactToolList()...)
@@ -167,6 +168,21 @@ func (s *Server) callTool(params map[string]json.RawMessage) any {
 		return s.toolLinks(args)
 	case "wiki_history":
 		return s.toolHistory(args)
+	case "wiki_comment_resolve":
+		ar := newArgs(args)
+		id := ar.str("id")
+		resolved := true
+		if raw, ok := args["resolved"]; ok && json.Unmarshal(raw, &resolved) != nil {
+			return toolErr("resolved must be a boolean")
+		}
+		if bad := ar.fail(); bad != nil {
+			return bad
+		}
+		if !validPathID(id) {
+			return toolErr("invalid comment id")
+		}
+		b, _ := json.Marshal(map[string]bool{"resolved": resolved})
+		return s.proxy("PATCH", "/api/comments/"+id, b)
 	case "wiki_comments", "wiki_restore", "wiki_comment":
 		id, bad := toolID(args)
 		if bad != nil {
@@ -488,6 +504,7 @@ func (s *Server) toolRead(args map[string]json.RawMessage) any {
 			Headings   []outlineHeading `json:"headings"`
 		}{a.ID, a.Title, a.Summary, a.SpaceID, a.ParentID, a.Kind, a.Status, a.Revision, a.UpdatedAt, historical, currentDeleted, utf8.RuneCountInString(a.Body), hs})
 	}
+	s.fillArticleAuthors(&a)
 	if historical {
 		return toolOK(struct {
 			Article
@@ -552,7 +569,9 @@ func (s *Server) toolHistory(args map[string]json.RawMessage) any {
 			return toolErr("revision not found")
 		}
 		_ = json.Unmarshal([]byte(raw), &x.Snapshot)
-		return toolOK(x)
+		one := []Revision{x}
+		s.fillRevisionAuthors(one)
+		return toolOK(one[0])
 	}
 	rows, err := s.DB.Query("SELECT revision,author,message,created_at FROM revisions WHERE article_id=? ORDER BY revision DESC", id)
 	if err != nil {
@@ -560,22 +579,53 @@ func (s *Server) toolHistory(args map[string]json.RawMessage) any {
 	}
 	defer rows.Close()
 	type item struct {
-		Revision  int    `json:"revision"`
-		Author    string `json:"author"`
-		Message   string `json:"message,omitempty"`
-		CreatedAt string `json:"created_at"`
+		Revision   int    `json:"revision"`
+		Author     string `json:"author"`
+		AuthorName string `json:"author_name"`
+		AuthorKind string `json:"author_kind,omitempty"`
+		Message    string `json:"message,omitempty"`
+		CreatedAt  string `json:"created_at"`
 	}
 	out := []item{}
+	authors := []string{}
 	for rows.Next() {
 		var it item
 		if rows.Scan(&it.Revision, &it.Author, &it.Message, &it.CreatedAt) == nil {
 			out = append(out, it)
+			authors = append(authors, it.Author)
 		}
+	}
+	names := s.authorInfos(authors...)
+	for i := range out {
+		out[i].AuthorName, out[i].AuthorKind = names[out[i].Author].Name, names[out[i].Author].Kind
 	}
 	return toolOK(out)
 }
 
 // ---- wiki_bootstrap ----
+
+// generalSpaceID is the shared rules space: app_settings general_space_id, default
+// "general" (also when the table is unavailable or the value is empty).
+func (s *Server) generalSpaceID(q queryer) string {
+	var v string
+	if err := q.QueryRow(`SELECT value FROM app_settings WHERE key='general_space_id'`).Scan(&v); err != nil || strings.TrimSpace(v) == "" {
+		return "general"
+	}
+	return v
+}
+
+// scopeSpaces returns the distinct spaces that appear in an MCP key scope.
+func scopeSpaces(views []mcpScopeView) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range views {
+		if v.SpaceID != "" && !seen[v.SpaceID] {
+			seen[v.SpaceID] = true
+			out = append(out, v.SpaceID)
+		}
+	}
+	return out
+}
 
 func (s *Server) toolBootstrap(args map[string]json.RawMessage) any {
 	ar := newArgs(args)
@@ -599,45 +649,49 @@ func (s *Server) toolBootstrap(args map[string]json.RawMessage) any {
 		live = "deleted_at IS NULL AND status<>'archived' AND corporate_container_writable(space_id,project_id)"
 	}
 	out := map[string]any{"spaces": spaces}
-	// A project-scoped credential cannot see whole spaces, so it would never
-	// learn the space_id its projects live in (required by wiki_write and
-	// wiki_bootstrap). List the live projects it can see: RLS already limits
-	// this to the credential's exact projects; nothing new becomes visible.
-	if s.principal != nil && s.principal.MCPProjects != nil {
-		type scopedProject struct {
-			ID      string `json:"id"`
-			Name    string `json:"name"`
-			SpaceID string `json:"space_id"`
-		}
-		projects := []scopedProject{}
-		prow, err := s.DB.Query("SELECT id,name,space_id FROM projects WHERE archived_at IS NULL ORDER BY name,id")
-		if err != nil {
-			return toolErr("database error")
-		}
-		for prow.Next() {
-			var p scopedProject
-			if prow.Scan(&p.ID, &p.Name, &p.SpaceID) == nil {
-				projects = append(projects, p)
+	// A scoped credential may not see whole spaces, so it would never learn the space_id
+	// of its elements (required by wiki_write and wiki_bootstrap). Return its own scope
+	// elements with display names; nothing new becomes visible.
+	var scopeViews []mcpScopeView
+	if s.principal != nil && s.principal.MCPScope != nil {
+		for _, v := range mcpScopeViews(s.DB, s.principal.MCPScope) {
+			if v.Type == "project" && v.SpaceID == "" {
+				continue // archived or not visible
 			}
+			scopeViews = append(scopeViews, v)
 		}
-		prow.Close()
-		out["projects"] = projects
+		if scopeViews == nil {
+			scopeViews = []mcpScopeView{}
+		}
+		out["scope"] = scopeViews
 	}
+	general := s.generalSpaceID(s.DB)
+	out["general_space_id"] = general
 	var instructions []Article
 	recentWhere, recentArgs := live, []any{}
+	order := " ORDER BY CASE WHEN space_id=? THEN 0 ELSE 1 END,title,id"
 	if space == "" {
-		instructions = s.selectArticles("SELECT " + articleColumns + " FROM articles WHERE " + live + " AND pinned=1 AND space_id='general' ORDER BY title,id")
-		others := s.selectArticles("SELECT " + articleColumns + " FROM articles WHERE " + live + " AND pinned=1 AND space_id<>'general' ORDER BY space_id,title,id")
+		full := []any{general}
+		if scopeViews != nil {
+			for _, sp := range scopeSpaces(scopeViews) {
+				if sp != general {
+					full = append(full, sp)
+				}
+			}
+		}
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(full)), ",")
+		instructions = s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND space_id IN ("+marks+")"+order, append(append([]any{}, full...), general)...)
+		others := s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND space_id NOT IN ("+marks+") ORDER BY space_id,title,id", full...)
 		out["other_pinned"] = compactAll(others)
-		out["guide"] = "Only pinned rules of the general space are included in full. other_pinned lists pinned articles of other spaces without bodies. Call wiki_bootstrap again with the space_id of your project to get its pinned rules in full, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates."
-		if _, ok := out["projects"]; ok {
-			out["guide"] = "This credential is limited to the listed projects. Call wiki_bootstrap again with the space_id of one of them to get its pinned rules, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates. To create an article pass that project's space_id and project_id."
+		out["guide"] = "Only pinned rules of the general space configured by the administrator (general_space_id) are included in full, listed first. other_pinned lists pinned articles of other spaces without bodies. Call wiki_bootstrap again with the space_id of your project to get its pinned rules in full, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates."
+		if scopeViews != nil {
+			out["guide"] = "This credential is limited to the elements of scope (a space element covers the whole space; a project element covers the project and its subprojects; each has its own read/write mode) plus the general space configured by the administrator (general_space_id, always readable). Pinned rules of the general space and of every space in scope are included in full, general first. Call wiki_bootstrap again with the space_id of one of them to narrow to it, then use wiki_search / wiki_read (outline, anchor) / wiki_links, edit with wiki_edit, and pass base_revision on updates. To create an article pass the space_id (and project_id) of a writable scope element."
 		}
 	} else {
-		instructions = s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND (space_id='general' OR space_id=?) ORDER BY title,id", space)
-		recentWhere += " AND (space_id='general' OR space_id=?)"
-		recentArgs = append(recentArgs, space)
-		out["guide"] = "Pinned rules of general and this space are included in full. Use wiki_search / wiki_read (outline, anchor) / wiki_links to find context, wiki_edit for small changes, and pass base_revision on updates."
+		instructions = s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+live+" AND pinned=1 AND (space_id=? OR space_id=?)"+order, general, space, general)
+		recentWhere += " AND (space_id=? OR space_id=?)"
+		recentArgs = append(recentArgs, general, space)
+		out["guide"] = "Pinned rules of the general space configured by the administrator (general_space_id) and of this space are included in full, general first. Use wiki_search / wiki_read (outline, anchor) / wiki_links to find context, wiki_edit for small changes, and pass base_revision on updates."
 	}
 	inInstr := map[string]bool{}
 	for _, a := range instructions {

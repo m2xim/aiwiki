@@ -25,7 +25,7 @@ func TestMCPPersistentWriteScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	scope, done, err := root.DB.scopedMCP(ctx, "alice", []string{"pat-a"}, "write")
+	scope, done, err := root.DB.scopedMCP(ctx, "alice", projScope("write", "pat-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestMCPPersistentWriteScope(t *testing.T) {
 		t.Fatalf("demotion=%q err=%v", role, err)
 	}
 	// Missing/invalid modes fail closed, even if scope JSON remains valid.
-	if _, err = scope.Exec(`SELECT set_config('app.mcp_mode','',false)`); err != nil {
+	if _, err = scope.Exec(`SELECT set_config('app.mcp_scope','[{"type":"project","id":"pat-a","mode":"bogus"}]',false)`); err != nil {
 		t.Fatal(err)
 	}
 	var absent sql.NullString
@@ -78,7 +78,7 @@ func TestMCPPersistentWriteScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	var mode string
-	if err = resumed.QueryRow(`SELECT current_setting('app.mcp_mode',true)`).Scan(&mode); err != nil || mode != "write" {
+	if err = resumed.QueryRow(`SELECT current_setting('app.mcp_scope',true)`).Scan(&mode); err != nil || mode != scopeJSONText(projScope("write", "pat-a")) {
 		t.Fatalf("resumed mode=%q err=%v", mode, err)
 	}
 	finish()
@@ -88,18 +88,15 @@ func TestMCPPersistentWriteScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if err = c.QueryRowContext(ctx, `SELECT coalesce(current_setting('app.mcp_mode',true),'')`).Scan(&mode); err != nil || mode != "" {
+	if err = c.QueryRowContext(ctx, `SELECT coalesce(current_setting('app.mcp_scope',true),'')`).Scan(&mode); err != nil || mode != "" {
 		t.Fatalf("leaked mode=%q err=%v", mode, err)
 	}
 }
 
 func TestMCPPersistentInvalidScopeMode(t *testing.T) {
 	d := &database{}
-	for _, test := range []struct {
-		projects []string
-		mode     string
-	}{{nil, "write"}, {[]string{}, ""}, {[]string{"p"}, "owner"}} {
-		if _, _, err := d.scopedMCP(context.Background(), "alice", test.projects, test.mode); err == nil {
+	for _, test := range [][]mcpScopeElement{{}, projScope("read", "p")} {
+		if _, _, err := d.scopedMCP(context.Background(), "alice", test); err == nil {
 			t.Fatalf("accepted invalid scope %+v", test)
 		}
 	}
@@ -109,7 +106,7 @@ func TestMCPPersistentMetadataGuards(t *testing.T) {
 	owner, root := corporateFixture(t)
 	for _, q := range []string{
 		`INSERT INTO mcp_service_accounts(id,owner_id,name) VALUES('svc_alice','alice','Alice'),('svc_bob','bob','Bob')`,
-		`INSERT INTO mcp_credentials(id,owner_id,name,secret_hash,project_ids,mode,expires_at) VALUES('pat_alice','alice','Alice',repeat('a',64),'["project"]','read',now()+interval '1 day'),('pat_bob','bob','Bob',repeat('b',64),'["project"]','read',now()+interval '1 day')`,
+		`INSERT INTO mcp_credentials(id,owner_id,name,secret_hash,scope,expires_at) VALUES('pat_alice','alice','Alice',repeat('a',64),'[{"type":"project","id":"project","mode":"read"}]',now()+interval '1 day'),('pat_bob','bob','Bob',repeat('b',64),'[{"type":"project","id":"project","mode":"read"}]',now()+interval '1 day')`,
 	} {
 		if _, err := owner.DB.Exec(q); err != nil {
 			t.Fatal(err)
@@ -127,7 +124,7 @@ func TestMCPPersistentMetadataGuards(t *testing.T) {
 		}
 	}
 	for _, q := range []string{
-		`UPDATE mcp_credentials SET project_ids='["expanded"]' WHERE id='pat_alice'`,
+		`UPDATE mcp_credentials SET scope='[{"type":"project","id":"expanded","mode":"read"}]' WHERE id='pat_alice'`,
 		`UPDATE mcp_credentials SET owner_id='bob' WHERE id='pat_alice'`,
 		`UPDATE mcp_credentials SET expires_at=expires_at+interval '1 hour' WHERE id='pat_alice'`,
 		`UPDATE mcp_credentials SET mode='write' WHERE id='pat_alice'`,

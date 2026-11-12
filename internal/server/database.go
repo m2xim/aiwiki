@@ -174,27 +174,22 @@ func (t *transaction) PrepareContext(context.Context, string) (*sql.Stmt, error)
 // userID, plus a cleanup function that must be called when the request ends.
 // SQLite has no row-level security, so there the result is an unpinned view.
 func (d *database) scoped(ctx context.Context, userID string) (*database, func(), error) {
-	return d.scopedProjects(ctx, userID, nil)
+	return d.scopedMCP(ctx, userID, nil)
 }
 
-// scopedProjects pins both the session user and optional exact project scope
-// to one connection. A nil project list means unrestricted; a non-nil empty
-// list denies access to every project.
-func (d *database) scopedProjects(ctx context.Context, userID string, projects []string) (*database, func(), error) {
-	mode := ""
-	if projects != nil {
-		mode = "read"
+// scopedMCP pins the session user and an optional MCP key scope to one connection.
+// A nil scope means unrestricted; a non-nil scope is carried verbatim in app.mcp_scope.
+func (d *database) scopedMCP(ctx context.Context, userID string, scope []mcpScopeElement, actor ...string) (*database, func(), error) {
+	actorID := ""
+	if len(actor) > 0 && actor[0] != userID {
+		actorID = actor[0] // service-account authorship; empty when it equals the user
 	}
-	return d.scopedMCP(ctx, userID, projects, mode)
-}
-
-func (d *database) scopedMCP(ctx context.Context, userID string, projects []string, mode string) (*database, func(), error) {
-	if projects == nil && mode != "" || projects != nil && mode != "read" && mode != "write" {
-		return nil, nil, errors.New("invalid MCP scope mode")
+	if scope != nil && len(scope) == 0 {
+		return nil, nil, errors.New("invalid MCP scope")
 	}
 	if !d.pg {
-		if projects != nil {
-			return nil, nil, errors.New("MCP project scopes require PostgreSQL")
+		if scope != nil {
+			return nil, nil, errors.New("MCP scopes require PostgreSQL")
 		}
 		return &database{pool: d.pool}, func() {}, nil
 	}
@@ -204,21 +199,21 @@ func (d *database) scopedMCP(ctx context.Context, userID string, projects []stri
 	if userID == "" {
 		return nil, nil, errors.New("scoped database requires a user id")
 	}
-	projectScope := ""
-	if projects != nil {
-		encoded, err := json.Marshal(projects)
+	scopeText := ""
+	if scope != nil {
+		encoded, err := json.Marshal(scope)
 		if err != nil {
 			return nil, nil, err
 		}
-		projectScope = string(encoded)
+		scopeText = string(encoded)
 	}
 	conn, err := d.pool.Conn(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	var gotUser, gotProjects, gotMode string
-	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_projects', $2, false), set_config('app.mcp_mode', $3, false)`, userID, projectScope, mode).Scan(&gotUser, &gotProjects, &gotMode)
-	if err == nil && (gotUser != userID || gotProjects != projectScope || gotMode != mode) {
+	var gotUser, gotScope, gotActor string
+	err = conn.QueryRowContext(ctx, `SELECT set_config('app.user_id', $1, false), set_config('app.mcp_scope', $2, false), set_config('app.actor_id', $3, false)`, userID, scopeText, actorID).Scan(&gotUser, &gotScope, &gotActor)
+	if err == nil && (gotUser != userID || gotScope != scopeText || gotActor != actorID) {
 		err = errors.New("session scope was not applied")
 	}
 	if err != nil {
@@ -238,9 +233,9 @@ func (d *database) scopedMCP(ctx context.Context, userID string, projects []stri
 				discardConn(conn)
 				return
 			}
-			var clearedUser, clearedProjects, clearedMode string
-			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_projects', '', false), set_config('app.mcp_mode', '', false)`).Scan(&clearedUser, &clearedProjects, &clearedMode)
-			if err != nil || clearedUser != "" || clearedProjects != "" || clearedMode != "" {
+			var clearedUser, clearedScope, clearedActor string
+			err := conn.QueryRowContext(cctx, `SELECT set_config('app.user_id', '', false), set_config('app.mcp_scope', '', false), set_config('app.actor_id', '', false)`).Scan(&clearedUser, &clearedScope, &clearedActor)
+			if err != nil || clearedUser != "" || clearedScope != "" || clearedActor != "" {
 				discardConn(conn)
 				return
 			}
@@ -248,12 +243,9 @@ func (d *database) scopedMCP(ctx context.Context, userID string, projects []stri
 		})
 	}
 	view.release = cleanup
-	resumeProjects := append([]string(nil), projects...)
-	if projects != nil && resumeProjects == nil {
-		resumeProjects = []string{}
-	}
+	resumeScope := append([]mcpScopeElement(nil), scope...)
 	view.resume = func(ctx context.Context) (*database, func(), error) {
-		return d.scopedMCP(ctx, userID, resumeProjects, mode)
+		return d.scopedMCP(ctx, userID, resumeScope, actorID)
 	}
 	return view, cleanup, nil
 }

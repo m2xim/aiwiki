@@ -27,26 +27,28 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 	if s.DB.pg {
 		cond = "deleted_at IS NULL AND pinned=1 AND status<>'archived' AND corporate_container_writable(space_id,project_id)"
 	}
+	general := s.generalSpaceID(s.DB)
 	args := []any{}
 	if space != "" {
-		cond += " AND (space_id='general' OR space_id=?)"
-		args = append(args, space)
+		cond += " AND (space_id=? OR space_id=?)"
+		args = append(args, general, space)
 	}
-	instructions := s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+cond+" ORDER BY title", args...)
+	args = append(args, general)
+	instructions := s.selectArticles("SELECT "+articleColumns+" FROM articles WHERE "+cond+" ORDER BY CASE WHEN space_id=? THEN 0 ELSE 1 END,title,id", args...)
 	recentQuery := "SELECT " + articleColumns + " FROM articles WHERE deleted_at IS NULL AND status<>'archived' AND space_id IN (SELECT id FROM spaces WHERE archived_at IS NULL)"
 	if s.DB.pg {
 		recentQuery = "SELECT " + articleColumns + " FROM articles WHERE deleted_at IS NULL AND status<>'archived' AND corporate_container_writable(space_id,project_id)"
 	}
 	recentArgs := []any{}
 	if space != "" {
-		recentQuery += " AND (space_id='general' OR space_id=?)"
-		recentArgs = append(recentArgs, space)
+		recentQuery += " AND (space_id=? OR space_id=?)"
+		recentArgs = append(recentArgs, general, space)
 	}
 	recent := s.selectArticles(recentQuery+" ORDER BY updated_at DESC LIMIT 12", recentArgs...)
 	for i := range recent {
 		recent[i].Body = ""
 	}
-	writeJSON(w, 200, map[string]any{"instructions": instructions, "spaces": spaces, "recent": recent, "guide": "Search for relevant context, read full articles, and use base_revision on updates."})
+	writeJSON(w, 200, map[string]any{"instructions": instructions, "general_space_id": general, "spaces": spaces, "recent": recent, "guide": "Pinned rules of the general space configured by the administrator (general_space_id) come first. Search for relevant context, read full articles, and use base_revision on updates."})
 }
 func (s *Server) selectArticles(q string, args ...any) []Article {
 	return selectArticlesFrom(s.DB, q, args...)
@@ -200,15 +202,15 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	switch q.Method {
 	case "initialize":
 		instructions := mcpInstructions
-		if s.principal != nil && s.principal.MCPProjects != nil {
-			instructions = "Persistent " + s.principal.MCPMode + " access to exact projects " + jsonText(s.principal.MCPProjects) + ". Current owner ACLs still apply; no implicit descendants, space-level access or administration. Use wiki_search_sections then revision-pinned bounded reads (max_chars=4000); edits require base_revision. Access expires at " + s.principal.MCPExpiresAt.UTC().Format("2006-01-02T15:04:05Z") + "."
+		if s.principal != nil && s.principal.MCPScope != nil {
+			instructions = "Persistent access limited to the scope " + jsonText(s.principal.MCPScope) + ": each element is a space (the whole space) or a project (the project and all its subprojects) with its own mode read or write. The general space configured by the administrator (shared rules, see general_space_id in wiki_bootstrap) is always readable; it is writable only if listed as a space element with mode write and you have editor access there. Current owner ACLs still apply; no administration. Use wiki_search_sections then revision-pinned bounded reads (max_chars=4000); edits require base_revision. Access expires at " + s.principal.MCPExpiresAt.UTC().Format("2006-01-02T15:04:05Z") + "."
 		}
 		result = map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]string{"name": "aiwiki", "version": "1.0"}, "instructions": instructions}
 	case "ping":
 		result = map[string]any{}
 	case "tools/list":
 		tools := mcpToolList()
-		if s.principal != nil && s.principal.MCPProjects != nil {
+		if s.principal != nil && s.principal.MCPScope != nil {
 			visible := make([]map[string]any, 0, len(tools))
 			for _, tool := range tools {
 				if name, _ := tool["name"].(string); mcpScopedTool(s.principal, name) {

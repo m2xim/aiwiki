@@ -107,6 +107,10 @@ func TestMCPWikiCommentsReturnsChronologicalArticleComments(t *testing.T) {
 	if got[0].ArticleID != want[1].ArticleID || got[0].Anchor != want[1].Anchor || got[0].Body != want[1].Body || got[0].Author != want[1].Author || got[0].CreatedAt != want[1].CreatedAt || got[0].Resolved {
 		t.Fatalf("earlier comment metadata mismatch: %#v", got[0])
 	}
+	if got[1].AuthorName != "Alice" { // SQLite/personal: free-text author is its own display name
+		t.Fatalf("author_name: %#v", got[1])
+	}
+	got[1].AuthorName = ""
 	if got[1] != want[0] {
 		t.Fatalf("resolved Markdown comment metadata mismatch: got %#v want %#v", got[1], want[0])
 	}

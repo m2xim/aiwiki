@@ -48,3 +48,9 @@ html[data-theme=dark] .mcp-persistent-secret{background:#23382a;border-color:#42
 @media(max-width:600px){.mcp-persistent-heading{align-items:flex-start;flex-direction:column}.mcp-persistent-card{flex-direction:column}.mcp-persistent-account-create{grid-template-columns:minmax(0,1fr)}.mcp-persistent-account-create>button,.mcp-persistent-actions>*{width:100%}}
 .mcp-persistent-card:has(.mcp-persistent-edit){flex-wrap:wrap}
 .mcp-persistent-edit{flex-basis:100%;margin-top:8px}
+
+.mcp-persistent-scope-row{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;gap:8px;margin-bottom:8px}
+.mcp-persistent-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px}
+.mcp-persistent-chip{padding:2px 8px;border-radius:10px;background:var(--lavender,#f5f3fc);font-size:12px}
+html[data-theme="dark"] .mcp-persistent-chip{background:var(--lavender,#282535)}
+@media(max-width:600px){.mcp-persistent-scope-row{grid-template-columns:minmax(0,1fr) auto}.mcp-persistent-scope-row>select:first-child{grid-column:1/-1}}

@@ -164,7 +164,7 @@ func (s *Server) moveHandler(w http.ResponseWriter, r *http.Request, apply bool)
 		return
 	}
 	// Delegated MCP sessions never move content.
-	if s.principal.MCPMode != "" || s.principal.MCPProjects != nil {
+	if s.principal.MCPScope != nil {
 		apiErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
