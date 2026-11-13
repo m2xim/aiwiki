@@ -1,11 +1,11 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 import { Compartment, EditorState, Transaction } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
-import { Bold, Code, FileCode, Heading1, Heading2, Heading3, Italic, Link, List, ListChecks, ListOrdered, Minus, Quote, Strikethrough, Table } from 'lucide-react';
+import { Bold, Code, FileCode, GripHorizontal, Heading1, Heading2, Heading3, Italic, Link, List, ListChecks, ListOrdered, Minus, Quote, Strikethrough, Table } from 'lucide-react';
 import { codeBlock, insertRule, insertTable, makeLink, toggleLines, toggleWrap, type FormatEdit } from './markdownFormat';
 import './MarkdownEditor.css';
 
@@ -51,7 +51,10 @@ type Props = {
   ariaLabel?: string;
   compact?: boolean;
   readOnly?: boolean;
+  resizable?: boolean;
 };
+
+const MAX_RESIZED_HEIGHT = 3000;
 
 const colors = {
   light: {
@@ -89,8 +92,15 @@ function themeExtension(theme: 'light' | 'dark') {
   }, { dark: theme === 'dark' })];
 }
 
-export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function MarkdownEditor({ value, onChange, theme, ariaLabel = 'Содержимое Markdown', compact = false, readOnly = false }, ref) {
+export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function MarkdownEditor({ value, onChange, theme, ariaLabel = 'Содержимое Markdown', compact = false, readOnly = false, resizable = false }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const hostId = useId();
+  const [resizedHeight, setResizedHeight] = useState<number | null>(null);
+  const [naturalHeight, setNaturalHeight] = useState<number | null>(null);
+  const dragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null);
+  const minHeight = compact ? 140 : 360;
+  const height = resizable ? resizedHeight : null;
+  const autoHeight = resizable && height === null;
   const viewRef = useRef<EditorView | null>(null);
   const themeRef = useRef<{ compartment: Compartment; extension: ReturnType<typeof themeExtension> } | null>(null);
   const editableRef = useRef<Compartment | null>(null);
@@ -179,6 +189,22 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
     if (view && compartment) view.dispatch({ effects: compartment.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]) });
   }, [readOnly]);
 
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!autoHeight || !host) return;
+    const measure = () => {
+      if (host.offsetHeight > 0) setNaturalHeight(host.offsetHeight);
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(host);
+    return () => observer?.disconnect();
+  }, [autoHeight]);
+
+  function resize(nextHeight: number) {
+    setResizedHeight(Math.min(MAX_RESIZED_HEIGHT, Math.max(minHeight, Math.round(nextHeight))));
+  }
+
   return (
     <div className={`markdown-editor markdown-editor--${theme}${compact ? ' markdown-editor--compact' : ''}`}>
       <div className="markdown-toolbar" role="toolbar" aria-label="Форматирование Markdown">
@@ -187,7 +213,45 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
             onMouseDown={e => e.preventDefault()} onClick={() => { const view = viewRef.current; if (view) applyFormat(view, run); }}><Icon size={15} aria-hidden="true" /></button>
         ))}
       </div>
-      <div className="markdown-editor-host" ref={hostRef} />
+      <div className={`markdown-editor-host${height === null ? '' : ' markdown-editor-host--resized'}`} id={resizable ? hostId : undefined} ref={hostRef} style={height === null ? undefined : { height }} />
+      {resizable && (
+        <div className="markdown-editor-resizer" role="separator" aria-orientation="horizontal"
+          aria-label="Высота редактора Markdown" aria-controls={hostId} aria-valuemin={minHeight}
+          aria-valuemax={MAX_RESIZED_HEIGHT} aria-valuenow={height ?? naturalHeight ?? minHeight}
+          tabIndex={0} title="Потяните вверх или вниз либо используйте стрелки. Двойной щелчок — сбросить."
+          onPointerDown={event => {
+            const host = hostRef.current;
+            if (!host || !event.isPrimary || event.button !== 0) return;
+            event.preventDefault();
+            event.currentTarget.focus({ preventScroll: true });
+            event.currentTarget.setPointerCapture(event.pointerId);
+            dragRef.current = { pointerId: event.pointerId, startY: event.pageY, startHeight: host.offsetHeight };
+          }}
+          onPointerMove={event => {
+            const drag = dragRef.current;
+            if (drag?.pointerId === event.pointerId) resize(drag.startHeight + event.pageY - drag.startY);
+          }}
+          onLostPointerCapture={event => {
+            if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+          }}
+          onKeyDown={event => {
+            const current = hostRef.current?.offsetHeight ?? minHeight;
+            const step = event.shiftKey ? 120 : 40;
+            switch (event.key) {
+              case 'ArrowUp': resize(current - step); break;
+              case 'ArrowDown': resize(current + step); break;
+              case 'Home': resize(minHeight); break;
+              case 'End': resize(MAX_RESIZED_HEIGHT); break;
+              case 'Enter': setResizedHeight(null); break;
+              default: return;
+            }
+            event.preventDefault();
+          }}
+          onDoubleClick={() => setResizedHeight(null)}
+        >
+          <GripHorizontal size={16} aria-hidden="true" />
+        </div>
+      )}
     </div>
   );
 });

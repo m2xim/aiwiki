@@ -94,3 +94,34 @@ html[data-theme="dark"] .markdown-tool:hover:not(:disabled) { background: #302d3
 .markdown-editor--compact .cm-gutters {
   padding: 0;
 }
+
+.markdown-editor .markdown-editor-host--resized .cm-editor {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+}
+
+.markdown-editor-resizer {
+  display: grid;
+  place-items: center;
+  height: 24px;
+  flex: none;
+  border-top: 1px solid var(--line, #d9dfeb);
+  background: var(--lavender, #f5f3fc);
+  color: var(--muted, #6b6880);
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.markdown-editor-resizer:hover,
+.markdown-editor-resizer:active,
+.markdown-editor-resizer:focus-visible {
+  color: var(--purple-dark, #5d43be);
+  background: var(--purple-light, #f0edff);
+}
+
+.markdown-editor-resizer:focus-visible {
+  outline: 2px solid var(--purple, #7357d9);
+  outline-offset: -2px;
+}

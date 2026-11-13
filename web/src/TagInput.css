@@ -1,0 +1,97 @@
+.tag-input {
+  position: relative;
+  min-width: 0;
+}
+
+.tag-input-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 35px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: text;
+}
+
+.tag-input-box:focus-within {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--purple) 12%, transparent);
+}
+
+.field .tag-input .tag-input-entry,
+.field .tag-input .tag-input-entry:focus {
+  flex: 1 1 100px;
+  width: auto;
+  min-width: 0;
+  height: 25px;
+  padding: 0 3px;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--ink);
+}
+
+.tag-input .tag-input-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 3px;
+  padding: 0 2px 0 7px;
+  border: 1px solid color-mix(in srgb, var(--purple) 20%, var(--purple-light));
+  border-radius: 5px;
+  background: var(--purple-light);
+  color: color-mix(in srgb, var(--purple) 75%, var(--ink));
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  cursor: default;
+}
+
+.tag-input-chip button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
+
+.tag-input-chip button:hover,
+.tag-input-chip button:focus-visible {
+  background: color-mix(in srgb, var(--purple) 18%, transparent);
+}
+
+.tag-input-suggestions {
+  position: absolute;
+  z-index: 15;
+  inset: calc(100% + 4px) 0 auto;
+  max-height: 200px;
+  overflow: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 8px 24px #28263a22;
+}
+
+.tag-input-suggestions li {
+  padding: 6px 9px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.tag-input-suggestions li:hover,
+.tag-input-suggestions [aria-selected="true"] {
+  background: var(--purple-light);
+  color: color-mix(in srgb, var(--purple) 75%, var(--ink));
+}

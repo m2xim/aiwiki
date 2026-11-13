@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Copy, Pencil, RefreshCw, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Copy, Info, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { AgentProject, client, MCPCredential, MCPServiceAccount } from './api';
+import './AdminSpaceDialogs.css';
 import './MCPPersistentAccess.css';
 
 const scopeErrors: Record<string, string> = {
@@ -22,18 +23,43 @@ const explainError = (error: unknown) => {
 const MAX_PROJECTS = 20;
 const VISIBILITY: Record<string, string> = { private: 'личный', public: 'публичный' };
 
+function KeyDialog({ title, busy, onClose, children, compact = false }: { title: string; busy: boolean; onClose: () => void; children: ReactNode; compact?: boolean }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    const opener = document.activeElement;
+    dialog?.showModal();
+    dialog?.querySelector<HTMLElement>('[data-initial-focus]')?.focus();
+    return () => { dialog?.close(); if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true }); };
+  }, []);
+  return <dialog ref={ref} className={`spaces-dialog admin-space-dialog mcp-key-dialog${compact ? ' mcp-key-dialog--compact' : ''}`} aria-labelledby={titleId}
+    onCancel={event => { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); }}>
+    <header className="spaces-head"><h2 id={titleId}>{title}</h2><button className="icon-button" type="button" aria-label={`Закрыть: ${title}`} disabled={busy} onClick={onClose}><X size={20}/></button></header>
+    {children}
+  </dialog>;
+}
+
 function ProjectPicker({ value, onChange, projects, disabled }: { value: string[]; onChange: (next: string[]) => void; projects: AgentProject[]; disabled: boolean }) {
+  const [query, setQuery] = useState('');
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter(item => item !== id) : [...value, id]);
   const known = new Set(projects.map(project => project.id));
+  const needle = query.trim().toLocaleLowerCase();
+  const visible = projects.filter(project => [project.name, project.description, project.owner_name].some(text => text?.toLocaleLowerCase().includes(needle)));
   return <fieldset className="mcp-persistent-scope">
     <legend>Проекты ключа <span>Выбрано: {value.length} из {MAX_PROJECTS}</span></legend>
-    {projects.length ? <div className="mcp-persistent-projects">{projects.map(project => <label className="mcp-persistent-project" key={project.id}>
+    <label className="mcp-persistent-label">Поиск проектов<input type="search" placeholder="Название, описание или владелец" value={query} disabled={disabled} onChange={event => setQuery(event.target.value)}/></label>
+    <div className="mcp-persistent-projects" role="group" aria-label="Проекты для ключа">{visible.map(project => <label className="mcp-persistent-project" key={project.id} data-selected={value.includes(project.id)}>
       <input type="checkbox" checked={value.includes(project.id)} disabled={disabled || (!value.includes(project.id) && value.length >= MAX_PROJECTS)} onChange={() => toggle(project.id)}/>
-      <span>{project.name} <span className="mcp-persistent-chip">{VISIBILITY[project.visibility]}</span></span>
-    </label>)}</div> : <p className="mcp-persistent-empty">Проектов пока нет. Создайте проект на вкладке «Проекты».</p>}
-    {value.filter(id => !known.has(id)).map(id => <p className="mcp-persistent-hint" key={id}>Проект {id} вам больше не доступен; снимите выбор или он будет убран при сохранении.</p>)}
-    <p className="mcp-persistent-hint">Агент с этим ключом работает в одном проекте, который указан в адресе подключения. Права агента в пространствах проекта не больше ваших. Общее пространство агент читает всегда.</p>
+      <span><strong>{project.name}</strong> <span className="mcp-persistent-chip">{VISIBILITY[project.visibility]}</span>{project.description && <small>{project.description}</small>}</span>
+    </label>)}{!visible.length && <p className="mcp-persistent-empty">{projects.length ? 'Проекты по этому запросу не найдены.' : 'Проектов пока нет. Создайте первый в разделе «Проекты».'}</p>}</div>
+    {value.filter(id => !known.has(id)).map(id => <div className="mcp-key-unavailable-project" key={id}><span>Недоступный проект. Уберите его из выбора, чтобы сохранить изменения.</span><button className="button ghost" type="button" disabled={disabled} onClick={() => toggle(id)}>Убрать недоступный проект</button></div>)}
+    <p className="mcp-persistent-hint">Выбор сохраняется при поиске.</p>
   </fieldset>;
+}
+
+function KeyScopeInfo() {
+  return <div className="mcp-key-info"><Info size={20} aria-hidden="true"/><p>Агент с этим ключом работает в одном из выбранных проектов, указанном в адресе подключения. Его права в пространствах проекта не превышают ваши. Общее пространство агент читает всегда.</p></div>;
 }
 
 const dateTime = (value: string) => {
@@ -47,6 +73,13 @@ export default function MCPPersistentAccess() {
   const [serviceAccounts, setServiceAccounts] = useState<MCPServiceAccount[]>([]);
   const [credentialsEnabled, setCredentialsEnabled] = useState<boolean | null>(null);
   const [serviceAccountsEnabled, setServiceAccountsEnabled] = useState<boolean | null>(null);
+  const [keyQuery, setKeyQuery] = useState('');
+  const [keyGroup, setKeyGroup] = useState<'active' | 'expired' | 'revoked'>('active');
+  const [viewingProjects, setViewingProjects] = useState<MCPCredential | null>(null);
+  const [creatingKey, setCreatingKey] = useState(false);
+  const [revoking, setRevoking] = useState<MCPCredential | null>(null);
+  const keyMutation = useRef(false);
+  const [creatingAccount, setCreatingAccount] = useState(false);
   const [name, setName] = useState('');
   const [projectIds, setProjectIds] = useState<string[]>([]);
   const [readOnly, setReadOnly] = useState(false);
@@ -61,6 +94,7 @@ export default function MCPPersistentAccess() {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const mounted = useRef(false);
+
 
   const load = useCallback(async () => {
     if (!mounted.current) return;
@@ -96,7 +130,8 @@ export default function MCPPersistentAccess() {
   const createCredential = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedName = name.trim();
-    if (!trimmedName || trimmedName.length > 80 || !projectIds.length || projectIds.length > MAX_PROJECTS || credentialsEnabled !== true) return;
+    if (keyMutation.current || busy || !trimmedName || trimmedName.length > 80 || !projectIds.length || projectIds.length > MAX_PROJECTS || projectIds.some(id => !agentProjects.some(project => project.id === id)) || credentialsEnabled !== true) return;
+    keyMutation.current = true;
     setSecret('');
     setError('');
     setNotice('');
@@ -115,24 +150,33 @@ export default function MCPPersistentAccess() {
       setSecret(token);
       setConnectHint(projectIds);
       setName('');
+      setCreatingKey(false);
+      setKeyQuery('');
+      setKeyGroup('active');
       setNotice('Ключ создан. Сохраните секрет сейчас: повторно он не показывается.');
     } catch (reason) {
       if (mounted.current) setError(explainError(reason));
     } finally {
+      keyMutation.current = false;
       if (mounted.current) setBusy(false);
     }
   };
 
   const [editing, setEditing] = useState<{ id: string; projects: string[]; readOnly: boolean } | null>(null);
+  const editingId = editing?.id;
+
+
 
   const startEdit = (credential: MCPCredential) => {
     setError('');
     setNotice('');
-    setEditing({ id: credential.id, projects: (credential.projects || []).filter(project => project.available).map(project => project.id), readOnly: credential.read_only });
+    setCreatingKey(false);
+    setEditing({ id: credential.id, projects: (credential.projects || []).map(project => project.id), readOnly: credential.read_only });
   };
 
   const saveEdit = async () => {
-    if (!editing || !editing.projects.length || editing.projects.length > MAX_PROJECTS) return;
+    if (keyMutation.current || busy || credentialsEnabled !== true || !editing || !editing.projects.length || editing.projects.length > MAX_PROJECTS || editing.projects.some(id => !agentProjects.some(project => project.id === id))) return;
+    keyMutation.current = true;
     setSecret('');
     setError('');
     setNotice('');
@@ -146,11 +190,14 @@ export default function MCPPersistentAccess() {
     } catch (reason) {
       if (mounted.current) setError(explainError(reason));
     } finally {
+      keyMutation.current = false;
       if (mounted.current) setBusy(false);
     }
   };
 
   const revokeCredential = async (id: string) => {
+    if (keyMutation.current || busy) return;
+    keyMutation.current = true;
     setSecret('');
     setError('');
     setNotice('');
@@ -159,10 +206,12 @@ export default function MCPPersistentAccess() {
       await client.revokeMCPCredential(id);
       if (!mounted.current) return;
       setCredentials(current => current.map(item => item.id === id ? { ...item, revoked_at: new Date().toISOString() } : item));
+      setRevoking(null);
       setNotice('Постоянный ключ отозван.');
     } catch (reason) {
       if (mounted.current) setError(explainError(reason));
     } finally {
+      keyMutation.current = false;
       if (mounted.current) setBusy(false);
     }
   };
@@ -181,6 +230,7 @@ export default function MCPPersistentAccess() {
       setServiceAccounts(current => [account, ...current.filter(item => item.id !== account.id)]);
       setServiceAccountName('');
       setServiceAccountId(account.id);
+      setCreatingAccount(false);
       setNotice('Сервисная учётная запись создана.');
     } catch (reason) {
       if (mounted.current) setError(explainError(reason));
@@ -241,114 +291,214 @@ export default function MCPPersistentAccess() {
     }
   };
 
+  const query = keyQuery.trim().toLocaleLowerCase('ru-RU');
+  const now = Date.now();
+  const credentialStatus = (credential: MCPCredential) => credential.revoked_at ? 'revoked' : Date.parse(credential.expires_at) <= now ? 'expired' : 'active';
+  const keyGroups = [
+    { id: 'active' as const, label: 'Активные', empty: 'Активных ключей пока нет.' },
+    { id: 'expired' as const, label: 'Истёкшие', empty: 'Ключей с истёкшим сроком нет.' },
+    { id: 'revoked' as const, label: 'Отозванные', empty: 'Отозванных ключей пока нет.' },
+  ];
+  const visibleCredentials = credentials.filter(credential => credentialStatus(credential) === keyGroup && credential.name.toLocaleLowerCase('ru-RU').includes(query));
+  const editedCredential = credentials.find(credential => credential.id === editingId);
+  const disablingAccount = serviceAccounts.find(account => account.id === confirmDisableId);
 
-  return <section className="mcp-persistent" aria-labelledby="mcp-persistent-title" aria-busy={busy}>
-    <div className="mcp-persistent-heading">
-      <div><h2 id="mcp-persistent-title">Постоянный MCP-доступ</h2><p>Создавайте собственные ключи с ограниченным сроком и списком проектов, в которых может работать агент.</p></div>
-      <button type="button" className="mcp-persistent-secondary" onClick={() => void load()} disabled={busy} aria-label="Обновить постоянные ключи"><RefreshCw size={15}/>Обновить</button>
-    </div>
+  return <div className="mcp-persistent" aria-busy={busy}>
+    {error && !creatingKey && !editing && !revoking && !secret && <div className="mcp-persistent-error" role="alert">{error}</div>}
+    {notice && !secret && <div className="mcp-persistent-status" role="status">{notice}</div>}
 
-    <aside className="mcp-persistent-warning">
-      Каждый запрос проверяется по текущим правам владельца: ключ не даёт больше, чем есть у вас сейчас. Агент с ключом работает в одном проекте из списка ключа; итоговое право в пространстве — меньшее из режима в проекте и ваших прав. Общее пространство ключ читает всегда. Выход из системы не отзывает ключ. Ключ перестаёт работать после истечения срока, отзыва, отключения владельца администратором или если владелец не входил в вики больше 14 дней (снова заработает после входа). Максимальный срок — 180 дней.
-    </aside>
-
-    {credentialsEnabled === false && <div className="mcp-persistent-unavailable" role="status">Постоянный MCP-доступ недоступен в этом режиме работы вики.</div>}
-    {serviceAccountsEnabled === false && <div className="mcp-persistent-unavailable" role="status">Управление сервисными учётными записями недоступно в этом режиме работы вики.</div>}
-    {error && <div className="mcp-persistent-error" role="alert">{error}</div>}
-    {notice && <div className="mcp-persistent-status" role="status">{notice}</div>}
-
-    {secret && <section className="mcp-persistent-secret" aria-labelledby="mcp-persistent-secret-title">
-      <h3 id="mcp-persistent-secret-title">Секрет показан только сейчас</h3>
-      <p>Скопируйте и сохраните его в настройках клиента MCP. Очистка секрета не отзывает созданный ключ.</p>
-      {connectHint.length > 0 && <p>Подключение: <code>{window.location.origin}/mcp?project={connectHint[0]}</code> — агент сам предложит выбрать проект при первом подключении.</p>}
-      <textarea aria-label="Секрет постоянного MCP-ключа" readOnly value={secret} rows={3} spellCheck={false} />
-      <div className="mcp-persistent-actions">
-        <button type="button" className="mcp-persistent-secondary" onClick={() => void copySecret()}><Copy size={15}/>Скопировать</button>
-        <button type="button" className="mcp-persistent-secondary" onClick={() => { setSecret(''); setConnectHint([]); setNotice('Секрет очищен.'); }}>Очистить секрет</button>
+    <section className="admin-work-panel" aria-labelledby="mcp-persistent-list-title">
+      <div className="admin-work-toolbar mcp-persistent-toolbar">
+        <h3 id="mcp-persistent-list-title">Мои ключи</h3>
+        <div className="mcp-persistent-toolbar-actions">
+          {credentials.length > 0 && <input type="search" aria-label="Поиск по названию ключа" placeholder="Поиск по названию" value={keyQuery} onChange={event => setKeyQuery(event.target.value)}/>}
+          {credentialsEnabled === true && <button type="button" className="mcp-persistent-primary" aria-haspopup="dialog" onClick={() => { setError(''); setName(''); setProjectIds([]); setReadOnly(false); setTtlDays(30); setServiceAccountId(''); setCreatingKey(true); setEditing(null); }} disabled={busy}><Plus size={15}/>Создать ключ</button>}
+          <button type="button" className="mcp-persistent-secondary" onClick={() => void load()} disabled={busy}><RefreshCw size={15}/>Обновить</button>
+        </div>
       </div>
-    </section>}
 
-    {credentialsEnabled === true && <form className="mcp-persistent-form" onSubmit={event => void createCredential(event)}>
-      <h3>Создать ключ</h3>
-      <label className="mcp-persistent-label">Название ключа
-        <input value={name} onChange={event => setName(event.target.value)} maxLength={80} required aria-describedby="mcp-persistent-name-limit" />
-      </label>
-      <small id="mcp-persistent-name-limit">До 80 символов</small>
+      <div className="admin-space-catalog-tabs mcp-key-tabs" role="group" aria-label="Статус ключей">
+        {keyGroups.map(group => <button key={group.id} type="button" className="button ghost" aria-pressed={keyGroup === group.id} onClick={() => setKeyGroup(group.id)}>{group.label} <span>{credentials.filter(credential => credentialStatus(credential) === group.id).length}</span></button>)}
+      </div>
 
-      <ProjectPicker value={projectIds} onChange={setProjectIds} projects={agentProjects} disabled={busy}/>
-      <label className="mcp-persistent-choice"><input type="checkbox" checked={readOnly} onChange={event => setReadOnly(event.target.checked)} disabled={busy}/>Только чтение</label>
+      {credentialsEnabled === false && <div className="mcp-persistent-unavailable" role="status">Постоянный MCP-доступ недоступен в этом режиме работы вики.</div>}
 
-      <label className="mcp-persistent-label">Срок действия
-        <select value={ttlDays} onChange={event => setTtlDays(Number(event.target.value))} disabled={busy}>
-          <option value={1}>1 день</option><option value={7}>7 дней</option><option value={30}>30 дней</option><option value={90}>90 дней</option><option value={180}>180 дней</option>
-        </select>
-      </label>
-      <label className="mcp-persistent-label">От чьего имени действует ключ
-        <select value={serviceAccountId} onChange={event => setServiceAccountId(event.target.value)} disabled={busy || serviceAccountsEnabled === false}>
-          <option value="">Моя учётная запись</option>
-          {serviceAccounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
-        </select>
-      </label>
-      <button className="mcp-persistent-primary" type="submit" disabled={busy || credentialsEnabled !== true || !name.trim() || name.trim().length > 80 || projectIds.length < 1 || projectIds.length > MAX_PROJECTS}>
-        Создать ключ
-      </button>
-    </form>}
+      {secret && <KeyDialog title="Ключ создан" compact busy={false} onClose={() => { setSecret(''); setConnectHint([]); }}><section className="mcp-persistent-secret" aria-labelledby="mcp-persistent-secret-title">
+        <h4 id="mcp-persistent-secret-title">Секрет показан только сейчас</h4>
+        {notice && <p role="status">{notice}</p>}
+        <p>Скопируйте и сохраните его в настройках клиента MCP. Очистка секрета не отзывает созданный ключ.</p>
+        {connectHint.length > 0 && <p>Адрес подключения <code>{window.location.origin}/mcp?project={connectHint[0]}</code>. Агент сам предложит выбрать проект при первом подключении.</p>}
+        <textarea aria-label="Секрет постоянного MCP-ключа" readOnly value={secret} rows={3} spellCheck={false} />
+        {error && <p className="mcp-persistent-error" role="alert">{error}</p>}
+        <div className="mcp-persistent-actions">
+          <button type="button" className="mcp-persistent-secondary" onClick={() => void copySecret()}><Copy size={15}/>Скопировать</button>
+          <button type="button" className="mcp-persistent-secondary" onClick={() => { setSecret(''); setConnectHint([]); setNotice('Секрет очищен.'); }}>Очистить секрет</button>
+        </div>
+      </section></KeyDialog>}
 
-    <section className="mcp-persistent-accounts" aria-labelledby="mcp-persistent-accounts-title">
-      <h3 id="mcp-persistent-accounts-title">Мои сервисные учётные записи</h3>
-      <p className="mcp-persistent-hint">Это ваши собственные учётные записи. Отключение навсегда отключает запись и отзывает все связанные ключи.</p>
-      {serviceAccountsEnabled === true && <form className="mcp-persistent-account-create" onSubmit={event => void createServiceAccount(event)}>
-        <label className="mcp-persistent-label">Название сервисной учётной записи
-          <input value={serviceAccountName} onChange={event => setServiceAccountName(event.target.value)} maxLength={80} required />
+      {credentialsEnabled === true && creatingKey && <KeyDialog title="Создать ключ" busy={busy} onClose={() => setCreatingKey(false)}><form className="mcp-persistent-form" onSubmit={event => void createCredential(event)}>
+
+        <label className="mcp-persistent-label">Название ключа
+          <input value={name} onChange={event => setName(event.target.value)} maxLength={80} required disabled={busy} data-initial-focus/>
         </label>
-        <button className="mcp-persistent-secondary" type="submit" disabled={busy || !serviceAccountName.trim() || serviceAccountName.trim().length > 80}>Создать учётную запись</button>
-      </form>}
-      {serviceAccounts.length ? <div className="mcp-persistent-cards">{serviceAccounts.map(account => <article className="mcp-persistent-card" key={account.id}>
-        <div className="mcp-persistent-card-content">{renaming?.id === account.id
-          ? <form className="mcp-persistent-actions" onSubmit={event => { event.preventDefault(); void renameServiceAccount(); }}>
-              <input aria-label="Новое название сервисной учётной записи" value={renaming.name} maxLength={80} required autoFocus onChange={event => setRenaming({ id: account.id, name: event.target.value })}/>
-              <button type="submit" className="mcp-persistent-primary" disabled={busy || !renaming.name.trim() || renaming.name.trim().length > 80}>Сохранить</button>
-              <button type="button" className="mcp-persistent-secondary" disabled={busy} onClick={() => setRenaming(null)}>Отмена</button>
-              <small className="mcp-persistent-hint">Новое имя сразу появится в истории правок, в том числе в старых</small>
-            </form>
-          : <h4>{account.name}</h4>}<p><strong>ID:</strong> {account.id}</p><p><strong>Создана:</strong> <time dateTime={account.created_at}>{dateTime(account.created_at)}</time></p></div>
-        {renaming?.id !== account.id && confirmDisableId !== account.id && <button type="button" className="mcp-persistent-secondary" onClick={() => { setSecret(''); setRenaming({ id: account.id, name: account.name }); }} disabled={busy}><Pencil size={15}/>Переименовать</button>}
-        {confirmDisableId === account.id ? <div className="mcp-persistent-confirm" role="group" aria-label={`Подтверждение отключения: ${account.name}`}>
-          <span>Отключить навсегда и отозвать все связанные ключи?</span>
-          <button type="button" className="mcp-persistent-danger" onClick={() => void disableServiceAccount(account.id)} disabled={busy}>Отключить</button>
-          <button type="button" className="mcp-persistent-secondary" onClick={() => setConfirmDisableId('')} disabled={busy}>Отмена</button>
-        </div> : <button type="button" className="mcp-persistent-danger" onClick={() => { setSecret(''); setConfirmDisableId(account.id); }} disabled={busy}><Trash2 size={15}/>Отключить</button>}
-      </article>)}</div> : <p className="mcp-persistent-empty">Сервисных учётных записей пока нет.</p>}
+        <ProjectPicker value={projectIds} onChange={setProjectIds} projects={agentProjects} disabled={busy}/>
+        <div className="mcp-persistent-form-fields">
+          <label className="mcp-persistent-label">Срок действия
+            <select value={ttlDays} onChange={event => setTtlDays(Number(event.target.value))} disabled={busy}>
+              <option value={1}>1 день</option><option value={7}>7 дней</option><option value={30}>30 дней</option><option value={90}>90 дней</option><option value={180}>180 дней</option>
+            </select>
+          </label>
+          <label className="mcp-persistent-label">От чьего имени действует ключ
+            <select value={serviceAccountId} onChange={event => setServiceAccountId(event.target.value)} disabled={busy || serviceAccountsEnabled === false}>
+              <option value="">Моя учётная запись</option>
+              {serviceAccounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          </label>
+        </div>
+        <label className="mcp-persistent-choice"><input type="checkbox" checked={readOnly} onChange={event => setReadOnly(event.target.checked)} disabled={busy}/>Только чтение</label>
+        <KeyScopeInfo/>
+        {error && <p className="mcp-persistent-error" role="alert">{error}</p>}
+        <div className="mcp-persistent-actions mcp-key-footer">
+          <button className="mcp-persistent-primary" type="submit" disabled={busy || !name.trim() || name.trim().length > 80 || projectIds.length < 1 || projectIds.length > MAX_PROJECTS}>Создать</button>
+          <button className="mcp-persistent-secondary" type="button" onClick={() => setCreatingKey(false)} disabled={busy}>Отмена</button>
+        </div>
+      </form></KeyDialog>}
+
+      {editing && editedCredential && <KeyDialog title={`Настройки ключа «${editedCredential.name}»`} busy={busy} onClose={() => setEditing(null)}><form className="mcp-persistent-form" onSubmit={event => { event.preventDefault(); void saveEdit(); }}>
+        <p className="mcp-persistent-hint">Название, срок действия и учётная запись заданы при создании. Здесь можно изменить проекты и режим чтения; секрет останется прежним.</p>
+        <ProjectPicker value={editing.projects} onChange={projects => setEditing({ ...editing, projects })} projects={agentProjects} disabled={busy}/>
+        <label className="mcp-persistent-choice"><input type="checkbox" checked={editing.readOnly} onChange={event => setEditing({ ...editing, readOnly: event.target.checked })} disabled={busy}/>Только чтение</label>
+        <KeyScopeInfo/>
+        {error && <p className="mcp-persistent-error" role="alert">{error}</p>}
+        <div className="mcp-persistent-actions mcp-key-footer">
+          <button type="submit" className="mcp-persistent-primary" disabled={busy || credentialsEnabled !== true || editing.projects.length < 1 || editing.projects.length > MAX_PROJECTS || editing.projects.some(id => !agentProjects.some(project => project.id === id))}>Сохранить</button>
+          <button type="button" className="mcp-persistent-secondary" onClick={() => setEditing(null)} disabled={busy}>Отмена</button>
+        </div>
+      </form></KeyDialog>}
+
+      {revoking && <KeyDialog title={`Отозвать ключ «${revoking.name}»?`} compact busy={busy} onClose={() => setRevoking(null)}>
+        <div className="mcp-persistent-form"><p className="mcp-key-revoke-warning">Ключ перестанет работать. Отменить отзыв нельзя; для повторного подключения потребуется создать новый ключ.</p>
+          {error && <p className="mcp-persistent-error" role="alert">{error}</p>}
+          <div className="mcp-persistent-actions mcp-key-footer"><button className="mcp-persistent-secondary" type="button" data-initial-focus disabled={busy} onClick={() => setRevoking(null)}>Нет</button><button className="mcp-persistent-danger" type="button" disabled={busy} onClick={() => void revokeCredential(revoking.id)}>{busy ? 'Отзываем…' : 'Да, отозвать'}</button></div>
+        </div>
+      </KeyDialog>}
+
+      {viewingProjects && <KeyDialog title={`Проекты ключа «${viewingProjects.name}»`} busy={false} onClose={() => setViewingProjects(null)}>
+        <ul className="mcp-key-project-list">{(viewingProjects.projects || []).map(project => <li key={project.id}>
+          <div><strong>{project.name || project.id}</strong><span className="mcp-persistent-chip">{VISIBILITY[project.visibility] || project.visibility || 'Тип не указан'}</span></div>
+          <small>{project.available ? 'Доступен' : 'Недоступен'}</small>
+        </li>)}</ul>
+        <div className="mcp-persistent-actions mcp-key-footer"><button type="button" className="mcp-persistent-secondary" data-initial-focus onClick={() => setViewingProjects(null)}>Закрыть</button></div>
+      </KeyDialog>}
+
+      {(credentialsEnabled === true || credentials.length > 0) && <div className="admin-work-table-wrap" role="region" aria-labelledby="mcp-persistent-list-title" tabIndex={0}>
+        <table className="admin-work-table mcp-persistent-key-table">
+          <thead>
+            <tr>
+              <th scope="col">Название</th>
+              <th scope="col">Статус</th>
+              <th scope="col">От имени</th>
+              <th scope="col">Проекты</th>
+              <th scope="col">Действует до</th>
+              <th scope="col">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleCredentials.map(credential => {
+              const expired = Date.parse(credential.expires_at) <= now;
+              const revoked = Boolean(credential.revoked_at);
+              const projects = credential.projects || [];
+              const accountId = credential.service_account_id;
+              const owner = accountId ? serviceAccounts.find(account => account.id === accountId)?.name || accountId : 'Моя учётная запись';
+              return <tr key={credential.id}>
+                <th scope="row">
+                  {credential.name}
+                  {credential.read_only && <small className="mcp-persistent-meta">Только чтение</small>}
+                </th>
+                <td><span className={'mcp-persistent-state' + (revoked || expired ? '' : ' is-active')}>{revoked ? 'Отозван' : expired ? 'Истёк' : 'Активен'}</span></td>
+                <td>{owner}</td>
+                <td>
+                  {projects.length > 0 ? <button type="button" className="mcp-key-project-button" aria-haspopup="dialog" aria-label={`Проекты ключа «${credential.name}»: ${projects.length}`} onClick={() => setViewingProjects(credential)}>Проектов: {projects.length}</button> : '—'}
+                </td>
+                <td>
+                  <time dateTime={credential.expires_at}>{dateTime(credential.expires_at)}</time>
+                  <small className="mcp-persistent-meta">Создан <time dateTime={credential.created_at}>{dateTime(credential.created_at)}</time></small>
+                </td>
+                <td>{!revoked && !expired ? <div className="mcp-persistent-actions">
+                  <button type="button" className="icon-button" title="Редактировать ключ" aria-label={`Редактировать ключ «${credential.name}»`} aria-haspopup="dialog" onClick={() => startEdit(credential)} disabled={busy || credentialsEnabled !== true}><Pencil size={17}/></button>
+                  <button type="button" className="icon-button" title="Отозвать ключ" aria-label={`Отозвать ключ «${credential.name}»`} aria-haspopup="dialog" onClick={() => { setError(''); setRevoking(credential); }} disabled={busy}><Trash2 size={17}/></button>
+                </div> : '—'}</td>
+              </tr>;
+            })}
+            {!visibleCredentials.length && <tr><td colSpan={6} className="mcp-persistent-empty">{query ? 'В этой группе ключи с таким названием не найдены.' : keyGroups.find(group => group.id === keyGroup)?.empty}</td></tr>}
+          </tbody>
+        </table>
+      </div>}
+
+      <details className="mcp-persistent-warning">
+        <summary>Как работают права и срок действия ключа</summary>
+        <p>Каждый запрос проверяется по текущим правам владельца. Агент работает в одном проекте из списка ключа. Право в пространстве определяется меньшим из режима проекта и ваших прав. Общее пространство ключ читает всегда.</p>
+        <p>Выход из системы не отзывает ключ. Ключ перестаёт работать после истечения срока, отзыва или отключения владельца администратором. После 14 дней без входа ключ приостанавливается до следующего входа владельца. Максимальный срок — 180 дней.</p>
+      </details>
     </section>
 
-    <section className="mcp-persistent-list" aria-labelledby="mcp-persistent-list-title">
-      <h3 id="mcp-persistent-list-title">Мои ключи</h3>
-      {credentials.length ? <div className="mcp-persistent-cards">{credentials.map(credential => {
-        const expired = Date.parse(credential.expires_at) <= Date.now();
-        const revoked = Boolean(credential.revoked_at);
-        return <article className="mcp-persistent-card" key={credential.id}>
-          <div className="mcp-persistent-card-content">
-            <h4>{credential.name}</h4>
-            <p><strong>Статус:</strong> {revoked ? 'Отозван' : expired ? 'Истёк' : 'Активен'}</p>
-            <p><strong>От имени:</strong> {credential.service_account_id ? serviceAccounts.find(account => account.id === credential.service_account_id)?.name || credential.service_account_id : 'Моя учётная запись'}</p>
-            <div className="mcp-persistent-chips"><strong>Проекты:</strong>{(credential.projects || []).map(project => <span className={`mcp-persistent-chip${project.available ? '' : ' is-unavailable'}`} key={project.id} title={project.available ? undefined : 'Проект удалён или недоступен'}>{project.name || project.id} · {VISIBILITY[project.visibility] || project.visibility}{project.available ? '' : ' · недоступен'}</span>)}{credential.read_only && <span className="mcp-persistent-chip">только чтение</span>}</div>
-            <p><strong>Создан:</strong> <time dateTime={credential.created_at}>{dateTime(credential.created_at)}</time></p>
-            <p><strong>Истекает:</strong> <time dateTime={credential.expires_at}>{dateTime(credential.expires_at)}</time></p>
-          </div>
-          {editing?.id === credential.id && <div className="mcp-persistent-form mcp-persistent-edit">
-            <ProjectPicker value={editing.projects} onChange={next => setEditing({ ...editing, projects: next })} projects={agentProjects} disabled={busy}/>
-            <label className="mcp-persistent-choice"><input type="checkbox" checked={editing.readOnly} onChange={event => setEditing({ ...editing, readOnly: event.target.checked })} disabled={busy}/>Только чтение</label>
-            <div className="mcp-persistent-actions">
-              <button type="button" className="mcp-persistent-primary" onClick={() => void saveEdit()} disabled={busy || editing.projects.length < 1 || editing.projects.length > MAX_PROJECTS}>Сохранить</button>
-              <button type="button" className="mcp-persistent-secondary" onClick={() => setEditing(null)} disabled={busy}>Отмена</button>
-            </div>
-          </div>}
-          {!revoked && !expired && editing?.id !== credential.id && <div className="mcp-persistent-actions">
-            <button type="button" className="mcp-persistent-secondary" onClick={() => startEdit(credential)} disabled={busy}><Pencil size={15}/>Изменить</button>
-            <button type="button" className="mcp-persistent-danger" onClick={() => void revokeCredential(credential.id)} disabled={busy}><Trash2 size={15}/>Отозвать</button>
-          </div>}
-        </article>;
-      })}</div> : <p className="mcp-persistent-empty">Ключей пока нет.</p>}
+    <section className="admin-work-panel" aria-labelledby="mcp-persistent-accounts-title">
+      <div className="admin-work-toolbar mcp-persistent-toolbar">
+        <h3 id="mcp-persistent-accounts-title">Мои сервисные учётные записи</h3>
+        {serviceAccountsEnabled === true && <button type="button" className="mcp-persistent-primary" aria-expanded={creatingAccount} onClick={() => { setCreatingAccount(!creatingAccount); setRenaming(null); setConfirmDisableId(''); }} disabled={busy}><Plus size={15}/>Создать учётную запись</button>}
+      </div>
+      {serviceAccountsEnabled === false && <div className="mcp-persistent-unavailable" role="status">Управление сервисными учётными записями недоступно в этом режиме работы вики.</div>}
+      {serviceAccountsEnabled === true && creatingAccount && <form className="admin-work-detail mcp-persistent-form" onSubmit={event => void createServiceAccount(event)}>
+        <label className="mcp-persistent-label">Название сервисной учётной записи
+          <input value={serviceAccountName} onChange={event => setServiceAccountName(event.target.value)} maxLength={80} required disabled={busy} autoFocus />
+        </label>
+        <div className="mcp-persistent-actions">
+          <button className="mcp-persistent-primary" type="submit" disabled={busy || !serviceAccountName.trim() || serviceAccountName.trim().length > 80}>Создать</button>
+          <button className="mcp-persistent-secondary" type="button" onClick={() => setCreatingAccount(false)} disabled={busy}>Отмена</button>
+        </div>
+      </form>}
+      {renaming && <form className="admin-work-detail mcp-persistent-form" onSubmit={event => { event.preventDefault(); void renameServiceAccount(); }}>
+        <label className="mcp-persistent-label">Новое название сервисной учётной записи
+          <input key={renaming.id} value={renaming.name} maxLength={80} required disabled={busy} autoFocus onChange={event => setRenaming({ ...renaming, name: event.target.value })}/>
+        </label>
+        <p className="mcp-persistent-hint">Новое имя сразу появится в истории правок, в том числе в старых.</p>
+        <div className="mcp-persistent-actions">
+          <button type="submit" className="mcp-persistent-primary" disabled={busy || !renaming.name.trim() || renaming.name.trim().length > 80}>Сохранить</button>
+          <button type="button" className="mcp-persistent-secondary" disabled={busy} onClick={() => setRenaming(null)}>Отмена</button>
+        </div>
+      </form>}
+      {disablingAccount && <div key={disablingAccount.id} className="admin-work-detail mcp-persistent-form" role="group" aria-label={'Подтверждение отключения: ' + disablingAccount.name}>
+        <p>Отключить «{disablingAccount.name}» навсегда и отозвать все связанные ключи?</p>
+        <div className="mcp-persistent-actions">
+          <button type="button" className="mcp-persistent-danger" onClick={() => void disableServiceAccount(disablingAccount.id)} disabled={busy}>Отключить</button>
+          <button type="button" className="mcp-persistent-secondary" onClick={() => setConfirmDisableId('')} disabled={busy} autoFocus>Отмена</button>
+        </div>
+      </div>}
+      {(serviceAccountsEnabled === true || serviceAccounts.length > 0) && <div className="admin-work-table-wrap" role="region" aria-labelledby="mcp-persistent-accounts-title" tabIndex={0}>
+        <table className="admin-work-table mcp-persistent-account-table">
+          <thead>
+            <tr>
+              <th scope="col">Название</th>
+              <th scope="col">ID</th>
+              <th scope="col">Дата создания</th>
+              <th scope="col">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {serviceAccounts.map(account => <tr key={account.id}>
+              <th scope="row">{account.name}</th>
+              <td><code>{account.id}</code></td>
+              <td><time dateTime={account.created_at}>{dateTime(account.created_at)}</time></td>
+              <td><div className="mcp-persistent-actions">
+                <button type="button" className="mcp-persistent-secondary" aria-expanded={renaming?.id === account.id} onClick={() => { setSecret(''); setCreatingAccount(false); setConfirmDisableId(''); setRenaming(renaming?.id === account.id ? null : { id: account.id, name: account.name }); }} disabled={busy}><Pencil size={14}/>Переименовать</button>
+                <button type="button" className="mcp-persistent-danger" aria-expanded={confirmDisableId === account.id} onClick={() => { setSecret(''); setCreatingAccount(false); setRenaming(null); setConfirmDisableId(confirmDisableId === account.id ? '' : account.id); }} disabled={busy}><Trash2 size={14}/>Отключить</button>
+              </div></td>
+            </tr>)}
+            {!serviceAccounts.length && <tr><td colSpan={4} className="mcp-persistent-empty">Сервисных учётных записей пока нет.</td></tr>}
+          </tbody>
+        </table>
+      </div>}
+      {(serviceAccountsEnabled === true || serviceAccounts.length > 0) && <p className="mcp-persistent-account-hint mcp-persistent-hint">Отключение учётной записи отзывает все её ключи.</p>}
     </section>
-  </section>;
+  </div>;
 }

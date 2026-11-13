@@ -17,9 +17,19 @@ export function GeneralSpaceSettings() {
     return () => { live = false; };
   }, []);
   const change = async (next: string) => {
-    setBusy(true); setError(''); setSaved(false);
+    setSaved(false);
+    if (spaces?.find(space => space.id === next)?.personal) {
+      setError('Личное пространство нельзя назначить пространством общих правил. Выберите командное пространство.');
+      return;
+    }
+    setBusy(true); setError('');
     try { const result = await client.setAdminSettings({ general_space_id: next }); setValue(result?.general_space_id ?? next); setSaved(true); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) {
+      const message = (e as Error).message;
+      setError(message === 'unknown space'
+        ? 'Это пространство недоступно для общих правил. Обновите страницу и выберите активное командное пространство.'
+        : message);
+    }
     finally { setBusy(false); }
   };
   const known = spaces?.some(space => space.id === value) ?? false;
@@ -30,7 +40,7 @@ export function GeneralSpaceSettings() {
       <span><b>Пространство общих правил</b>
         <select value={known ? value ?? '' : ''} disabled={loading || busy} onChange={event => void change(event.target.value)}>
           {!known && <option value="" disabled>— не выбрано —</option>}
-          {(spaces ?? []).map(space => <option key={space.id} value={space.id}>{space.name}</option>)}
+          {(spaces ?? []).map(space => <option key={space.id} value={space.id}>{space.name}{space.personal ? ' · личное' : ''}</option>)}
         </select>
         <small>Закреплённые статьи этого пространства получают все агенты при подключении — первым слоем правил. Все пользователи и все MCP-ключи читают это пространство целиком; писать в него могут только ключи в режиме записи у пользователей с ролью редактора или выше в этом пространстве.</small></span>
     </label>

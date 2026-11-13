@@ -14,9 +14,9 @@ export const ArticleTree = React.memo(function ArticleTree({ tree, openNodes, se
     const expanded = openNodes[a.id] !== false;
     const title = a.title || 'Без названия';
     const selected = selectedId === a.id;
-    return <React.Fragment key={a.id}><div className="tree-row" style={{ paddingLeft: 12 + depth * 15 }}>
-      {hasChildren && <button type="button" className="tree-toggle" aria-expanded={expanded} aria-label={`${expanded ? 'Свернуть' : 'Развернуть'} ${title}`} title={`${expanded ? 'Свернуть' : 'Развернуть'} ${title}`} onClick={() => onToggle(a.id, expanded)}>{expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>}
-      <button className={`tree-item ${selected ? 'selected' : ''}`} aria-current={selected ? 'page' : undefined} onClick={() => onSelect(a.id)} title={title}>{a.pinned && <Pin size={12} className="pin-mini"/>}<span className="tree-title">{title}</span>{a.kind === 'instruction' && <span className="tree-badge">i</span>}</button>
+    return <React.Fragment key={a.id}><div className="tree-row" style={{ paddingInlineStart: 4 + depth * 16 }}>
+      {hasChildren ? <button type="button" className="tree-toggle" aria-expanded={expanded} aria-label={`${expanded ? 'Свернуть' : 'Развернуть'} ${title}`} title={`${expanded ? 'Свернуть' : 'Развернуть'} ${title}`} onClick={() => onToggle(a.id, expanded)}>{expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button> : <span className="tree-toggle-spacer" aria-hidden="true"/>}
+      <button className={`tree-item ${selected ? 'selected' : ''}`} aria-current={selected ? 'page' : undefined} onClick={() => onSelect(a.id)} title={title}><span className="tree-title">{title}</span>{a.pinned && <Pin size={12} className="pin-mini"/>}{a.kind === 'instruction' && <span className="tree-badge">i</span>}</button>
     </div>{expanded && render(a.id, depth + 1)}</React.Fragment>;
   });
   return <>{render('', 0)}</>;
