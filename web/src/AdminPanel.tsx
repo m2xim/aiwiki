@@ -4,6 +4,18 @@ import { AccessGrant, client, Space, Team, UserAccessSnapshot } from './api';
 import MCPPersistentAccess from './MCPPersistentAccess';
 import { AgentProjects } from './AgentProjects';
 import { CatalogKind, CatalogSort, DEFAULT_CATALOG_QUERY, catalogQueryString, parseCatalogQuery } from './catalogQuery';
+import { readPref, writePref } from './prefs';
+
+const CATALOG_SORTS = ['recent', 'name', 'count'] as const;
+const CATALOG_KINDS = ['all', 'personal', 'team'] as const;
+/** Catalog state from the URL; sort and kind absent there come from the remembered choice. */
+const catalogFromUrl = () => {
+  const next = parseCatalogQuery(location.search);
+  const params = new URLSearchParams(location.search);
+  if (!params.has('sort')) next.sort = readPref('admin.catalog.sort', CATALOG_SORTS, 'recent');
+  if (!params.has('kind')) next.kind = readPref('admin.catalog.kind', CATALOG_KINDS, 'all');
+  return next;
+};
 import { currentUrl, lastUrlRef, replaceUrl } from './nav';
 import { GeneralSpaceSettings } from './GeneralSpaceSettings';
 import { ArtifactSettings } from './artifacts/ArtifactSettings';
@@ -35,7 +47,7 @@ export function AdminPanel({ onClose, userId, isAdmin, personalMode = false, act
   // Personal mode has no MCP keys or delegations (docs/PERSONAL.md).
   const tab = (!isAdmin && (activeTab === 'teams' || activeTab === 'users' || activeTab === 'settings')) || (personalMode && activeTab === 'tokens') ? 'catalog' : activeTab;
   const setTab = onTabChange;
-  const initialCatalog = tab === 'catalog' ? parseCatalogQuery(location.search) : DEFAULT_CATALOG_QUERY;
+  const initialCatalog = tab === 'catalog' ? catalogFromUrl() : { ...DEFAULT_CATALOG_QUERY, sort: readPref('admin.catalog.sort', CATALOG_SORTS, 'recent'), kind: readPref('admin.catalog.kind', CATALOG_KINDS, 'all') };
   const [activeSpaces, setActiveSpaces] = useState<Space[]>([]);
   const [archivedSpaces, setArchivedSpaces] = useState<Space[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -93,7 +105,7 @@ export function AdminPanel({ onClose, userId, isAdmin, personalMode = false, act
   // Catalog state lives in the URL: re-read it on entering the tab (a fresh visit has none) and on Back / Forward.
   const pendingSpace = useRef(''); // chosen via openResource before the tab URL (which carries no cspace) is applied
   const applyCatalogUrl = () => {
-    const next = parseCatalogQuery(location.search);
+    const next = catalogFromUrl();
     const chosen = next.cspace || pendingSpace.current;
     pendingSpace.current = '';
     setCatalogFilter(next.q); setCatalogSort(next.sort); setCatalogKind(next.kind);
@@ -228,10 +240,10 @@ export function AdminPanel({ onClose, userId, isAdmin, personalMode = false, act
               </div>
               <button className="button primary" type="button" onClick={() => setCreateSpaceOpen(true)} disabled={busy}><Plus size={15}/>Создать пространство</button>
               <input type="search" value={catalogFilter} onChange={e => setCatalogFilter(e.target.value)} placeholder="Поиск по названиям и тегам" aria-label="Фильтр каталога"/>
-              <select value={catalogKind} onChange={e => setCatalogKind(e.target.value as CatalogKind)} aria-label="Тип пространств">
+              <select value={catalogKind} onChange={e => { setCatalogKind(e.target.value as CatalogKind); writePref('admin.catalog.kind', e.target.value, 'all'); }} aria-label="Тип пространств">
                 <option value="all">Все типы</option><option value="personal">Личные</option><option value="team">Командные</option>
               </select>
-              <select value={catalogSort} onChange={e => setCatalogSort(e.target.value as CatalogSort)} aria-label="Сортировка каталога">
+              <select value={catalogSort} onChange={e => { setCatalogSort(e.target.value as CatalogSort); writePref('admin.catalog.sort', e.target.value, 'recent'); }} aria-label="Сортировка каталога">
                 <option value="recent">По обновлению</option><option value="name">По названию</option><option value="count">По числу документов</option>
               </select>
             </div>

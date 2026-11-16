@@ -2,6 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArrowRight, FolderPlus, LayoutGrid, Pencil, RotateCw, Search, User, Users } from 'lucide-react';
 import { CatalogSpace, client } from './api';
 import { CatalogSort, DEFAULT_SPACES_QUERY, SpacesAccess, SpacesQuery, filterSpaces, parseSpacesQuery, pluralRu, relativeDayRu, spacesQueryString } from './catalogQuery';
+import { readPref, writePref } from './prefs';
+
+/** Directory filters from the URL; those absent there come from the remembered choice. */
+const spacesFromUrl = (): SpacesQuery => {
+  const next = parseSpacesQuery(location.search);
+  const params = new URLSearchParams(location.search);
+  if (!params.has('kind')) next.kind = readPref('spaces.kind', ['all', 'personal', 'team'], 'all');
+  if (!params.has('access')) next.access = readPref('spaces.access', ['any', 'write', 'read'], 'any');
+  if (!params.has('sort')) next.sort = readPref('spaces.sort', ['recent', 'name', 'count'], 'recent');
+  return next;
+};
 import { replaceUrl } from './nav';
 import './SpacesDirectory.css';
 
@@ -16,7 +27,7 @@ export function SpacesDirectory({ trusted, admin = false, currentSpaceId, reload
   const [spaces, setSpaces] = useState<CatalogSpace[] | null>(null);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
-  const [state, setState] = useState<SpacesQuery>(() => parseSpacesQuery(location.search));
+  const [state, setState] = useState<SpacesQuery>(() => spacesFromUrl());
   const request = useRef(0);
 
   useEffect(() => {
@@ -28,7 +39,7 @@ export function SpacesDirectory({ trusted, admin = false, currentSpaceId, reload
 
   // Filters live in the URL: Back / Forward re-read them.
   useEffect(() => {
-    const onPop = () => { if (new URLSearchParams(location.search).get('view') === 'spaces') setState(parseSpacesQuery(location.search)); };
+    const onPop = () => { if (new URLSearchParams(location.search).get('view') === 'spaces') setState(spacesFromUrl()); };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
@@ -52,7 +63,12 @@ export function SpacesDirectory({ trusted, admin = false, currentSpaceId, reload
 
   // A click inside the debounce window must still leave the typed filter in this history entry, so Back restores it.
   const openSpace = useCallback((id: string) => { flushRef.current?.(); onOpenSpace(id); }, [onOpenSpace]);
-  const update = useCallback((patch: Partial<SpacesQuery>) => setState(value => ({ ...value, ...patch })), []);
+  const update = useCallback((patch: Partial<SpacesQuery>) => {
+    if (patch.kind) writePref('spaces.kind', patch.kind, 'all');
+    if (patch.access) writePref('spaces.access', patch.access, 'any');
+    if (patch.sort) writePref('spaces.sort', patch.sort, 'recent');
+    setState(value => ({ ...value, ...patch }));
+  }, []);
   const shown = useMemo(() => spaces ? filterSpaces(spaces, state) : [], [spaces, state]);
   const filtered = state.q.trim() !== '' || state.kind !== 'all' || state.access !== 'any';
   const total = spaces?.length || 0;

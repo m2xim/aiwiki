@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Archive, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import { usePref } from './prefs';
 import { client, type Team, type TeamMember } from './api';
 import './AdminSpaceDialogs.css';
 import './AdminTeams.css';
@@ -36,7 +37,7 @@ function TeamDialog({ title, busy, onClose, children, small = false }: {
 export function AdminTeams({ teams, users, loading, onChanged }: Props) {
   const [group, setGroup] = useState<'active' | 'archive'>('active');
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState('asc');
+  const [sort, setSort] = usePref('admin.teams.sort', ['asc', 'desc'], 'asc');
   const [editing, setEditing] = useState<Team | null>(null);
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState<Team | null>(null);
@@ -161,7 +162,7 @@ function TeamMembers({ team, users, onPending }: { team: Team; users: readonly U
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('all');
+  const [status, setStatus] = usePref('admin.team-members.status', ['all', 'active', 'disabled'], 'all');
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(() => new Set());

@@ -26,7 +26,7 @@ export type Article = {
 };
 export type AuthorKind = 'user' | 'service' | '';
 export type Revision = { id: string; article_id: string; revision: number; author: string; author_name?: string; author_kind?: AuthorKind; message: string; created_at: string; snapshot: Article };
-export type AuditEvent = { id: number; article_id: string; title: string; revision: number; author: string; message: string; created_at: string; changes: string[]; space_id: string; previous_space_id: string; deleted: boolean };
+export type AuditEvent = { id: number; article_id: string; title: string; revision: number; author: string; author_name?: string; author_kind?: AuthorKind; message: string; created_at: string; changes: string[]; space_id: string; previous_space_id: string; deleted: boolean };
 export type Comment = { id: string; article_id: string; anchor: string; body: string; author: string; author_name?: string; author_kind?: AuthorKind; created_at: string; resolved: boolean };
 export type Attachment = { id: string; article_id: string; name: string; mime: string; size: number; url: string; created_at: string };
 export type Favorite = { id: string; title: string; space_id: string; parent_id: string; kind: string; status: string; summary: string; updated_at: string; favorited_at: string };

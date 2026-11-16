@@ -61,6 +61,12 @@ func TestAuthorNamesAndServiceAccountRenamePostgres(t *testing.T) {
 		if json.Unmarshal(rr.Body.Bytes(), &list) != nil || len(list) == 0 || list[0]["author_name"] != "Agent Smith" {
 			t.Fatalf("%s list: %s", label, rr.Body)
 		}
+		var audit []map[string]any
+		rr = corporateHTTP(who, "GET", "/api/spaces/sa/audit", "")
+		if rr.Code != 200 || json.Unmarshal(rr.Body.Bytes(), &audit) != nil || len(audit) != 2 ||
+			audit[0]["author_name"] != "Agent Smith" || audit[0]["author_kind"] != "service" || audit[1]["author_name"] != "alice" {
+			t.Fatalf("%s audit names: %d %s", label, rr.Code, rr.Body)
+		}
 		// MCP tools
 		isErr, text := mcpCall(who, "wiki_history", map[string]any{"id": "an_art"})
 		if isErr || !strings.Contains(text, `"author_name":"Agent Smith"`) || !strings.Contains(text, `"author_kind":"service"`) {

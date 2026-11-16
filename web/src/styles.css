@@ -474,3 +474,15 @@ html[data-theme="dark"]{--select-chevron:url("data:image/svg+xml,%3Csvg xmlns='h
 @media(forced-colors:active){
   select:not([multiple]):not([size]){appearance:auto;-webkit-appearance:auto;background-image:none!important;padding-right:initial!important}
 }
+
+/* Sidebar actions: full list or one compact row of icons (remembered per browser). */
+.side-actions{position:relative}
+.side-actions-toggle{position:absolute;right:0;top:-1px;z-index:1;width:22px;height:22px;border:0;border-radius:5px;background:transparent;color:var(--muted);display:grid;place-items:center;padding:0}
+.side-actions-toggle:hover{background:var(--purple-light);color:var(--purple)}
+.side-actions:not(.compact) .spaces-manage-button:first-of-type{padding-right:26px}
+.side-actions.compact{display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin-bottom:12px;padding-right:26px}
+.side-actions.compact .side-actions-toggle{top:50%;transform:translateY(-50%)}
+.side-actions.compact .side-action-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.side-actions.compact .spaces-manage-button,.side-actions.compact .create-button{position:relative;width:30px;height:30px;padding:0;margin:0;justify-content:center;border-radius:6px;flex:none}
+.side-actions.compact .spaces-manage-button:hover{background:var(--purple-light)}
+.side-actions.compact .art-count{position:absolute;top:-3px;right:-4px;min-width:14px;height:14px;padding:0 3px;font-size:8px;line-height:14px;border-radius:7px}

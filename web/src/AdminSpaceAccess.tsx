@@ -1,5 +1,6 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Plus, Search, X } from 'lucide-react';
+import { usePref } from './prefs';
 import { type AccessGrant, client, type Team, type TeamMember } from './api';
 
 type Role = AccessGrant['role'];
@@ -40,8 +41,8 @@ function SpaceGrants({ spaceId, archived, canChangeOwner, teams, onChanged, onPe
   const [mutationError, setMutationError] = useState('');
   const [pending, setPending] = useState(false);
   const [query, setQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState<SubjectType | ''>('');
-  const [roleFilter, setRoleFilter] = useState<Role | ''>('');
+  const [typeFilter, setTypeFilter] = usePref<SubjectType | ''>('admin.access.type', ['', 'user', 'team'], '');
+  const [roleFilter, setRoleFilter] = usePref<Role | ''>('admin.access.role', ['', 'owner', 'manager', 'editor', 'commenter', 'reader'], '');
   const [subjectType, setSubjectType] = useState<SubjectType>('user');
   const [recipientQuery, setRecipientQuery] = useState('');
   const [targetId, setTargetId] = useState('');
