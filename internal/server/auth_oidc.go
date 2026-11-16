@@ -47,6 +47,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -118,6 +119,27 @@ type authRefresh struct {
 	accessToken string
 	accessUntil time.Time
 	loginMarked time.Time // last time last_login_at was recorded for this session
+	// maxUntil is the hard end (login + SessionMaxAge). idleUntil (unix nanos)
+	// is the refresh token's current expiry: each successful renewal moves it
+	// forward, so an active session is not cut at the provider's idle timeout
+	// that was in force at login. Atomic: read under a.mu without rf.mu.
+	maxUntil  time.Time
+	idleUntil atomic.Int64
+}
+
+// authSessionEnd is when a session stops being valid: its fixed expiry, or for
+// a refreshable session the sliding refresh-token expiry capped by max age.
+func authSessionEnd(s *authSession) time.Time {
+	if s.refresh == nil {
+		return s.expires
+	}
+	end := s.refresh.maxUntil
+	if idle := s.refresh.idleUntil.Load(); idle != 0 {
+		if t := time.Unix(0, idle); t.Before(end) {
+			end = t
+		}
+	}
+	return end
 }
 
 // authLoginMarkEvery: a refreshed session is an active, provider-confirmed
@@ -801,7 +823,7 @@ func authEqual(a, b string) bool {
 
 func (a *AuthService) purgeLocked(now time.Time) {
 	for k, s := range a.sessions {
-		if !now.Before(s.expires) {
+		if !now.Before(authSessionEnd(s)) {
 			delete(a.sessions, k)
 		}
 	}
@@ -819,7 +841,7 @@ func (a *AuthService) sessionSnapshot(key [32]byte) *authSession {
 	if s == nil {
 		return nil
 	}
-	if !a.now().Before(s.expires) {
+	if !a.now().Before(authSessionEnd(s)) {
 		delete(a.sessions, key)
 		return nil
 	}
@@ -1009,8 +1031,9 @@ func (a *AuthService) handleCallback(w http.ResponseWriter, r *http.Request) {
 		// itself lasts until the max age or the refresh token's expiry.
 		refresh = &authRefresh{token: tok.RefreshToken, accessToken: tok.AccessToken, accessUntil: expires, loginMarked: now}
 		expires = now.Add(a.cfg.SessionMaxAge)
-		if until, ok := authRefreshExpiry(tok, now); ok && until.Before(expires) {
-			expires = until
+		refresh.maxUntil = expires
+		if until, ok := authRefreshExpiry(tok, now); ok {
+			refresh.idleUntil.Store(until.UnixNano())
 		}
 	}
 	csrf, err := authRandom(32)
@@ -1121,6 +1144,12 @@ func (a *AuthService) renewSession(ctx context.Context, sess *authSession) (stri
 	rf.accessToken, rf.accessUntil = tok.AccessToken, until
 	if tok.RefreshToken != "" {
 		rf.token = tok.RefreshToken // rotation
+	}
+	// The provider's idle window restarts with every refresh: slide the end.
+	if idle, ok := authRefreshExpiry(tok, now); ok {
+		rf.idleUntil.Store(idle.UnixNano())
+	} else if tok.RefreshToken != "" {
+		rf.idleUntil.Store(0) // no expiry reported: bounded by max age only
 	}
 	if !now.Before(rf.loginMarked.Add(authLoginMarkEvery)) {
 		if err := a.users.loggedIn(ctx, sess.userID, now); err != nil {

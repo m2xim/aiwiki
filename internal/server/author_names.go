@@ -83,3 +83,14 @@ func (s *Server) fillCommentAuthors(list []Comment) {
 		list[i].AuthorName, list[i].AuthorKind = m[list[i].Author].Name, m[list[i].Author].Kind
 	}
 }
+
+func (s *Server) fillAuditAuthors(list []AuditEvent) {
+	ids := make([]string, 0, len(list))
+	for i := range list {
+		ids = append(ids, list[i].Author)
+	}
+	m := s.authorInfos(ids...)
+	for i := range list {
+		list[i].AuthorName, list[i].AuthorKind = m[list[i].Author].Name, m[list[i].Author].Kind
+	}
+}

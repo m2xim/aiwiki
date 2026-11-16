@@ -17,6 +17,8 @@ type AuditEvent struct {
 	Title           string   `json:"title"`
 	Revision        int      `json:"revision"`
 	Author          string   `json:"author"`
+	AuthorName      string   `json:"author_name,omitempty"`
+	AuthorKind      string   `json:"author_kind,omitempty"`
 	Message         string   `json:"message"`
 	CreatedAt       string   `json:"created_at"`
 	Changes         []string `json:"changes"`
@@ -111,6 +113,7 @@ func (s *Server) spaceAudit(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusInternalServerError, "database error")
 		return
 	}
+	s.fillAuditAuthors(out)
 	writeJSON(w, http.StatusOK, out)
 }
 

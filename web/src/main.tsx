@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Archive, Box, ArrowDownToLine, ArrowLeft, BookOpen, Bot, Check, ChevronRight, CircleHelp, Clock3, Code2, FileImage, FolderInput, FolderPlus, FolderTree, History, ImagePlus, LayoutGrid, Link2, List, ListFilter, LogOut, MessageCircle, Moon, Pencil, Pin, Plus, Search, Settings2, ShieldCheck, Sparkles, Star, Sun, Tag, Trash2, Upload, UserRound, X, ChevronsLeft, ChevronsRight, PanelLeftClose } from 'lucide-react';
+import { Activity, Archive, Box, ArrowDownToLine, ArrowLeft, BookOpen, Bot, Check, ChevronRight, CircleHelp, Clock3, Code2, FileImage, FolderInput, FolderPlus, FolderTree, History, ImagePlus, LayoutGrid, Link2, List, ListFilter, LogOut, MessageCircle, Moon, Pencil, Pin, Plus, Search, Settings2, ShieldCheck, Sparkles, Star, Sun, Tag, Trash2, Upload, UserRound, X, ChevronsLeft, ChevronsRight, ChevronsDown, ChevronsUp, PanelLeftClose } from 'lucide-react';
 import { Article, Attachment, AuthSession, Bootstrap, Favorite, Revision, SearchHit, SearchResponse, Space, client, setAuthExpiredHandler, setCorporateSession, setCsrfToken, setLoginAvailable } from './api';
 import { AuthorName } from './AuthorName';
 import { headings, Markdown, scrollToFirstHighlight, smoothBehavior } from './markdown';
@@ -16,6 +16,8 @@ import { ArticleTree } from './ArticleTree';
 import { FavoritesPage } from './FavoritesPage';
 import { SearchResultsList } from './SearchResults';
 import { lastUrlRef, useLayoutPrefs, SIDEBAR_MAX, SIDEBAR_MIN, UNSAVED_MESSAGE, articleUrl, currentUrl, isTypingTarget, readRoute, spaceUrl, useSidebarWidth } from './nav';
+import { readPref, writePref } from './prefs';
+import { SpacePicker } from './SpacePicker';
 import type { MarkdownEditorHandle } from './MarkdownEditor';
 import { ParentPicker } from './ParentPicker';
 import { TagInput } from './TagInput';
@@ -93,6 +95,8 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   const [spacesView, setSpacesView] = useState(initialRoute.view === 'spaces' && !initialRoute.article);
   const [favView, setFavView] = useState(initialRoute.view === 'favorites' && !initialRoute.article);
   const layout = useLayoutPrefs(); const layoutRef = useRef(layout); layoutRef.current = layout;
+  const [compactActions, setCompactActionsState] = useState(() => readPref('sidebar.actions', ['full', 'compact'], 'full') === 'compact');
+  const setCompactActions = (value: boolean) => { setCompactActionsState(value); writePref('sidebar.actions', value ? 'compact' : 'full', 'full'); };
   const [createSpaceOpen, setCreateSpaceOpen] = useState(false); const [notice, setNotice] = useState<{ text: string } | null>(null); const [pendingAnchor, setPendingAnchor] = useState('');
   const [moveOpen, setMoveOpen] = useState(false); const [canMove, setCanMove] = useState(false);
   const [adminOpen, setAdminOpen] = useState(session.mode !== 'trusted' && initialRoute.view === 'admin');
@@ -121,6 +125,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   // ---- Unsaved-changes guard.
   const isDirty = Boolean(editor && draft && baselineRef.current && !sameSnapshot(baselineRef.current, snapshotOf(draft, tagsText, propertiesText)));
   dirtyRef.current = isDirty;
+  unsavedWork.editor = isDirty;
   const confirmLeave = useCallback(() => (!dirtyRef.current && !artDirtyRef.current) || window.confirm(UNSAVED_MESSAGE), []);
   useEffect(() => {
     if (!isDirty) return;
@@ -572,7 +577,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
   const artifactCount = useArtifactCount(spaceId, artReload);
   const goArt = useCallback((route: ArtRoute, replace = false) => {
     if (!replace && !confirmLeave()) return;
-    artDirtyRef.current = false;
+    artDirtyRef.current = false; unsavedWork.artifact = false;
     if (!replace) clearSelection(false);
     setArtRoute(route); setMobileNav(false);
     if (replace) urlReplace(artRouteUrl(route)); else urlPush(artRouteUrl(route));
@@ -737,17 +742,20 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
         </div>
         <div className="side-full">
         <div className="side-heading"><span>ПРОСТРАНСТВО</span><span className="side-heading-actions"><button className="icon-button tiny" onClick={() => layout.setNav('rail')} title="Свернуть панель ([)" aria-label="Свернуть панель"><ChevronsLeft size={16}/></button><button className={`icon-button tiny ${spacesView ? 'active' : ''}`} onClick={openSpaces} title="Все пространства" aria-label="Все пространства"><LayoutGrid size={16}/></button><button className="icon-button tiny" onClick={startCreateSpace} title="Создать пространство" aria-label="Создать пространство"><FolderPlus size={16}/></button></span></div>
-        <div className="space-picker"><select value={spaceId} onChange={e => changeSpace(e.target.value)} aria-label="Пространство">{!spaceId && <option value="">Нет активных пространств</option>}{activeSpace?.archived_at && <option value={activeSpace.id}>{activeSpace.name} · В архиве</option>}{activeSpaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-        <button className={`spaces-manage-button audit-nav-button ${spacesView ? 'active' : ''}`} onClick={openSpaces}><LayoutGrid size={15}/>Все пространства</button>
-        <button className={`spaces-manage-button audit-nav-button ${favView ? 'active' : ''}`} onClick={openFavorites}><Star size={15}/>Избранное{favorites.length > 0 && <span className="art-count" aria-label={`Избранных: ${favorites.length}`}>{favorites.length}</span>}</button>
-        {spaceId && <button className={`spaces-manage-button audit-nav-button ${auditView ? 'active' : ''}`} onClick={openAudit}><History size={15}/>Журнал изменений</button>}
-        {spaceId && <button className={`spaces-manage-button audit-nav-button ${artRoute ? 'active' : ''}`} onClick={openArtifacts}><Box size={15}/>Артефакты{artifactCount !== null && <span className="art-count" aria-label={`Артефактов: ${artifactCount}`}>{artifactCount}</span>}</button>}
-        {spaceId && <button className="spaces-manage-button" onClick={() => { setImportOpen(true); setMobileNav(false); }}><Upload size={15}/>Импорт Markdown</button>}
-        <button className="create-button" onClick={() => beginCreate()}><Plus size={16}/>Новая статья</button>
+        <SpacePicker spaces={activeSpaces} current={activeSpace} onChange={changeSpace}/>
+        <div className={`side-actions ${compactActions ? 'compact' : ''}`}>
+        <button className="side-actions-toggle" onClick={() => setCompactActions(!compactActions)} title={compactActions ? 'Показать подписи' : 'Свернуть в строку иконок'} aria-label={compactActions ? 'Показать подписи кнопок' : 'Свернуть кнопки в строку иконок'} aria-expanded={!compactActions}>{compactActions ? <ChevronsDown size={14}/> : <ChevronsUp size={14}/>}</button>
+        <button className={`spaces-manage-button audit-nav-button ${spacesView ? 'active' : ''}`} onClick={openSpaces} title="Все пространства"><LayoutGrid size={15}/><span className="side-action-label">Все пространства</span></button>
+        <button className={`spaces-manage-button audit-nav-button ${favView ? 'active' : ''}`} onClick={openFavorites} title="Избранное"><Star size={15}/><span className="side-action-label">Избранное</span>{favorites.length > 0 && <span className="art-count" aria-label={`Избранных: ${favorites.length}`}>{favorites.length}</span>}</button>
+        {spaceId && <button className={`spaces-manage-button audit-nav-button ${auditView ? 'active' : ''}`} onClick={openAudit} title="Журнал изменений"><History size={15}/><span className="side-action-label">Журнал изменений</span></button>}
+        {spaceId && <button className={`spaces-manage-button audit-nav-button ${artRoute ? 'active' : ''}`} onClick={openArtifacts} title="Артефакты"><Box size={15}/><span className="side-action-label">Артефакты</span>{artifactCount !== null && <span className="art-count" aria-label={`Артефактов: ${artifactCount}`}>{artifactCount}</span>}</button>}
+        {spaceId && <button className="spaces-manage-button" onClick={() => { setImportOpen(true); setMobileNav(false); }} title="Импорт Markdown"><Upload size={15}/><span className="side-action-label">Импорт Markdown</span></button>}
+        <button className="create-button" onClick={() => beginCreate()} title="Новая статья"><Plus size={16}/><span className="side-action-label">Новая статья</span></button>
+        </div>
         <div className="search-box"><Search size={16}/><input ref={searchInputRef} value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && runSearch()} placeholder="Поиск (нажмите /)" aria-label="Поиск"/><kbd>↵</kbd></div>
         <label className="search-scope"><input type="checkbox" checked={searchAll} onChange={e => setSearchAll(e.target.checked)}/>Во всех пространствах</label>
         <div className="filter-row"><input list="space-tag-options" value={tagFilter} onChange={e => setTagFilter(e.target.value)} onKeyDown={e => e.key === 'Enter' && runSearch()} placeholder="Тег" title="Фильтр по тегу"/><datalist id="space-tag-options">{tagOptions.map(tag => <option key={tag} value={tag}/>)}</datalist><input value={propertyFilter} onChange={e => setPropertyFilter(e.target.value)} onKeyDown={e => e.key === 'Enter' && runSearch()} placeholder="ключ:значение" title="Фильтр по свойству"/></div>
-        <div className="filter-row"><select value={kindFilter} onChange={e => setKindFilter(e.target.value)} aria-label="Тип материала"><option value="">Все типы</option>{kinds.map(k => <option key={k} value={k}>{kindNames[k]}</option>)}</select><button className={`filter-toggle ${pinnedOnly ? 'active' : ''}`} onClick={() => setPinnedOnly(!pinnedOnly)} title="Только закреплённые" aria-pressed={pinnedOnly}><Pin size={14}/></button><button className="button ghost tiny" onClick={runSearch}>Найти</button><button className="button ghost tiny" onClick={resetSearch} title="Сбросить фильтры">Сброс</button></div>
+        <div className="filter-row"><select value={kindFilter} onChange={e => setKindFilter(e.target.value)} aria-label="Тип материала"><option value="">Все типы</option>{kinds.map(k => <option key={k} value={k}>{kindNames[k]}</option>)}</select><button className={`filter-toggle ${pinnedOnly ? 'active' : ''}`} onClick={() => setPinnedOnly(!pinnedOnly)} title="Только закреплённые" aria-pressed={pinnedOnly}><Pin size={14}/></button><button className="button tiny filter-find" onClick={runSearch}>Найти</button><button className="button tiny filter-reset" onClick={resetSearch} title="Сбросить фильтры">Сброс</button></div>
         <div className="tree-caption"><span>{searchActive ? 'РЕЗУЛЬТАТЫ' : 'МАТЕРИАЛЫ'}</span><span>{searchActive ? (searchResponse ? searchResponse.total : '') : articles.length}</span></div>
         <nav className="tree-nav">{searchActive ? <SearchResultsList response={searchResponse} results={searchItems} loading={searchLoading} loadingMore={searchMoreBusy} global={searchAll} spaces={spaces} currentSpace={spaceId} articleById={articleById} selectedId={selected?.id || ''} onOpen={openFromSearch} onMore={() => void loadMoreSearch()} onReset={resetSearch}/> : busy ? <div className="loading-line">Загружаем материалы…</div> : articles.length ? <ArticleTree tree={tree} openNodes={openNodes} selectedId={selected?.id || ''} onToggle={onToggleNode} onSelect={onTreeSelect}/> : <div className="empty-tree"><BookOpen size={18}/><span>Здесь пока пусто</span><button onClick={() => beginCreate()}>Создать первую статью</button></div>}</nav>
         <div className="sidebar-bottom"><button onClick={() => setPanel(panel === 'ai' ? null : 'ai')}><Sparkles size={15}/>Подключить ИИ</button><span className="connection-dot"/>База знаний</div>
@@ -756,7 +764,7 @@ function App({ session, onLogout, logoutError }: { session: AuthSession; onLogou
       {layout.nav === 'hidden' && <button className="nav-handle" onClick={() => layout.setNav('open')} title="Показать панель ([)" aria-label="Показать панель"><ChevronsRight size={16}/></button>}
       <main className="reading-area">
         {error && <div className="alert error-alert"><CircleHelp size={17}/><span>{error}</span><button onClick={() => setError('')} aria-label="Закрыть"><X size={16}/></button></div>}{notice && <div className="alert success-alert"><Check size={16}/>{notice.text}<button onClick={() => setNotice(null)} aria-label="Закрыть"><X size={15}/></button></div>}
-        {artRoute ? <ArtifactsRoot route={artRoute} spaceId={spaceId} spaces={spaces} theme={theme} go={goArt} onDirty={dirty => { artDirtyRef.current = dirty; }} onChanged={() => setArtReload(value => value + 1)} onSpace={id => { if (id !== spaceIdRef.current) { resetFilters(); setSpaceId(id); } }}/> : favView ? <FavoritesPage favorites={favorites} spaces={spaces} kindNames={kindNames} pending={favPending} onOpen={id => selectArticle(id)} onRemove={id => void removeFavoriteById(id)} onReload={() => void loadFavorites()}/> : spacesView ? <SpacesDirectory trusted={session.mode === 'trusted'} admin={session.mode !== 'trusted' && session.user.admin} currentSpaceId={spaceId} reloadKey={catalogRev} archivedCount={spaces.filter(s => s.archived_at && !s.limited).length} onOpenSpace={changeSpace} onEdit={id => { setManagerEditId(id); setSpaceManager(true); }} onOpenArchive={() => { setManagerTab('archive'); setSpaceManager(true); }} onCreate={startCreateSpace}/> : auditView && spaceId ? <AuditPage key={spaceId} spaceId={spaceId} spaceName={activeSpace?.name || spaceId} onOpenArticle={id => selectArticle(id)} onOpenHistory={id => openAuditHistory(id)}/> : historyView && selected ? <HistoryPage article={selected} revisions={historyArticleId === selected.id ? revisions : []} loading={historyArticleId !== selected.id || historyLoading} error={historyArticleId === selected.id ? historyError : ''} restoring={restoring} deleted={Boolean(selected.deleted_at)} onRetry={() => setHistoryReload(value => value + 1)} onBack={closeHistory} onRestore={revision => void restore(revision)}/> : editor && draft ? <section className="editor-page"><div className="editor-top"><div><div className="eyebrow">{draft.id ? 'РЕДАКТИРОВАНИЕ' : 'НОВЫЙ МАТЕРИАЛ'}{isDirty && <span className="dirty-mark"> · есть несохранённые изменения</span>}</div><h1>{draft.id ? 'Изменить статью' : 'Создать статью'}</h1></div><button className="icon-button" onClick={closeEditor} title="Закрыть (Esc)"><X size={19}/></button></div>
+        {artRoute ? <ArtifactsRoot route={artRoute} spaceId={spaceId} spaces={spaces} theme={theme} go={goArt} onDirty={dirty => { artDirtyRef.current = dirty; unsavedWork.artifact = dirty; }} onChanged={() => setArtReload(value => value + 1)} onSpace={id => { if (id !== spaceIdRef.current) { resetFilters(); setSpaceId(id); } }}/> : favView ? <FavoritesPage favorites={favorites} spaces={spaces} kindNames={kindNames} pending={favPending} onOpen={id => selectArticle(id)} onRemove={id => void removeFavoriteById(id)} onReload={() => void loadFavorites()}/> : spacesView ? <SpacesDirectory trusted={session.mode === 'trusted'} admin={session.mode !== 'trusted' && session.user.admin} currentSpaceId={spaceId} reloadKey={catalogRev} archivedCount={spaces.filter(s => s.archived_at && !s.limited).length} onOpenSpace={changeSpace} onEdit={id => { setManagerEditId(id); setSpaceManager(true); }} onOpenArchive={() => { setManagerTab('archive'); setSpaceManager(true); }} onCreate={startCreateSpace}/> : auditView && spaceId ? <AuditPage key={spaceId} spaceId={spaceId} spaceName={activeSpace?.name || spaceId} onOpenArticle={id => selectArticle(id)} onOpenHistory={id => openAuditHistory(id)}/> : historyView && selected ? <HistoryPage article={selected} revisions={historyArticleId === selected.id ? revisions : []} loading={historyArticleId !== selected.id || historyLoading} error={historyArticleId === selected.id ? historyError : ''} restoring={restoring} deleted={Boolean(selected.deleted_at)} onRetry={() => setHistoryReload(value => value + 1)} onBack={closeHistory} onRestore={revision => void restore(revision)}/> : editor && draft ? <section className="editor-page"><div className="editor-top"><div><div className="eyebrow">{draft.id ? 'РЕДАКТИРОВАНИЕ' : 'НОВЫЙ МАТЕРИАЛ'}{isDirty && <span className="dirty-mark"> · есть несохранённые изменения</span>}</div><h1>{draft.id ? 'Изменить статью' : 'Создать статью'}</h1></div><button className="icon-button" onClick={closeEditor} title="Закрыть (Esc)"><X size={19}/></button></div>
           <div ref={conflictRef}>{conflict && mineFields && <EditorConflict current={conflict} mine={mineFields} busy={saving} onTakeTheirs={takeTheirs} onOverwrite={overwriteConflict} onDismiss={() => setConflict(null)}/>}</div>
           {offer && <div className="draft-banner info" role="status"><div>Найден несохранённый черновик от {formatDraftTime(offer.savedAt)}.{draft.id && offer.base_revision < draft.revision && <> Статья с тех пор менялась (черновик начат с версии {offer.base_revision}, сейчас {draft.revision}): при сохранении появится окно сравнения.</>}</div><div className="draft-banner-actions"><button type="button" className="button primary small" onClick={restoreOffer}>Восстановить</button><button type="button" className="button ghost small" onClick={deleteOffer}>Удалить</button></div></div>}
           {parked && <div className="draft-banner" role="status"><div>Ваш черновик от {formatDraftTime(parked.savedAt)} отложен (основан на версии {parked.base_revision}).{parkedList.length > 1 && <> Ещё отложенных: {parkedList.length - 1}.</>}</div><div className="draft-banner-actions"><button type="button" className="button small" onClick={restoreParked}>Вернуть отложенный</button><button type="button" className="button ghost small" onClick={deleteParked}>Удалить</button></div></div>}
@@ -809,6 +817,20 @@ const LOGIN_ERRORS: Record<string, string> = {
   denied: 'У этой учётной записи нет доступа к AI Wiki. Обратитесь к администратору или войдите другим пользователем.',
   unavailable: 'Сервис входа временно недоступен. Повторите попытку позже.'
 };
+// Unsaved editor changes block the silent re-login below (the page would ask before leaving).
+const unsavedWork = { editor: false, artifact: false };
+const SILENT_RELOGIN_KEY = 'aiwiki.silentRelogin';
+/** An ended session is renewed through the provider's SSO without a dialog, at most once a minute (a loop guard). */
+function trySilentRelogin(): boolean {
+  if (unsavedWork.editor || unsavedWork.artifact) return false;
+  try {
+    const last = Number(sessionStorage.getItem(SILENT_RELOGIN_KEY)) || 0;
+    if (Date.now() - last < 60_000) return false;
+    sessionStorage.setItem(SILENT_RELOGIN_KEY, String(Date.now()));
+  } catch { return false; }
+  location.assign(loginUrl());
+  return true;
+}
 const REAUTH_HINT = 'Если на странице входа уже подставлено прежнее имя, нажмите значок рядом с ним, чтобы выбрать другого пользователя.';
 // loginUrl builds the sign-in address that brings the user back to the current
 // page (query and fragment included) once the identity provider is done.
@@ -861,7 +883,7 @@ function AuthGate() {
     finally { setLoading(false); }
   };
   useEffect(() => {
-    setAuthExpiredHandler(() => setExpired(true));
+    setAuthExpiredHandler(() => { if (!trySilentRelogin()) setExpired(true); });
     void loadSession();
     return () => setAuthExpiredHandler(null);
   }, []);

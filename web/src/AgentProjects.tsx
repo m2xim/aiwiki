@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Eye, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { usePref } from './prefs';
 import { type AgentProject, type AgentProjectEffective, type AgentProjectMode, type AgentProjectRow, type AgentProjectVisibility, client, type Space } from './api';
 import './AdminSpaceDialogs.css';
 import './AgentProjects.css';
@@ -45,8 +46,8 @@ export function AgentProjects({ userId, isAdmin }: { userId: string; isAdmin: bo
   const [editing, setEditing] = useState<AgentProject | 'new' | null>(null);
   const [deleting, setDeleting] = useState<AgentProject | null>(null);
   const [search, setSearch] = useState('');
-  const [visibility, setVisibility] = useState('all');
-  const [sort, setSort] = useState('name');
+  const [visibility, setVisibility] = usePref('admin.projects.visibility', ['all', 'private', 'public'], 'all');
+  const [sort, setSort] = usePref('admin.projects.sort', ['name', 'updated'], 'name');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const sequence = useRef(0);
@@ -122,7 +123,7 @@ function ProjectEditor({ project, userId, spaces, generalId, onChanged, onClose 
   const [visibility, setVisibility] = useState<AgentProjectVisibility>(project?.visibility || 'private');
   const [rows, setRows] = useState<FormRow[]>(project?.spaces.map(fromRow) || []);
   const [tab, setTab] = useState<'general' | 'spaces'>('general');
-  const [search, setSearch] = useState(''); const [modeFilter, setModeFilter] = useState('all');
+  const [search, setSearch] = useState(''); const [modeFilter, setModeFilter] = usePref('admin.project-spaces.mode', ['all', 'read', 'write'], 'all');
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState(false); const [error, setError] = useState(''); const [saved, setSaved] = useState('');
   const guard = useRef(false); const counter = useRef(0); const id = useId();

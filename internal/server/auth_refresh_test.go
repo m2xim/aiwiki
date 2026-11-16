@@ -148,7 +148,7 @@ func TestAuthSessionRefreshLifetimeBounds(t *testing.T) {
 	y.session(g)
 	y.a.mu.Lock()
 	for _, s := range y.a.sessions {
-		if s.expires.After(start.Add(20*time.Minute + 5*time.Second)) {
+		if authSessionEnd(s).After(start.Add(20*time.Minute + 5*time.Second)) {
 			t.Errorf("refresh_expires_in not applied: %v", s.expires.Sub(start))
 		}
 	}
@@ -161,6 +161,41 @@ func TestAuthSessionRefreshLifetimeBounds(t *testing.T) {
 	cfg, err := normalizeAuthConfig(CorporateConfig{IssuerURL: "https://i", ClientID: "c", ClientSecret: "s", RedirectURL: "https://a/cb", SessionRefresh: true})
 	if err != nil || cfg.SessionMaxAge != authDefaultSessionMaxAge {
 		t.Fatalf("default max age: %v %v", cfg.SessionMaxAge, err)
+	}
+}
+
+// An active session outlives the provider's idle window that was in force at
+// login: each renewal slides the end forward, but never past the max age.
+func TestAuthSessionRefreshSlidesIdleWindow(t *testing.T) {
+	x := newAuthHarness(t, func(c *CorporateConfig) { c.SessionRefresh = true; c.SessionMaxAge = time.Hour })
+	x.iss.mu.Lock()
+	x.iss.refreshTTL = 30 * time.Minute
+	x.iss.mu.Unlock()
+	advance := x.clockAt(time.Now())
+	g := authUserGrant("wes", "aiwiki-access")
+	g.tokenTTL = 5 * time.Minute
+	sc := x.session(g)
+	for i := 0; i < 5; i++ { // 50 minutes of activity, a request every 10 minutes
+		advance(10 * time.Minute)
+		if c := x.do("GET", "/api/echo", "", nil, sc); c.Code != 200 {
+			t.Fatalf("active session cut after %d min: %d %s", (i+1)*10, c.Code, c.Body)
+		}
+	}
+	advance(11 * time.Minute) // 61 minutes: past the max age
+	if c := x.do("GET", "/api/echo", "", nil, sc); c.Code != http.StatusUnauthorized {
+		t.Fatalf("max age must still end the session: %d", c.Code)
+	}
+
+	// Idle longer than the provider window: the session ends.
+	y := newAuthHarness(t, func(c *CorporateConfig) { c.SessionRefresh = true; c.SessionMaxAge = time.Hour })
+	y.iss.mu.Lock()
+	y.iss.refreshTTL = 30 * time.Minute
+	y.iss.mu.Unlock()
+	advance = y.clockAt(time.Now())
+	sc = y.session(g)
+	advance(31 * time.Minute)
+	if c := y.do("GET", "/api/echo", "", nil, sc); c.Code != http.StatusUnauthorized {
+		t.Fatalf("idle session must end with the refresh token: %d", c.Code)
 	}
 }
 
